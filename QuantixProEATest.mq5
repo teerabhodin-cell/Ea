@@ -27,72 +27,63 @@ enum ENUM_GRID_TYPE
 };
 
 //=========================== INPUT ================================//
-input group "--- Language Settings ---"
+input group "===== 1. เวลาเทรด & ภาษา ====="
 input ENUM_LANGUAGE Language = LNG_TH; // Select Language ( default: Thai )
-
-input group "--- Trading Hours (เวลาเปิด-ปิด บอท) ---"
 input bool    UseTimer         = true;    // เปิดใช้งานระบบคุมเวลา (Enable Time Filter)
 input int     StartHour        = 2;       // เวลาเริ่มทำงาน (เวลา Server)
 input int     StartMinute      = 0;
 input int     EndHour          = 23;      // เวลาหยุดทำงาน (เวลา Server)
 input int     EndMinute        = 0;
 
-input group "--- Grid Settings ---"
+input group "===== 2. Grid หลัก ====="
 input ENUM_GRID_TYPE GridType       = GRID_VIRTUAL; // เลือกรูปแบบ Grid ( Virtual หรือ Pending )
 input double BaseLot                = 0.01;
 input double LotMultiplier          = 2.0;
+input int    TotalLevels            = 10;      // จำนวนชั้นต่อฝั่ง (10 Buy Stop + 10 Sell Stop)
 input bool   UseATRDistance         = true;    // เปิดใช้ระยะ Grid ตามค่า ATR
 input int    ATR_Period             = 14;      // รอบคำนวณ ATR (Period)
 input double ATR_Multiplier         = 1.5;     // ตัวคูณ ATR เช่น 1.5 เท่าของ ATR
+input bool   UseAdaptiveATRGrid     = false;   // เปิดใช้ระบบปรับระยะ Grid ตามความผันผวนอัตโนมัติ (ขยายระยะ Grid เมื่อ Drawdown สูงขึ้น)
 input int    DistancePoints         = 300;     // ระยะห่าง Fixed Points (ใช้กรณีปิด UseATRDistance)
-input int    TotalLevels            = 10;      // จำนวนชั้นต่อฝั่ง (10 Buy Stop + 10 Sell Stop)
 input ulong  MagicNumber            = 112233;
 
-input group "--- Adaptive ATR Grid ---"
-input bool   UseAdaptiveATRGrid     = false;   // เปิดใช้ระบบปรับระยะ Grid ตามความผันผวนอัตโนมัติ (ขยายระยะ Grid เมื่อ Drawdown สูงขึ้น)
+input group "===== 3. เป้ากำไร & Trailing Stop ====="
+input double TargetProfit        = 1.0;    // Minimum Profit ($) to activate Trailing
+input double TrailingStopUSD     = 0.5;    // Trailing Distance ($)
+input double ProfitFloorPercent  = 0.30;   // Safety Floor % ล็อกทุนขั้นต่ำ (30%)
 
-input group "--- Trend Filter (EMA Anti-Sideway) ---"
+input group "===== 4. ตัวกรองเทรนด์ (EMA / MTF / ADX / RSI / Bollinger) ====="
 input bool   UseEMAFilter           = true;    // เปิดใช้ตัวกรองเทรนด์ EMA
 input int    EMA_Period             = 200;     // Period ของเส้น EMA
 input bool   StrictBuyFilter        = true;    // ล็อคฝั่ง Buy: ห้ามเปิด Buy หากราคาอยู่ต่ำกว่า EMA
 input bool   StrictSellFilter       = true;    // ล็อคฝั่ง Sell: ห้ามเปิด Sell หากราคาอยู่เหนือ EMA
-
-input group "--- Multi Timeframe Filter ---"
 input bool   UseMTFFilter          = false;   // เปิดใช้ตัวกรองเทรนด์จาก Timeframe สูงกว่า (ตั้ง MTF_Period ให้สูงกว่า Timeframe ของกราฟที่แปะ EA จริงๆ ไม่งั้นจะซ้ำกับ EMA filter หลัก)
 input ENUM_TIMEFRAMES MTF_Period   = PERIOD_H1; // Timeframe ที่ใช้กรองเทรนด์หลัก
-
-input group "--- ADX Filter ---"
 input bool   UseADXFilter           = false;   // เปิดใช้ตัวกรองความแรงเทรนด์ ADX
 input int    ADX_Period             = 14;      // Period ของ ADX
 input double ADX_MinLevel           = 25.0;    // ค่า ADX ขั้นต่ำเพื่อยืนยันว่ามีเทรนด์
-
-input group "--- RSI Filter ---"
 input bool   UseRSIFilter           = false;   // เปิดใช้ตัวกรอง RSI
 input int    RSI_Period             = 14;      // Period ของ RSI
 input double RSI_BuyMax             = 70.0;    // ค่า RSI สูงสุดที่จะอนุญาตให้เปิด Buy (ป้องกันซื้อตอน Overbought เกินไป)
 input double RSI_SellMin            = 30.0;    // ค่า RSI ต่ำสุดที่จะอนุญาตให้เปิด Sell (ป้องกันขายตอน Oversold เกินไป)
-
-input group "--- Bollinger Bands Filter ---"
 input bool   UseBollingerFilter     = false;   // เปิดใช้ตัวกรองกรอบราคา Bollinger Bands
 input int    BB_Period              = 20;      // Period ของ Bollinger Bands
 input double BB_Deviation           = 2.0;     // ค่า Standard Deviation
 
-input group "--- Dynamic Lot & Capital Protection ---"
+input group "===== 5. ขนาด Lot & ป้องกันทุน ====="
 input bool   UseDynamicLot          = false;   // เปิดใช้งานการคำนวณ Lot อัตโนมัติตามขนาด Equity
 input double BalancePerLot          = 10000.0; // สัดส่วนเงิน Equity ต่อ Lot เริ่มต้น 0.01
 input bool   UseEquityLock          = false;   // เปิดระบบล็อคพอร์ตหยุดเปิดไม้ใหม่ทันทีหาก Equity ต่ำกว่ากำหนด
 input double MinEquityLimit         = 500.0;   // ขีดจำกัด Equity ขั้นต่ำ หากต่ำกว่านี้จะหยุดเปิดไม้ใหม่
+input bool   UseAutoReduceLot       = false;   // เปิดใช้งานระบบลดขนาด Lot อัตโนมัติเมื่อ Drawdown สูงขึ้น
+input double ReduceLotThresholdDD   = 5.0;     // เปอร์เซ็นต์ Drawdown ที่เริ่มสั่งลดขนาด Lot ลงครึ่งหนึ่ง
 
-input group "--- Risk Management: Max Drawdown Stop ---"
+input group "===== 6. Max Drawdown Stop (เบรกฉุกเฉิน) ====="
 input bool   UseMaxDDStop           = true;    // เปิดใช้งานระบบตัดขาดทุนฉุกเฉินเมื่อ Max DD เกินกำหนด
 input double MaxAllowedDD_USD       = 50.0;    // ยอมให้ขาดทุนสูงสุดเป็นเงิน ($) ถ้าเกินจะปิดทิ้งทั้งหมดทันที (ตั้งเป็น 0 เพื่อปิดการเช็คแบบเงิน)
 input double MaxAllowedDD_Pct       = 10.0;    // ยอมให้ขาดทุนสูงสุดเป็นเปอร์เซ็นต์ (%) จากยอด Balance สูงสุด (ตั้งเป็น 0 เพื่อปิดการเช็คแบบ %)
 
-input group "--- Auto Reduce Lot on High DD ---"
-input bool   UseAutoReduceLot       = false;   // เปิดใช้งานระบบลดขนาด Lot อัตโนมัติเมื่อ Drawdown สูงขึ้น
-input double ReduceLotThresholdDD   = 5.0;     // เปอร์เซ็นต์ Drawdown ที่เริ่มสั่งลดขนาด Lot ลงครึ่งหนึ่ง
-
-input group "--- Basket Management & Recovery (Developed) ---"
+input group "===== 7. แก้ไม้: Breakeven / Partial Close / Recovery Mode ====="
 input bool   UseBasketBreakeven     = true;    // เปิดระบบขยับจุดคุ้มทุน (Breakeven / ล็อคกำไรบางส่วน)
 input double BreakevenTriggerUSD    = 10.0;    // กำไรขั้นต่ำที่จะเริ่มเปิดใช้งานระบบ Breakeven
 input double BreakevenLockUSD       = 3.0;     // กำไรขั้นต่ำที่จะต้องเหลือล็อกไว้เมื่อราคาถอยกลับ
@@ -103,28 +94,21 @@ input bool   UseRecoveryMode        = false;   // เปิดใช้งาน
 input double RecoveryDD_TriggerPercent = 5.0;  // Drawdown (%) ขั้นต่ำที่จะเริ่มเปิดใช้งาน Recovery Boost (ต่ำกว่านี้ lot คำนวณตามปกติ ไม่บวกเพิ่ม)
 input double RecoveryLotBoost          = 1.2;  // ตัวคูณ lot เพิ่มเติมตอน Recovery Mode ทำงาน (คูณทับ lot ที่คำนวณได้ตามปกติ)
 
-input group "--- Level Unlock (Overflow Recovery) ---"
+input group "===== 8. Overflow: Level Unlock & Force Hedge on High DD ====="
 input bool   UseLevelUnlock      = false;   // เปิดใช้ระบบปลดล็อคชั้นเพิ่ม: เมื่อ Buy และ Sell เปิดเต็ม TotalLevels ทั้ง 2 ฝั่งแล้ว จะอนุญาตให้เปิดไม้เพิ่มต่อได้จนกว่าบาสเก็ตจะกำไรถึง TargetProfit (โค้ดหยุดเปิดไม้เองอัตโนมัติทันทีที่ถึงเป้าอยู่แล้ว) - เสี่ยงสูง lot จะโตต่อเนื่องตาม LotMultiplier ควรเปิด UseMaxDDStop คู่กันเสมอ
 input int    MaxUnlockedLevels   = 5;       // จำนวนชั้นเพิ่มสูงสุดต่อฝั่งที่ยอมให้เปิดเกิน TotalLevels (ตั้ง 0 = ไม่จำกัดจำนวนชั้น อันตรายมาก)
-
-input group "--- Force Hedge on High DD ---"
 input bool   UseForceHedgeOnDD          = false;  // เปิด/ปิดระบบบังคับเปิดไม้ฝั่งตรงข้ามเมื่อ DD สูง (ข้าม EMA/MTF/ADX/RSI/Bollinger filter ทั้งหมด - เพราะจุดประสงค์คือ hedge ฝั่งที่ filter กำลังบล็อกอยู่)
 input double ForceHedgeDD_TriggerPercent = 6.0;   // Drawdown (%) ขั้นต่ำที่จะบังคับเปิดไม้ฝั่งที่มีไม้น้อยกว่า (ฝั่งที่ไม่ได้ hedge อยู่)
 input double ForceHedgeResetPercent      = 3.0;   // DD ต้องลดต่ำกว่าค่านี้ก่อน ถึงจะบังคับเปิดซ้ำได้อีกครั้ง (กัน spam เปิดรัวๆ ตอน DD ค้างสูง)
 input double ForceHedgeLotMultiplier     = 1.0;   // ตัวคูณ lot ของไม้ที่ถูกบังคับเปิด (คูณทับ lot ปกติของระดับถัดไปฝั่งนั้น)
 
-input group "--- Execution & Gap/Slippage Protection ---"
+input group "===== 9. ป้องกัน Gap / Slippage ====="
 input bool   UseGapProtection    = true;   // เปิด/ปิด การเช็ค Gap ราคาโดด (Enable Gap Check)
 input int    MaxAllowedGapPoints = 100;    // Gap ยอมรับได้สูงสุด (Points) ถ้าราคาโดดข้ามจะทำการ Reset
 input int    MaxSlippagePoints   = 20;     // ล็อค Slippage สูงสุด (Points) แนะนำ 20-30 เพื่อให้รวบติดชัวร์
 input int    MaxSpreadAllowed    = 40;     // (Virtual Mode) สเปรดสูงสุดที่อนุญาตให้เปิดไม้ (Points)
 
-input group "--- Basket Profit Target (Trailing) ---"
-input double TargetProfit        = 1.0;    // Minimum Profit ($) to activate Trailing
-input double TrailingStopUSD     = 0.5;    // Trailing Distance ($)
-input double ProfitFloorPercent  = 0.30;   // Safety Floor % ล็อกทุนขั้นต่ำ (30%)
-
-input group "--- PRO TERMINAL UI CUSTOMIZE ---"
+input group "===== 10. สี Dashboard UI ====="
 input color  UI_MainBG        = C'18, 20, 28';    // Main BG Color (Dark Navy)
 input color  UI_Shadow        = C'5, 5, 5';       // Shadow Color (Drop Shadow)
 input color  UI_Accent        = C'33, 150, 243';  // Border & Progress Bar Color (Blue)
