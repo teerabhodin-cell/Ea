@@ -99,7 +99,9 @@ input double BreakevenLockUSD       = 3.0;     // กำไรขั้นต่
 input bool   UsePartialClose        = true;    // เปิดใช้งานระบบทยอยปิดทำกำไรบางส่วน (Partial Close)
 input double PartialCloseProfitUSD  = 15.0;    // กำไรที่ถึงเป้าแล้วสั่งปิดครึ่งหนึ่งของไม้ทั้งหมด
 input double PartialClosePercent    = 50.0;    // สัดส่วนเปอร์เซ็นต์ของออเดอร์ที่จะปิด (เช่น 50%)
-input bool   UseRecoveryMode        = false;   // เปิดใช้งานโหมดแก้ไม้ (Recovery Mode) เร่งเก็บบาสเกตเมื่อพอร์ตติดลบสะสม
+input bool   UseRecoveryMode        = false;   // เปิดใช้งานโหมดแก้ไม้ (Recovery Mode) เร่งเก็บบาสเกตเมื่อ Drawdown สูงเกิน RecoveryDD_TriggerPercent
+input double RecoveryDD_TriggerPercent = 5.0;  // Drawdown (%) ขั้นต่ำที่จะเริ่มเปิดใช้งาน Recovery Boost (ต่ำกว่านี้ lot คำนวณตามปกติ ไม่บวกเพิ่ม)
+input double RecoveryLotBoost          = 1.2;  // ตัวคูณ lot เพิ่มเติมตอน Recovery Mode ทำงาน (คูณทับ lot ที่คำนวณได้ตามปกติ)
 
 input group "--- Level Unlock (Overflow Recovery) ---"
 input bool   UseLevelUnlock      = false;   // เปิดใช้ระบบปลดล็อคชั้นเพิ่ม: เมื่อ Buy และ Sell เปิดเต็ม TotalLevels ทั้ง 2 ฝั่งแล้ว จะอนุญาตให้เปิดไม้เพิ่มต่อได้จนกว่าบาสเก็ตจะกำไรถึง TargetProfit (โค้ดหยุดเปิดไม้เองอัตโนมัติทันทีที่ถึงเป้าอยู่แล้ว) - เสี่ยงสูง lot จะโตต่อเนื่องตาม LotMultiplier ควรเปิด UseMaxDDStop คู่กันเสมอ
@@ -413,9 +415,14 @@ double GetCalculatedLotSize(int nextLevel)
       lot = lot * 0.5;
    }
 
-   if(UseRecoveryMode)
+   // FIXED: UseRecoveryMode used to boost every lot by a flat 1.2x unconditionally,
+   // even at zero drawdown - despite its own description saying it's meant to
+   // "accelerate recovery when the account has accumulated losses". Now it only
+   // boosts once MaxDrawdownPercent actually crosses RecoveryDD_TriggerPercent, by
+   // the configurable RecoveryLotBoost multiplier.
+   if(UseRecoveryMode && MaxDrawdownPercent >= RecoveryDD_TriggerPercent)
    {
-      lot = lot * 1.2;
+      lot = lot * RecoveryLotBoost;
    }
 
    lot = MathMax(0.01, lot);
