@@ -107,6 +107,12 @@ input group "--- Level Unlock (Overflow Recovery) ---"
 input bool   UseLevelUnlock      = false;   // เปิดใช้ระบบปลดล็อคชั้นเพิ่ม: เมื่อ Buy และ Sell เปิดเต็ม TotalLevels ทั้ง 2 ฝั่งแล้ว จะอนุญาตให้เปิดไม้เพิ่มต่อได้จนกว่าบาสเก็ตจะกำไรถึง TargetProfit (โค้ดหยุดเปิดไม้เองอัตโนมัติทันทีที่ถึงเป้าอยู่แล้ว) - เสี่ยงสูง lot จะโตต่อเนื่องตาม LotMultiplier ควรเปิด UseMaxDDStop คู่กันเสมอ
 input int    MaxUnlockedLevels   = 5;       // จำนวนชั้นเพิ่มสูงสุดต่อฝั่งที่ยอมให้เปิดเกิน TotalLevels (ตั้ง 0 = ไม่จำกัดจำนวนชั้น อันตรายมาก)
 
+input group "--- Force Hedge on High DD ---"
+input bool   UseForceHedgeOnDD          = false;  // เปิด/ปิดระบบบังคับเปิดไม้ฝั่งตรงข้ามเมื่อ DD สูง (ข้าม EMA/MTF/ADX/RSI/Bollinger filter ทั้งหมด - เพราะจุดประสงค์คือ hedge ฝั่งที่ filter กำลังบล็อกอยู่)
+input double ForceHedgeDD_TriggerPercent = 6.0;   // Drawdown (%) ขั้นต่ำที่จะบังคับเปิดไม้ฝั่งที่มีไม้น้อยกว่า (ฝั่งที่ไม่ได้ hedge อยู่)
+input double ForceHedgeResetPercent      = 3.0;   // DD ต้องลดต่ำกว่าค่านี้ก่อน ถึงจะบังคับเปิดซ้ำได้อีกครั้ง (กัน spam เปิดรัวๆ ตอน DD ค้างสูง)
+input double ForceHedgeLotMultiplier     = 1.0;   // ตัวคูณ lot ของไม้ที่ถูกบังคับเปิด (คูณทับ lot ปกติของระดับถัดไปฝั่งนั้น)
+
 input group "--- Execution & Gap/Slippage Protection ---"
 input bool   UseGapProtection    = true;   // เปิด/ปิด การเช็ค Gap ราคาโดด (Enable Gap Check)
 input int    MaxAllowedGapPoints = 100;    // Gap ยอมรับได้สูงสุด (Points) ถ้าราคาโดดข้ามจะทำการ Reset
@@ -156,6 +162,7 @@ double   MaxDrawdownUSD     = 0.0;
 // Basket Management & Recovery
 bool     PartialCloseExecuted = false; // ป้องกันการสั่งปิดบางส่วนซ้ำรอบเดิม
 bool     BreakevenActivated   = false; // latch เมื่อกำไรแตะ BreakevenTriggerUSD แล้ว (ต้อง latch ไว้ก่อน ไม่งั้นเงื่อนไข Trigger/Lock จะไม่มีวันเป็นจริงพร้อมกัน)
+bool     ForceHedgeArmed      = false; // latch กัน Force Hedge ยิงรัวๆ ทุกทิคตอน DD ค้างสูง ต้องรอ DD ลดต่ำกว่า ForceHedgeResetPercent ก่อนถึงจะยิงซ้ำได้
 
 string   UI_PREFIX       = "QX_PRO_";
 string   BTN_CLOSE_ALL   = "QX_PRO_BtnCloseAll";
@@ -185,6 +192,7 @@ bool CheckRSIFilter(bool isBuy);
 bool CheckBollingerFilter(bool isBuy);
 double GetCalculatedLotSize(int nextLevel);
 void ApplyBasketBreakevenAndPartial(double currentProfit);
+void CheckForceHedgeOnDD();
 void LogFilterBlockReason(bool isBuy);
 void ExecuteGridLogic();
 void PlacePendingGridServer();
@@ -518,6 +526,107 @@ void ApplyBasketBreakevenAndPartial(double currentProfit)
 }
 
 //+------------------------------------------------------------------+
+//| Force Hedge on High DD                                            |
+//| When (live, current) drawdown crosses ForceHedgeDD_TriggerPercent, |
+//| immediately market-opens one order on whichever side has FEWER    |
+//| positions (the side that isn't currently hedging), bypassing      |
+//| every directional filter (EMA/MTF/ADX/RSI/Bollinger) and the      |
+//| normal grid price-target wait entirely - those filters are        |
+//| exactly what can leave one side unhedged during a strong trend,   |
+//| which is the scenario this is meant to rescue.                   |
+//|                                                                    |
+//| Uses LIVE drawdown (PeakBalanceForDD vs current equity right now), |
+//| not the session's all-time-worst MaxDrawdownPercent - that one    |
+//| only ever grows, so gating on it would let this fire at most once |
+//| per session and never re-arm after the account recovers.          |
+//|                                                                    |
+//| Latches after firing until live DD drops back below                |
+//| ForceHedgeResetPercent, so it fires once per DD spike instead of   |
+//| stacking a new forced order every tick while DD stays elevated.    |
+//+------------------------------------------------------------------+
+void CheckForceHedgeOnDD()
+{
+   if(!UseForceHedgeOnDD || IsClosingState) return;
+
+   double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double liveDDPercent = 0.0;
+   if(PeakBalanceForDD > 0)
+   {
+      double liveDDVal = PeakBalanceForDD - currentEquity;
+      if(liveDDVal < 0) liveDDVal = 0;
+      liveDDPercent = (liveDDVal / PeakBalanceForDD) * 100.0;
+   }
+
+   if(liveDDPercent < ForceHedgeResetPercent)
+   {
+      ForceHedgeArmed = false;
+      return;
+   }
+
+   if(liveDDPercent < ForceHedgeDD_TriggerPercent || ForceHedgeArmed) return;
+
+   int buyCount = 0, sellCount = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+
+      if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) buyCount++;
+      else sellCount++;
+   }
+
+   if(buyCount == sellCount) return; // สมดุลอยู่แล้ว ไม่มีฝั่งไหนต้องบังคับเปิดเพิ่ม
+
+   bool needBuy = (sellCount > buyCount);
+   int  neededSideCount = needBuy ? buyCount : sellCount;
+
+   int cap = TotalLevels;
+   if(UseLevelUnlock) cap += (MaxUnlockedLevels <= 0 ? 999999 : MaxUnlockedLevels);
+   if(neededSideCount >= cap) return; // เต็มเพดานแล้ว (รวม Level Unlock ถ้าเปิด) บังคับเพิ่มไม่ได้
+
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   if(ask <= 0 || bid <= 0) return;
+
+   double lot = GetCalculatedLotSize(neededSideCount + 1) * ForceHedgeLotMultiplier;
+
+   double minVol  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxVol  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double stepVol = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   if(stepVol > 0) lot = MathRound(lot / stepVol) * stepVol;
+   if(minVol  > 0 && lot < minVol) lot = minVol;
+   if(maxVol  > 0 && lot > maxVol) lot = maxVol;
+   lot = NormalizeDouble(MathMax(0.01, lot), 2);
+
+   ENUM_ORDER_TYPE_FILLING fillMode = GetBestFillingMode();
+   MqlTradeRequest request;
+   MqlTradeResult  result;
+   ZeroMemory(request); ZeroMemory(result);
+   request.action       = TRADE_ACTION_DEAL;
+   request.symbol       = _Symbol;
+   request.volume       = lot;
+   request.type         = needBuy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+   request.price        = needBuy ? ask : bid;
+   request.deviation    = MaxSlippagePoints * m_multiplier;
+   request.magic        = MagicNumber;
+   request.comment      = needBuy ? "FORCE-HEDGE-BUY" : "FORCE-HEDGE-SELL";
+   request.type_filling = fillMode;
+
+   if(OrderSend(request, result))
+   {
+      ForceHedgeArmed = true;
+      LastOrderSentTime = TimeCurrent();
+      PrintFormat("🆘 [FORCE HEDGE] Live DD %.2f%% >= %.2f%% -> Forced %s %.2f lot (Buy:%d Sell:%d before).",
+                  liveDDPercent, ForceHedgeDD_TriggerPercent, needBuy ? "BUY" : "SELL", lot, buyCount, sellCount);
+   }
+   else
+   {
+      Print("Force Hedge OrderSend failed: ", GetLastError(), " retcode: ", result.retcode);
+   }
+}
+
+//+------------------------------------------------------------------+
 //| Expert initialization                                            |
 //+------------------------------------------------------------------+
 int OnInit()
@@ -541,6 +650,7 @@ int OnInit()
    IsClosingState     = false;
    PartialCloseExecuted = false;
    BreakevenActivated   = false;
+   ForceHedgeArmed      = false;
    PeakBalanceForDD   = AccountInfoDouble(ACCOUNT_BALANCE);
    MaxDrawdownPercent = 0.0;
    MaxDrawdownUSD     = 0.0;
@@ -822,6 +932,7 @@ void OnTick()
 
    // 4. Update Drawdown Tracker & HUD UI (Throttled Update: ทุกๆ 500ms)
    UpdateDrawdownTracker();
+   CheckForceHedgeOnDD();
 
    uint now = GetTickCount();
    if(now - lastUIUpdateTime >= 500)
@@ -1395,6 +1506,7 @@ void ClearEverythingAsync()
    LastOrderSentTime     = 0;
    PartialCloseExecuted  = false;
    BreakevenActivated    = false;
+   ForceHedgeArmed       = false;
 }
 
 //+------------------------------------------------------------------+
