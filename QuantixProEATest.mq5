@@ -385,14 +385,27 @@ void OnTick()
    }
    else
    {
-      if((openPositions > 0 || pendingOrders > 0) && !IsClosingState)
+      // FIXED: only force-close outside trading hours when the basket is actually
+      // in profit. Previously it closed everything unconditionally the moment the
+      // clock ran out, locking in a loss even if the basket just needed a bit more
+      // time to recover. If it's not profitable yet, just cancel the still-pending
+      // grid orders (stop opening new legs) and leave existing positions open to
+      // ride it out - Trailing Stop / Max DD Stop (if enabled) still apply as usual.
+      if(!IsClosingState)
       {
-         IsClosingState = true;
-         Print("⏰ [TIME FILTER] Outside trading hours -> Auto Closing all active positions...");
-         ClearEverythingAsync();
-         DeleteVisualTSLine();
-         RecalculateBasePrice();
-         IsClosingState = false;
+         if(openPositions > 0 && currentProfit > 0)
+         {
+            IsClosingState = true;
+            Print("⏰ [TIME FILTER] Outside trading hours and in profit -> Auto Closing all active positions...");
+            ClearEverythingAsync();
+            DeleteVisualTSLine();
+            RecalculateBasePrice();
+            IsClosingState = false;
+         }
+         else if(pendingOrders > 0)
+         {
+            DeleteAllPendingOrders();
+         }
       }
    }
 
