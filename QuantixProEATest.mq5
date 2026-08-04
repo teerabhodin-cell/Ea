@@ -552,14 +552,12 @@ void ApplyBasketBreakevenAndPartial(double currentProfit)
 //+------------------------------------------------------------------+
 //| Force Hedge on High DD                                            |
 //| When (live, current) drawdown crosses ForceHedgeDD_TriggerPercent, |
-//| immediately market-opens one order on whichever side is OPPOSITE  |
-//| the side with the worst aggregate floating loss (not just the     |
-//| side with fewer positions - a side can have more positions and    |
-//| still be losing less), bypassing every directional filter          |
-//| (EMA/MTF/ADX/RSI/Bollinger) and the normal grid price-target wait  |
-//| entirely - those filters are exactly what can leave one side       |
-//| unhedged during a strong trend, which is the scenario this is     |
-//| meant to rescue.                                                   |
+//| immediately market-opens one order on whichever side has FEWER    |
+//| positions (the side that isn't currently hedging), bypassing      |
+//| every directional filter (EMA/MTF/ADX/RSI/Bollinger) and the      |
+//| normal grid price-target wait entirely - those filters are        |
+//| exactly what can leave one side unhedged during a strong trend,   |
+//| which is the scenario this is meant to rescue.                   |
 //|                                                                    |
 //| Uses LIVE drawdown (PeakBalanceForDD vs current equity right now), |
 //| not the session's all-time-worst MaxDrawdownPercent - that one    |
@@ -576,35 +574,20 @@ void ApplyBasketBreakevenAndPartial(double currentProfit)
 // comment and log line so it's obvious in the journal which trigger fired.
 bool TryOpenForceHedgeOrder(string reasonTag, string logDetail)
 {
-   int    buyCount = 0, sellCount = 0;
-   double buyProfit = 0.0, sellProfit = 0.0;
+   int buyCount = 0, sellCount = 0;
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
       if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
       if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
 
-      double posProfit = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
-      if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
-      {
-         buyCount++;
-         buyProfit += posProfit;
-      }
-      else
-      {
-         sellCount++;
-         sellProfit += posProfit;
-      }
+      if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) buyCount++;
+      else sellCount++;
    }
 
-   if(buyCount == 0 && sellCount == 0) return false; // ไม่มีไม้เลย ไม่มีอะไรให้ hedge
-   if(buyProfit == sellProfit) return false;          // ขาดทุน/กำไรเท่ากันพอดี ไม่มีฝั่งไหนแย่กว่าให้ต้อง hedge
+   if(buyCount == sellCount) return false; // สมดุลอยู่แล้ว ไม่มีฝั่งไหนต้องบังคับเปิดเพิ่ม
 
-   // เปิดไม้ฝั่งตรงข้ามกับฝั่งที่ "ขาดทุนสะสมมากที่สุด" (ผลรวม P/L ของฝั่งนั้นติดลบมากสุด)
-   // แทนที่จะดูแค่จำนวนไม้ - ฝั่งที่ไม้เยอะกว่าไม่ได้แปลว่าขาดทุนมากกว่าเสมอไป การเปิดฝั่งตรงข้าม
-   // กับฝั่งที่แย่ที่สุดคือการเปิดตามทิศทางที่ราคากำลังวิ่งอยู่ตอนนี้ - ถ้าไปต่อ ไม้ใหม่นี้จะเก็บ
-   // กำไรมาช่วยหักลบฝั่งที่ขาดทุนอยู่ ถ้าราคาเด้งกลับ ฝั่งที่ขาดทุนอยู่ก็จะฟื้นตัวแทน
-   bool needBuy = (sellProfit < buyProfit); // Sell ขาดทุนมากกว่า (แย่กว่า) -> เปิด Buy ถ่วง
+   bool needBuy = (sellCount > buyCount); // Sell มีไม้มากกว่า (ขาด Buy ไปถ่วง) -> เปิด Buy
    int  neededSideCount = needBuy ? buyCount : sellCount;
 
    int cap = TotalLevels;
@@ -663,8 +646,8 @@ bool TryOpenForceHedgeOrder(string reasonTag, string logDetail)
    if(OrderSend(request, result))
    {
       LastOrderSentTime = TimeCurrent();
-      PrintFormat("🆘 [%s] %s -> Forced %s %.2f lot (Buy:%d/$%.2f Sell:%d/$%.2f before).",
-                  reasonTag, logDetail, needBuy ? "BUY" : "SELL", lot, buyCount, buyProfit, sellCount, sellProfit);
+      PrintFormat("🆘 [%s] %s -> Forced %s %.2f lot (Buy:%d Sell:%d before).",
+                  reasonTag, logDetail, needBuy ? "BUY" : "SELL", lot, buyCount, sellCount);
       return true;
    }
 
