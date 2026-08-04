@@ -82,6 +82,8 @@ input group "===== 6. Max Drawdown Stop (เบรกฉุกเฉิน) ====
 input bool   UseMaxDDStop           = true;    // เปิดใช้งานระบบตัดขาดทุนฉุกเฉินเมื่อ Max DD เกินกำหนด
 input double MaxAllowedDD_USD       = 50.0;    // ยอมให้ขาดทุนสูงสุดเป็นเงิน ($) ถ้าเกินจะปิดทิ้งทั้งหมดทันที (ตั้งเป็น 0 เพื่อปิดการเช็คแบบเงิน)
 input double MaxAllowedDD_Pct       = 10.0;    // ยอมให้ขาดทุนสูงสุดเป็นเปอร์เซ็นต์ (%) จากยอด Balance สูงสุด (ตั้งเป็น 0 เพื่อปิดการเช็คแบบ %)
+input bool   UseEmergencySL         = false;   // ติด Stop Loss ฉุกเฉินบนทุกไม้ที่เปิด (server-side) เผื่อ EA/เทอร์มินัลหลุดการเชื่อมต่อ - ไม่ใช่ SL ของกลยุทธ์ปกติ ตั้งกว้างมากๆ ไม่ให้ชนตอนเทรดปกติ
+input int    EmergencySL_Points     = 3000;    // ระยะ SL ฉุกเฉินจากราคาเข้า (Points) ปรับตาม m_multiplier ให้อัตโนมัติแล้ว
 
 input group "===== 7. แก้ไม้: Breakeven / Partial Close / Recovery Mode ====="
 input bool   UseBasketBreakeven     = true;    // เปิดระบบขยับจุดคุ้มทุน (Breakeven / ล็อคกำไรบางส่วน)
@@ -148,6 +150,13 @@ bool     PartialCloseExecuted = false; // ป้องกันการสั�
 bool     BreakevenActivated   = false; // latch เมื่อกำไรแตะ BreakevenTriggerUSD แล้ว (ต้อง latch ไว้ก่อน ไม่งั้นเงื่อนไข Trigger/Lock จะไม่มีวันเป็นจริงพร้อมกัน)
 bool     ForceHedgeArmed      = false; // latch กัน Force Hedge ยิงรัวๆ ทุกทิคตอน DD ค้างสูง ต้องรอ DD ลดต่ำกว่า ForceHedgeResetPercent ก่อนถึงจะยิงซ้ำได้
 
+// สถิติสรุปผล (นับตอนบาสเก็ตปิดจริงใน ClearEverythingAsync เท่านั้น)
+int      StatsTotalBaskets   = 0;
+int      StatsWinCount       = 0;
+int      StatsLossCount      = 0;
+double   StatsSumWinProfit   = 0.0;
+double   StatsSumLossAmount  = 0.0; // เก็บเป็นค่าบวกเสมอ (magnitude ของขาดทุน)
+
 string   UI_PREFIX       = "QX_PRO_";
 string   BTN_CLOSE_ALL   = "QX_PRO_BtnCloseAll";
 
@@ -175,6 +184,7 @@ bool CheckADXFilter(bool isBuy);
 bool CheckRSIFilter(bool isBuy);
 bool CheckBollingerFilter(bool isBuy);
 double GetCalculatedLotSize(int nextLevel);
+double CalcEmergencySL(bool isBuy, double entryPrice, double point);
 void ApplyBasketBreakevenAndPartial(double currentProfit);
 void CheckForceHedgeOnDD();
 void LogFilterBlockReason(bool isBuy);
@@ -382,6 +392,20 @@ void LogFilterBlockReason(bool isBuy)
 }
 
 //+------------------------------------------------------------------+
+//| Emergency Stop Loss (server-side last resort, NOT a strategy SL) |
+//| Returns 0.0 (no SL) when UseEmergencySL is off. When on, computes |
+//| a price EmergencySL_Points away from entry - deliberately wide so |
+//| it never interferes with normal basket management, only protects |
+//| the account if the EA/terminal stops running entirely.           |
+//+------------------------------------------------------------------+
+double CalcEmergencySL(bool isBuy, double entryPrice, double point)
+{
+   if(!UseEmergencySL) return 0.0;
+   double dist = EmergencySL_Points * m_multiplier * point;
+   return isBuy ? NormalizeDouble(entryPrice - dist, _Digits) : NormalizeDouble(entryPrice + dist, _Digits);
+}
+
+//+------------------------------------------------------------------+
 //| Dynamic Lot Calculation & Auto Reduction                         |
 //| Rounds to the symbol's actual volume step and clamps to          |
 //| SYMBOL_VOLUME_MIN/MAX so OrderSend can't be rejected with an      |
@@ -569,8 +593,9 @@ void CheckForceHedgeOnDD()
    if(UseLevelUnlock) cap += (MaxUnlockedLevels <= 0 ? 999999 : MaxUnlockedLevels);
    if(neededSideCount >= cap) return; // เต็มเพดานแล้ว (รวม Level Unlock ถ้าเปิด) บังคับเพิ่มไม่ได้
 
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask   = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid   = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
    if(ask <= 0 || bid <= 0) return;
 
    // Force Hedge IS its own recovery mechanism (active: force-open now, vs.
@@ -611,6 +636,7 @@ void CheckForceHedgeOnDD()
    request.volume       = lot;
    request.type         = needBuy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
    request.price        = needBuy ? ask : bid;
+   request.sl           = CalcEmergencySL(needBuy, needBuy ? ask : bid, point);
    request.deviation    = MaxSlippagePoints * m_multiplier;
    request.magic        = MagicNumber;
    request.comment      = needBuy ? "FORCE-HEDGE-BUY" : "FORCE-HEDGE-SELL";
@@ -654,6 +680,11 @@ int OnInit()
    PartialCloseExecuted = false;
    BreakevenActivated   = false;
    ForceHedgeArmed      = false;
+   StatsTotalBaskets    = 0;
+   StatsWinCount        = 0;
+   StatsLossCount       = 0;
+   StatsSumWinProfit    = 0.0;
+   StatsSumLossAmount   = 0.0;
    PeakBalanceForDD   = AccountInfoDouble(ACCOUNT_BALANCE);
    MaxDrawdownPercent = 0.0;
    MaxDrawdownUSD     = 0.0;
@@ -1278,6 +1309,7 @@ void CheckAndExecuteVirtualGrid()
             request.volume       = lot;
             request.type         = ORDER_TYPE_BUY;
             request.price        = ask;
+            request.sl           = CalcEmergencySL(true, ask, point);
             request.deviation    = MaxSlippagePoints * m_multiplier;
             request.magic        = MagicNumber;
             request.comment      = "V-BUY-" + IntegerToString(nextLevel);
@@ -1354,6 +1386,7 @@ void CheckAndExecuteVirtualGrid()
             request.volume       = lot;
             request.type         = ORDER_TYPE_SELL;
             request.price        = bid;
+            request.sl           = CalcEmergencySL(false, bid, point);
             request.deviation    = MaxSlippagePoints * m_multiplier;
             request.magic        = MagicNumber;
             request.comment      = "V-SELL-" + IntegerToString(nextLevel);
@@ -1406,6 +1439,20 @@ void ClearEverythingAsync()
    MqlTradeRequest request;
    MqlTradeResult  result;
    ENUM_ORDER_TYPE_FILLING fillMode = GetBestFillingMode();
+
+   // สแนปช็อตกำไร/ขาดทุนของบาสเก็ตไว้ก่อนปิดจริง (ต้องอ่านตอนโพซิชั่นยังเปิดอยู่)
+   // เพื่อเอาไปนับสถิติ Win/Loss - อ่านทีหลังหลังปิดแล้วจะดึงค่าไม่ได้
+   double statsSnapshotProfit = 0.0;
+   int    statsPosCount       = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+
+      statsSnapshotProfit += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+      statsPosCount++;
+   }
 
    // 1. เคลียร์ Pending Orders (ยังใช้ Async ได้ ไม่ใช่ตัวที่ทำให้ IsClosingState ค้าง)
    for(int i = OrdersTotal()-1; i >= 0; i--)
@@ -1496,6 +1543,23 @@ void ClearEverythingAsync()
       // only needed live, to give the broker time to actually process the close.
       // In the tester OrderSend() is synchronous/deterministic, so skip it.
       if(retryCount < 10 && !IsTestingMode) Sleep(50);
+   }
+
+   // บันทึกสถิติจาก snapshot ที่เก็บไว้ตอนต้นฟังก์ชัน - นับเป็น "บาสเก็ตที่ปิดแล้ว" เฉพาะตอนที่มีไม้จริงๆ ให้ปิด
+   // (กันนับซ้ำตอนกดปุ่ม Close All ทั้งที่พอร์ตว่างอยู่แล้ว)
+   if(statsPosCount > 0)
+   {
+      StatsTotalBaskets++;
+      if(statsSnapshotProfit > 0)
+      {
+         StatsWinCount++;
+         StatsSumWinProfit += statsSnapshotProfit;
+      }
+      else
+      {
+         StatsLossCount++;
+         StatsSumLossAmount += MathAbs(statsSnapshotProfit);
+      }
    }
 
    GridCreated           = false;
@@ -1702,6 +1766,31 @@ void InitDashboard()
    CreateLabel(UI_PREFIX+"Lbl_MaxDD", X_Right+12, accY, GetUIString("ย่อตัวสูงสุด (Max DD):", "Max Drawdown:"), 8, UI_TextDim);
    CreateLabel(UI_PREFIX+"Val_MaxDD", ValX_Acc, accY, "-$0.00 (-0.00%)", 8, UI_Loss);
 
+   // 2. SYSTEM STATUS PANEL (Force Hedge / Level Unlock / Basket Stats)
+   int SysY = Y + 270;
+   CreatePanel(UI_PREFIX+"SysBG", X_Right, SysY, PanelW, 176, UI_PanelBG, UI_PanelBG);
+   CreateLabel(UI_PREFIX+"SysTitle", X_Right+12, SysY+6, GetUIString("สถานะระบบเสริม (SYSTEM STATUS)", "SYSTEM STATUS"), 8, UI_Accent);
+
+   int sysY = SysY + 26;
+   CreateLabel(UI_PREFIX+"Lbl_ForceHedge", X_Right+12, sysY, GetUIString("Force Hedge:", "Force Hedge:"), 8, UI_TextDim);
+   CreateLabel(UI_PREFIX+"Val_ForceHedge", ValX_Acc, sysY, "OFF", 8, UI_TextDim);
+
+   sysY += accGap;
+   CreateLabel(UI_PREFIX+"Lbl_LevelUnlock", X_Right+12, sysY, GetUIString("Level Unlock:", "Level Unlock:"), 8, UI_TextDim);
+   CreateLabel(UI_PREFIX+"Val_LevelUnlock", ValX_Acc, sysY, "OFF", 8, UI_TextDim);
+
+   sysY += accGap;
+   CreateLabel(UI_PREFIX+"Lbl_Baskets", X_Right+12, sysY, GetUIString("บาสเก็ตที่ปิดแล้ว:", "Baskets Closed:"), 8, UI_TextDim);
+   CreateLabel(UI_PREFIX+"Val_Baskets", ValX_Acc, sysY, "0", 8, clrWhite);
+
+   sysY += accGap;
+   CreateLabel(UI_PREFIX+"Lbl_WinRate", X_Right+12, sysY, GetUIString("อัตราชนะ (Win Rate):", "Win Rate:"), 8, UI_TextDim);
+   CreateLabel(UI_PREFIX+"Val_WinRate", ValX_Acc, sysY, "0.0% (0W/0L)", 8, clrWhite);
+
+   sysY += accGap;
+   CreateLabel(UI_PREFIX+"Lbl_AvgWL", X_Right+12, sysY, GetUIString("เฉลี่ยกำไร/ขาดทุน:", "Avg Win/Loss:"), 8, UI_TextDim);
+   CreateLabel(UI_PREFIX+"Val_AvgWL", ValX_Acc, sysY, "+$0.00 / -$0.00", 8, clrWhite);
+
    ChartRedraw();
 }
 
@@ -1796,6 +1885,56 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
 
    string ddText = StringFormat("-$%.2f (-%.2f%%)", MaxDrawdownUSD, MaxDrawdownPercent);
    ObjectSetString(0, UI_PREFIX+"Val_MaxDD", OBJPROP_TEXT, ddText);
+
+   // 3. SYSTEM STATUS PANEL UPDATES
+   if(!UseForceHedgeOnDD)
+   {
+      ObjectSetString(0, UI_PREFIX+"Val_ForceHedge", OBJPROP_TEXT, GetUIString("ปิดใช้งาน", "OFF"));
+      ObjectSetInteger(0, UI_PREFIX+"Val_ForceHedge", OBJPROP_COLOR, UI_TextDim);
+   }
+   else if(ForceHedgeArmed)
+   {
+      ObjectSetString(0, UI_PREFIX+"Val_ForceHedge", OBJPROP_TEXT, GetUIString("ยิงแล้ว (รอ DD ลด)", "FIRED (waiting DD drop)"));
+      ObjectSetInteger(0, UI_PREFIX+"Val_ForceHedge", OBJPROP_COLOR, UI_Loss);
+   }
+   else
+   {
+      ObjectSetString(0, UI_PREFIX+"Val_ForceHedge", OBJPROP_TEXT, GetUIString("พร้อมทำงาน", "READY"));
+      ObjectSetInteger(0, UI_PREFIX+"Val_ForceHedge", OBJPROP_COLOR, UI_Profit);
+   }
+
+   if(!UseLevelUnlock)
+   {
+      ObjectSetString(0, UI_PREFIX+"Val_LevelUnlock", OBJPROP_TEXT, GetUIString("ปิดใช้งาน", "OFF"));
+      ObjectSetInteger(0, UI_PREFIX+"Val_LevelUnlock", OBJPROP_COLOR, UI_TextDim);
+   }
+   else
+   {
+      int buyCntUI = 0, sellCntUI = 0;
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+         if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+         if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) buyCntUI++;
+         else sellCntUI++;
+      }
+      int extraBuy  = (int)MathMax(0, buyCntUI  - TotalLevels);
+      int extraSell = (int)MathMax(0, sellCntUI - TotalLevels);
+      string capTxt = (MaxUnlockedLevels <= 0) ? "∞" : IntegerToString(MaxUnlockedLevels);
+      ObjectSetString(0, UI_PREFIX+"Val_LevelUnlock", OBJPROP_TEXT, StringFormat("B+%d S+%d / %s", extraBuy, extraSell, capTxt));
+      ObjectSetInteger(0, UI_PREFIX+"Val_LevelUnlock", OBJPROP_COLOR, (extraBuy > 0 || extraSell > 0) ? UI_Loss : UI_Profit);
+   }
+
+   ObjectSetString(0, UI_PREFIX+"Val_Baskets", OBJPROP_TEXT, IntegerToString(StatsTotalBaskets));
+
+   double winRate = (StatsTotalBaskets > 0) ? (StatsWinCount * 100.0 / StatsTotalBaskets) : 0.0;
+   ObjectSetString(0, UI_PREFIX+"Val_WinRate", OBJPROP_TEXT,
+                   StringFormat("%.1f%% (%dW/%dL)", winRate, StatsWinCount, StatsLossCount));
+
+   double avgWin  = (StatsWinCount  > 0) ? (StatsSumWinProfit  / StatsWinCount)  : 0.0;
+   double avgLoss = (StatsLossCount > 0) ? (StatsSumLossAmount / StatsLossCount) : 0.0;
+   ObjectSetString(0, UI_PREFIX+"Val_AvgWL", OBJPROP_TEXT, StringFormat("+$%.2f / -$%.2f", avgWin, avgLoss));
 }
 
 void DeleteDashboard()
