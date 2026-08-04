@@ -48,6 +48,9 @@ input int    DistancePoints         = 300;     // ระยะห่าง Fixed
 input int    TotalLevels            = 10;      // จำนวนชั้นต่อฝั่ง (10 Buy Stop + 10 Sell Stop)
 input ulong  MagicNumber            = 112233;
 
+input group "--- Adaptive ATR Grid ---"
+input bool   UseAdaptiveATRGrid     = false;   // เปิดใช้ระบบปรับระยะ Grid ตามความผันผวนอัตโนมัติ (ขยายระยะ Grid เมื่อ Drawdown สูงขึ้น)
+
 input group "--- Trend Filter (EMA Anti-Sideway) ---"
 input bool   UseEMAFilter           = true;    // เปิดใช้ตัวกรองเทรนด์ EMA
 input int    EMA_Period             = 200;     // Period ของเส้น EMA
@@ -57,6 +60,46 @@ input bool   StrictSellFilter       = true;    // ล็อคฝั่ง Sell:
 input group "--- Multi Timeframe Filter ---"
 input bool   UseMTFFilter          = false;   // เปิดใช้ตัวกรองเทรนด์จาก Timeframe สูงกว่า (ตั้ง MTF_Period ให้สูงกว่า Timeframe ของกราฟที่แปะ EA จริงๆ ไม่งั้นจะซ้ำกับ EMA filter หลัก)
 input ENUM_TIMEFRAMES MTF_Period   = PERIOD_H1; // Timeframe ที่ใช้กรองเทรนด์หลัก
+
+input group "--- ADX Filter ---"
+input bool   UseADXFilter           = false;   // เปิดใช้ตัวกรองความแรงเทรนด์ ADX
+input int    ADX_Period             = 14;      // Period ของ ADX
+input double ADX_MinLevel           = 25.0;    // ค่า ADX ขั้นต่ำเพื่อยืนยันว่ามีเทรนด์
+
+input group "--- RSI Filter ---"
+input bool   UseRSIFilter           = false;   // เปิดใช้ตัวกรอง RSI
+input int    RSI_Period             = 14;      // Period ของ RSI
+input double RSI_BuyMax             = 70.0;    // ค่า RSI สูงสุดที่จะอนุญาตให้เปิด Buy (ป้องกันซื้อตอน Overbought เกินไป)
+input double RSI_SellMin            = 30.0;    // ค่า RSI ต่ำสุดที่จะอนุญาตให้เปิด Sell (ป้องกันขายตอน Oversold เกินไป)
+
+input group "--- Bollinger Bands Filter ---"
+input bool   UseBollingerFilter     = false;   // เปิดใช้ตัวกรองกรอบราคา Bollinger Bands
+input int    BB_Period              = 20;      // Period ของ Bollinger Bands
+input double BB_Deviation           = 2.0;     // ค่า Standard Deviation
+
+input group "--- Dynamic Lot & Capital Protection ---"
+input bool   UseDynamicLot          = false;   // เปิดใช้งานการคำนวณ Lot อัตโนมัติตามขนาด Equity
+input double BalancePerLot          = 10000.0; // สัดส่วนเงิน Equity ต่อ Lot เริ่มต้น 0.01
+input bool   UseEquityLock          = false;   // เปิดระบบล็อคพอร์ตหยุดเปิดไม้ใหม่ทันทีหาก Equity ต่ำกว่ากำหนด
+input double MinEquityLimit         = 500.0;   // ขีดจำกัด Equity ขั้นต่ำ หากต่ำกว่านี้จะหยุดเปิดไม้ใหม่
+
+input group "--- Risk Management: Max Drawdown Stop ---"
+input bool   UseMaxDDStop           = true;    // เปิดใช้งานระบบตัดขาดทุนฉุกเฉินเมื่อ Max DD เกินกำหนด
+input double MaxAllowedDD_USD       = 50.0;    // ยอมให้ขาดทุนสูงสุดเป็นเงิน ($) ถ้าเกินจะปิดทิ้งทั้งหมดทันที (ตั้งเป็น 0 เพื่อปิดการเช็คแบบเงิน)
+input double MaxAllowedDD_Pct       = 10.0;    // ยอมให้ขาดทุนสูงสุดเป็นเปอร์เซ็นต์ (%) จากยอด Balance สูงสุด (ตั้งเป็น 0 เพื่อปิดการเช็คแบบ %)
+
+input group "--- Auto Reduce Lot on High DD ---"
+input bool   UseAutoReduceLot       = false;   // เปิดใช้งานระบบลดขนาด Lot อัตโนมัติเมื่อ Drawdown สูงขึ้น
+input double ReduceLotThresholdDD   = 5.0;     // เปอร์เซ็นต์ Drawdown ที่เริ่มสั่งลดขนาด Lot ลงครึ่งหนึ่ง
+
+input group "--- Basket Management & Recovery (Developed) ---"
+input bool   UseBasketBreakeven     = true;    // เปิดระบบขยับจุดคุ้มทุน (Breakeven / ล็อคกำไรบางส่วน)
+input double BreakevenTriggerUSD    = 10.0;    // กำไรขั้นต่ำที่จะเริ่มเปิดใช้งานระบบ Breakeven
+input double BreakevenLockUSD       = 3.0;     // กำไรขั้นต่ำที่จะต้องเหลือล็อกไว้เมื่อราคาถอยกลับ
+input bool   UsePartialClose        = true;    // เปิดใช้งานระบบทยอยปิดทำกำไรบางส่วน (Partial Close)
+input double PartialCloseProfitUSD  = 15.0;    // กำไรที่ถึงเป้าแล้วสั่งปิดครึ่งหนึ่งของไม้ทั้งหมด
+input double PartialClosePercent    = 50.0;    // สัดส่วนเปอร์เซ็นต์ของออเดอร์ที่จะปิด (เช่น 50%)
+input bool   UseRecoveryMode        = false;   // เปิดใช้งานโหมดแก้ไม้ (Recovery Mode) เร่งเก็บบาสเกตเมื่อพอร์ตติดลบสะสม
 
 input group "--- Execution & Gap/Slippage Protection ---"
 input bool   UseGapProtection    = true;   // เปิด/ปิด การเช็ค Gap ราคาโดด (Enable Gap Check)
@@ -100,13 +143,20 @@ double   PeakBalanceForDD   = 0.0;
 double   MaxDrawdownPercent = 0.0;
 double   MaxDrawdownUSD     = 0.0;
 
+// Basket Management & Recovery
+bool     PartialCloseExecuted = false; // ป้องกันการสั่งปิดบางส่วนซ้ำรอบเดิม
+bool     BreakevenActivated   = false; // latch เมื่อกำไรแตะ BreakevenTriggerUSD แล้ว (ต้อง latch ไว้ก่อน ไม่งั้นเงื่อนไข Trigger/Lock จะไม่มีวันเป็นจริงพร้อมกัน)
+
 string   UI_PREFIX       = "QX_PRO_";
 string   BTN_CLOSE_ALL   = "QX_PRO_BtnCloseAll";
 
-// Handle สำหรับอินดิเคเตอร์ ATR / EMA / Multi-Timeframe EMA
+// Handle สำหรับอินดิเคเตอร์ ATR / EMA / Multi-Timeframe EMA / ADX / RSI / Bollinger Bands
 int      atrHandle       = INVALID_HANDLE;
 int      emaHandle       = INVALID_HANDLE;
 int      mtfEmaHandle    = INVALID_HANDLE;
+int      adxHandle       = INVALID_HANDLE;
+int      rsiHandle       = INVALID_HANDLE;
+int      bbHandle        = INVALID_HANDLE;
 
 // --- [ UI OPTIMIZATION GLOBAL VARS ] ---
 uint     lastUIUpdateTime = 0;
@@ -116,6 +166,11 @@ uint     lastUIUpdateTime = 0;
 bool IsTradingAllowedByTime();
 bool CheckEMATrend(bool isBuy);
 bool CheckMTFFilter(bool isBuy);
+bool CheckADXFilter(bool isBuy);
+bool CheckRSIFilter(bool isBuy);
+bool CheckBollingerFilter(bool isBuy);
+double GetCalculatedLotSize(int nextLevel);
+void ApplyBasketBreakevenAndPartial(double currentProfit);
 void ExecuteGridLogic();
 void PlacePendingGridServer();
 void CheckAndExecuteVirtualGrid();
@@ -232,6 +287,174 @@ bool CheckMTFFilter(bool isBuy)
 }
 
 //+------------------------------------------------------------------+
+//| ADX Filter Check                                                 |
+//+------------------------------------------------------------------+
+bool CheckADXFilter(bool isBuy)
+{
+   if(!UseADXFilter || adxHandle == INVALID_HANDLE) return true;
+   double adxVals[];
+   ArraySetAsSeries(adxVals, true);
+   if(CopyBuffer(adxHandle, 0, 1, 1, adxVals) <= 0) return true;
+   return (adxVals[0] >= ADX_MinLevel);
+}
+
+//+------------------------------------------------------------------+
+//| RSI Filter Check                                                 |
+//+------------------------------------------------------------------+
+bool CheckRSIFilter(bool isBuy)
+{
+   if(!UseRSIFilter || rsiHandle == INVALID_HANDLE) return true;
+   double rsiVals[];
+   ArraySetAsSeries(rsiVals, true);
+   if(CopyBuffer(rsiHandle, 0, 1, 1, rsiVals) <= 0) return true;
+
+   if(isBuy) return (rsiVals[0] <= RSI_BuyMax);
+   else      return (rsiVals[0] >= RSI_SellMin);
+}
+
+//+------------------------------------------------------------------+
+//| Bollinger Bands Filter Check                                     |
+//+------------------------------------------------------------------+
+bool CheckBollingerFilter(bool isBuy)
+{
+   if(!UseBollingerFilter || bbHandle == INVALID_HANDLE) return true;
+   double upperVals[], lowerVals[];
+   ArraySetAsSeries(upperVals, true);
+   ArraySetAsSeries(lowerVals, true);
+   if(CopyBuffer(bbHandle, 1, 1, 1, upperVals) <= 0) return true;
+   if(CopyBuffer(bbHandle, 2, 1, 1, lowerVals) <= 0) return true;
+
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+
+   if(isBuy) return (ask >= lowerVals[0]);
+   else      return (bid <= upperVals[0]);
+}
+
+//+------------------------------------------------------------------+
+//| Dynamic Lot Calculation & Auto Reduction                         |
+//| Rounds to the symbol's actual volume step and clamps to          |
+//| SYMBOL_VOLUME_MIN/MAX so OrderSend can't be rejected with an      |
+//| invalid-volume error on brokers whose lot step isn't 0.01.       |
+//+------------------------------------------------------------------+
+double GetCalculatedLotSize(int nextLevel)
+{
+   double base = BaseLot;
+   if(UseDynamicLot)
+   {
+      double currentEq = AccountInfoDouble(ACCOUNT_EQUITY);
+      if(BalancePerLot > 0)
+      {
+         base = NormalizeDouble((currentEq / BalancePerLot) * BaseLot, 2);
+         if(base < 0.01) base = 0.01;
+      }
+   }
+
+   double lot = base * MathPow(LotMultiplier, nextLevel - 1);
+
+   if(UseAutoReduceLot && MaxDrawdownPercent >= ReduceLotThresholdDD)
+   {
+      lot = lot * 0.5;
+   }
+
+   if(UseRecoveryMode)
+   {
+      lot = lot * 1.2;
+   }
+
+   lot = MathMax(0.01, lot);
+
+   double minVol  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxVol  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double stepVol = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+
+   if(stepVol > 0) lot = MathRound(lot / stepVol) * stepVol;
+   if(minVol  > 0 && lot < minVol) lot = minVol;
+   if(maxVol  > 0 && lot > maxVol) lot = maxVol;
+
+   int volDigits = 2;
+   if(stepVol >= 1.0)      volDigits = 0;
+   else if(stepVol >= 0.1) volDigits = 1;
+
+   return NormalizeDouble(lot, volDigits);
+}
+
+//+------------------------------------------------------------------+
+//| Basket Breakeven and Partial Close Manager                       |
+//| BreakevenActivated latches once profit crosses BreakevenTriggerUSD|
+//| and only then arms the close-on-retrace-to-Lock check - checking  |
+//| ">= Trigger AND <= Lock" in the same tick would never be true     |
+//| whenever Lock < Trigger (the normal configuration).                |
+//+------------------------------------------------------------------+
+void ApplyBasketBreakevenAndPartial(double currentProfit)
+{
+   MqlTradeRequest request;
+   MqlTradeResult  result;
+   ENUM_ORDER_TYPE_FILLING fillMode = GetBestFillingMode();
+
+   if(UsePartialClose && !PartialCloseExecuted && currentProfit >= PartialCloseProfitUSD)
+   {
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket > 0 && PositionSelectByTicket(ticket))
+         {
+            if(PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetInteger(POSITION_MAGIC) == MagicNumber)
+            {
+               double volume = PositionGetDouble(POSITION_VOLUME);
+               double targetCloseVol = NormalizeDouble(volume * (PartialClosePercent / 100.0), 2);
+
+               if(targetCloseVol < 0.01) targetCloseVol = 0.01;
+               if(targetCloseVol >= volume) targetCloseVol = volume;
+
+               ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+               ENUM_ORDER_TYPE tradeType = (type == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+               double closePrice = (type == POSITION_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+               if(closePrice > 0)
+               {
+                  ZeroMemory(request); ZeroMemory(result);
+                  request.action       = TRADE_ACTION_DEAL;
+                  request.position     = ticket;
+                  request.symbol       = _Symbol;
+                  request.volume       = targetCloseVol;
+                  request.type         = tradeType;
+                  request.price        = closePrice;
+                  request.deviation    = MaxSlippagePoints * m_multiplier;
+                  request.magic        = MagicNumber;
+                  request.type_filling = fillMode;
+
+                  if(!OrderSend(request, result))
+                  {
+                     Print("Partial Close Failed for Ticket: ", ticket, " Code: ", result.retcode);
+                  }
+               }
+            }
+         }
+      }
+      PartialCloseExecuted = true;
+   }
+
+   if(UseBasketBreakeven)
+   {
+      if(!BreakevenActivated && currentProfit >= BreakevenTriggerUSD)
+      {
+         BreakevenActivated = true;
+      }
+
+      if(BreakevenActivated && currentProfit <= BreakevenLockUSD)
+      {
+         IsClosingState = true;
+         ClearEverythingAsync();
+         DeleteVisualTSLine();
+         RecalculateBasePrice();
+         IsClosingState = false;
+         LastCloseAllTime = TimeCurrent();
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
 //| Expert initialization                                            |
 //+------------------------------------------------------------------+
 int OnInit()
@@ -251,6 +474,8 @@ int OnInit()
    LastOrderSentTime  = 0;
    LastCloseAllTime   = 0;
    IsClosingState     = false;
+   PartialCloseExecuted = false;
+   BreakevenActivated   = false;
    PeakBalanceForDD   = AccountInfoDouble(ACCOUNT_BALANCE);
    MaxDrawdownPercent = 0.0;
    MaxDrawdownUSD     = 0.0;
@@ -287,6 +512,36 @@ int OnInit()
       }
    }
 
+   if(UseADXFilter)
+   {
+      adxHandle = iADX(_Symbol, _Period, ADX_Period);
+      if(adxHandle == INVALID_HANDLE)
+      {
+         Print("Failed to create ADX indicator handle.");
+         return(INIT_FAILED);
+      }
+   }
+
+   if(UseRSIFilter)
+   {
+      rsiHandle = iRSI(_Symbol, _Period, RSI_Period, PRICE_CLOSE);
+      if(rsiHandle == INVALID_HANDLE)
+      {
+         Print("Failed to create RSI indicator handle.");
+         return(INIT_FAILED);
+      }
+   }
+
+   if(UseBollingerFilter)
+   {
+      bbHandle = iBands(_Symbol, _Period, BB_Period, 0, BB_Deviation, PRICE_CLOSE);
+      if(bbHandle == INVALID_HANDLE)
+      {
+         Print("Failed to create Bollinger Bands indicator handle.");
+         return(INIT_FAILED);
+      }
+   }
+
    RecalculateBasePrice();
 
    if(GridType == GRID_VIRTUAL)
@@ -307,6 +562,9 @@ void OnDeinit(const int reason)
    if(atrHandle != INVALID_HANDLE) IndicatorRelease(atrHandle);
    if(emaHandle != INVALID_HANDLE) IndicatorRelease(emaHandle);
    if(mtfEmaHandle != INVALID_HANDLE) IndicatorRelease(mtfEmaHandle);
+   if(adxHandle != INVALID_HANDLE) IndicatorRelease(adxHandle);
+   if(rsiHandle != INVALID_HANDLE) IndicatorRelease(rsiHandle);
+   if(bbHandle != INVALID_HANDLE) IndicatorRelease(bbHandle);
    DeleteVisualTSLine();
    DeleteDashboard();
 }
@@ -345,6 +603,8 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 //+------------------------------------------------------------------+
 void OnTick()
 {
+   bool equityLocked = (UseEquityLock && AccountInfoDouble(ACCOUNT_EQUITY) < MinEquityLimit);
+
    int    openPositions      = 0;
    int    pendingOrders      = 0;
    double currentProfit      = 0.0;
@@ -381,6 +641,8 @@ void OnTick()
          IsClosingState = false;
          LastCloseAllTime = TimeCurrent();
       }
+      if(PartialCloseExecuted) PartialCloseExecuted = false;
+      if(BreakevenActivated) BreakevenActivated = false;
 
       // FIXED: previously the base price only got (re)calculated once, the very
       // first time GridCreated flipped true. If price then drifted far away while
@@ -414,6 +676,11 @@ void OnTick()
    // 2. Visual Basket Trailing Stop
    if(openPositions > 0 && !IsClosingState)
    {
+      if(UseBasketBreakeven || UsePartialClose)
+      {
+         ApplyBasketBreakevenAndPartial(currentProfit);
+      }
+
       if(currentProfit >= TargetProfit)
       {
          if(currentProfit > MaxBasketProfit)
@@ -457,7 +724,7 @@ void OnTick()
 
    if(timeAllowed)
    {
-      if(!IsClosingState && (MaxBasketProfit < TargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
+      if(!IsClosingState && !equityLocked && (MaxBasketProfit < TargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
       {
          ExecuteGridLogic();
       }
@@ -519,6 +786,29 @@ void UpdateDrawdownTracker()
 
       double currentDDPercent = (currentDDVal / PeakBalanceForDD) * 100.0;
       if(currentDDPercent > MaxDrawdownPercent) MaxDrawdownPercent = currentDDPercent;
+
+      if(UseMaxDDStop && !IsClosingState)
+      {
+         bool triggerUSD = (MaxAllowedDD_USD > 0 && currentDDVal >= MaxAllowedDD_USD);
+         bool triggerPct = (MaxAllowedDD_Pct > 0 && currentDDPercent >= MaxAllowedDD_Pct);
+
+         if(triggerUSD || triggerPct)
+         {
+            IsClosingState = true;
+            PrintFormat("🛑 [MAX DD STOP] DD: $%.2f (%.2f%%) exceeded limit -> Closing everything.",
+                        currentDDVal, currentDDPercent);
+            ClearEverythingAsync();
+            DeleteVisualTSLine();
+
+            PeakBalanceForDD   = AccountInfoDouble(ACCOUNT_BALANCE);
+            MaxDrawdownUSD     = 0.0;
+            MaxDrawdownPercent = 0.0;
+
+            RecalculateBasePrice();
+            IsClosingState   = false;
+            LastCloseAllTime = TimeCurrent();
+         }
+      }
    }
 }
 
@@ -538,8 +828,14 @@ int GetDynamicGridDistance()
       return DistancePoints * m_multiplier;
    }
 
+   double mult = ATR_Multiplier;
+   if(UseAdaptiveATRGrid && MaxDrawdownPercent > 3.0)
+   {
+      mult = ATR_Multiplier * 1.3; // ขยายระยะ Grid ออกเมื่อ Drawdown เริ่มสูง กันไม่ให้เพิ่มไม้ถี่เกินไปตอนพอร์ตแย่
+   }
+
    double currentATR = atrValues[0];
-   double calculatedPoints = (currentATR * ATR_Multiplier) / _Point;
+   double calculatedPoints = (currentATR * mult) / _Point;
    int finalPoints = (int)MathMax(10 * m_multiplier, MathRound(calculatedPoints));
 
    return finalPoints;
@@ -639,14 +935,13 @@ void PlacePendingGridServer()
 
    for(int level = 1; level <= TotalLevels; level++)
    {
-      double lot = BaseLot * MathPow(LotMultiplier, level - 1);
-      lot = NormalizeDouble(lot, 2);
+      double lot = GetCalculatedLotSize(level);
 
       double targetBuyPrice  = NormalizeDouble(GridBasePrice + (level * CachedGridDistance * point), _Digits);
       double targetSellPrice = NormalizeDouble(GridBasePrice - (level * CachedGridDistance * point), _Digits);
 
-      bool canBuyFilter  = CheckEMATrend(true)  && CheckMTFFilter(true);
-      bool canSellFilter = CheckEMATrend(false) && CheckMTFFilter(false);
+      bool canBuyFilter  = CheckEMATrend(true)  && CheckMTFFilter(true)  && CheckADXFilter(true)  && CheckRSIFilter(true)  && CheckBollingerFilter(true);
+      bool canSellFilter = CheckEMATrend(false) && CheckMTFFilter(false) && CheckADXFilter(false) && CheckRSIFilter(false) && CheckBollingerFilter(false);
 
       // BUY STOP (Async)
       if(canBuyFilter)
@@ -743,8 +1038,8 @@ void CheckAndExecuteVirtualGrid()
    int adjGapLimit = MaxAllowedGapPoints * m_multiplier;
    int adjSpread   = MaxSpreadAllowed * m_multiplier;
 
-   bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true);
-   bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false);
+   bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true)  && CheckADXFilter(true)  && CheckRSIFilter(true)  && CheckBollingerFilter(true);
+   bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false) && CheckADXFilter(false) && CheckRSIFilter(false) && CheckBollingerFilter(false);
 
    // CHECK BUY GRID
    if(buyCount < TotalLevels && canBuyFilters)
@@ -773,7 +1068,7 @@ void CheckAndExecuteVirtualGrid()
          if(SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) <= adjSpread)
          {
             int nextLevel = buyCount + 1;
-            double lot = NormalizeDouble(BaseLot * MathPow(LotMultiplier, nextLevel - 1), 2);
+            double lot = GetCalculatedLotSize(nextLevel);
 
             ZeroMemory(request); ZeroMemory(result);
             request.action       = TRADE_ACTION_DEAL;
@@ -827,7 +1122,7 @@ void CheckAndExecuteVirtualGrid()
          if(SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) <= adjSpread)
          {
             int nextLevel = sellCount + 1;
-            double lot = NormalizeDouble(BaseLot * MathPow(LotMultiplier, nextLevel - 1), 2);
+            double lot = GetCalculatedLotSize(nextLevel);
 
             ZeroMemory(request); ZeroMemory(result);
             request.action       = TRADE_ACTION_DEAL;
@@ -962,11 +1257,13 @@ void ClearEverythingAsync()
       if(retryCount < 10) Sleep(50);
    }
 
-   GridCreated        = false;
-   MaxBasketProfit    = 0.0;
-   GridBasePrice      = 0.0;
-   CachedGridDistance = 0;
-   LastOrderSentTime  = 0;
+   GridCreated           = false;
+   MaxBasketProfit       = 0.0;
+   GridBasePrice         = 0.0;
+   CachedGridDistance    = 0;
+   LastOrderSentTime     = 0;
+   PartialCloseExecuted  = false;
+   BreakevenActivated    = false;
 }
 
 //+------------------------------------------------------------------+
