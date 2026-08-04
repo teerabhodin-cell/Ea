@@ -106,7 +106,7 @@ input double ForceHedgeDD_TriggerPercent = 6.0;   // Drawdown (%) ขั้น�
 input double ForceHedgeResetPercent      = 3.0;   // DD ต้องลดต่ำกว่าค่านี้ก่อน ถึงจะบังคับเปิดซ้ำได้อีกครั้ง (กัน spam เปิดรัวๆ ตอน DD ค้างสูง)
 input double ForceHedgeLotMultiplier     = 1.0;   // ตัวคูณ lot ของไม้ที่ถูกบังคับเปิด (คูณทับ lot ปกติของระดับถัดไปฝั่งนั้น)
 input bool   UseForceHedgeOnTime        = false;  // เปิด/ปิดระบบบังคับเปิดไม้แก้เมื่อบาสเก็ตติดลบนานเกินกำหนด (ดูแค่ "เวลา" ที่ติดลบต่อเนื่อง ไม่สน DD% เลย - ใช้แยกจาก/ควบคู่กับ Force Hedge on DD ด้านบนได้ ยิงฝั่งเดียวกันแบบเดียวกัน ใช้ ForceHedgeLotMultiplier ตัวคูณเดียวกัน)
-input int    ForceHedgeTimeMinutes      = 30;     // จำนวนนาทีที่ยอมให้บาสเก็ตติดลบต่อเนื่องก่อนบังคับเปิดไม้แก้ฝั่งที่มีไม้น้อยกว่า (นับใหม่ทุกครั้งที่บาสเก็ตพลิกมาเป็นบวกหรือปิดหมด)
+input int    ForceHedgeTimeMinutes      = 30;     // จำนวนนาทีที่ยอมให้บาสเก็ตติดลบต่อเนื่องก่อนบังคับเปิดไม้แก้ฝั่งที่มีไม้น้อยกว่า - ยิงซ้ำได้ทุกๆ N นาทีนี้ถ้ายังติดลบไม่หยุด (ไม่ต้องรอพลิกบวกก่อน) จนกว่า Buy/Sell จะสมดุลกันหรือชนเพดาน TotalLevels/Level Unlock
 
 input group "===== 9. ป้องกัน Gap / Slippage ====="
 input bool   UseGapProtection    = true;   // เปิด/ปิด การเช็ค Gap ราคาโดด (Enable Gap Check)
@@ -159,7 +159,7 @@ bool     PartialCloseExecuted = false; // ป้องกันการสั�
 bool     BreakevenActivated   = false; // latch เมื่อกำไรแตะ BreakevenTriggerUSD แล้ว (ต้อง latch ไว้ก่อน ไม่งั้นเงื่อนไข Trigger/Lock จะไม่มีวันเป็นจริงพร้อมกัน)
 bool     ForceHedgeArmed      = false; // latch กัน Force Hedge ยิงรัวๆ ทุกทิคตอน DD ค้างสูง ต้องรอ DD ลดต่ำกว่า ForceHedgeResetPercent ก่อนถึงจะยิงซ้ำได้
 datetime BasketNegativeSinceTime = 0;   // เวลาที่บาสเก็ตเริ่มติดลบต่อเนื่อง (0 = ไม่ได้ติดลบอยู่ตอนนี้) ใช้กับ Force Hedge on Time
-bool     ForceHedgeTimeArmed     = false; // latch กัน Force Hedge on Time ยิงรัวๆ ทุกทิคตอนติดลบค้างนาน ต้องรอบาสเก็ตพลิกบวก/ปิดก่อนถึงจะยิงซ้ำได้
+datetime LastForceHedgeTimeFire  = 0;   // เวลาที่ Force Hedge on Time ยิงไม้ล่าสุด (0 = ยังไม่เคยยิงในรอบติดลบปัจจุบัน) - ยิงซ้ำได้ทุกๆ ForceHedgeTimeMinutes ถ้ายังติดลบไม่หยุด ไม่ต้องรอพลิกบวกก่อน
 
 // สถิติสรุปผล (นับตอนบาสเก็ตปิดจริงใน ClearEverythingAsync เท่านั้น)
 int      StatsTotalBaskets   = 0;
@@ -684,9 +684,17 @@ void CheckForceHedgeOnDD()
 //| ForceHedgeTimeMinutes, force-open the underweight side right     |
 //| away instead of waiting for the grid to reach the next level or  |
 //| for DD% to climb high enough to trip Force Hedge on DD.          |
-//| BasketNegativeSinceTime is tracked once per tick in OnTick() and |
-//| resets to 0 the moment the basket turns flat/positive or closes, |
-//| which also re-arms this trigger for the next negative streak.    |
+//|                                                                    |
+//| REPEATS every ForceHedgeTimeMinutes for as long as the basket    |
+//| stays negative - it does NOT wait for a flip to profit before    |
+//| firing again, unlike Force Hedge on DD's percent-based re-arm.   |
+//| Each fire nudges Buy/Sell count one step closer to balanced, and |
+//| TryOpenForceHedgeOrder() naturally stops once counts are equal   |
+//| or the level cap (TotalLevels [+ Level Unlock]) is reached, so   |
+//| this can't run away past that. BasketNegativeSinceTime is        |
+//| tracked once per tick in OnTick() and resets to 0 the moment the |
+//| basket turns flat/positive or closes, which also resets the      |
+//| repeat clock below for the next negative streak.                 |
 //+------------------------------------------------------------------+
 void CheckForceHedgeOnTime()
 {
@@ -694,17 +702,18 @@ void CheckForceHedgeOnTime()
 
    if(BasketNegativeSinceTime == 0)
    {
-      ForceHedgeTimeArmed = false;
+      LastForceHedgeTimeFire = 0;
       return;
    }
 
-   if(ForceHedgeTimeArmed) return;
+   datetime sinceRef = (LastForceHedgeTimeFire > 0) ? LastForceHedgeTimeFire : BasketNegativeSinceTime;
+   int secondsSince = (int)(TimeCurrent() - sinceRef);
+   if(secondsSince < ForceHedgeTimeMinutes * 60) return;
 
-   int secondsNegative = (int)(TimeCurrent() - BasketNegativeSinceTime);
-   if(secondsNegative < ForceHedgeTimeMinutes * 60) return;
-
-   string detail = StringFormat("Basket negative for %d min >= %d min", secondsNegative / 60, ForceHedgeTimeMinutes);
-   if(TryOpenForceHedgeOrder("FORCE-HEDGE-TIME", detail)) ForceHedgeTimeArmed = true;
+   int totalMinNegative = (int)((TimeCurrent() - BasketNegativeSinceTime) / 60);
+   string detail = StringFormat("Basket negative continuously for %d min (still stuck %d min after last force-hedge)",
+                                 totalMinNegative, secondsSince / 60);
+   if(TryOpenForceHedgeOrder("FORCE-HEDGE-TIME", detail)) LastForceHedgeTimeFire = TimeCurrent();
 }
 
 //+------------------------------------------------------------------+
@@ -733,7 +742,7 @@ int OnInit()
    BreakevenActivated   = false;
    ForceHedgeArmed      = false;
    BasketNegativeSinceTime = 0;
-   ForceHedgeTimeArmed     = false;
+   LastForceHedgeTimeFire  = 0;
    StatsTotalBaskets    = 0;
    StatsWinCount        = 0;
    StatsLossCount       = 0;
@@ -1669,7 +1678,7 @@ void ClearEverythingAsync()
    BreakevenActivated    = false;
    ForceHedgeArmed       = false;
    BasketNegativeSinceTime = 0;
-   ForceHedgeTimeArmed     = false;
+   LastForceHedgeTimeFire  = 0;
 }
 
 //+------------------------------------------------------------------+
@@ -2051,10 +2060,14 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
    }
    else
    {
-      int minsNegative = (int)((TimeCurrent() - BasketNegativeSinceTime) / 60);
+      int minsNegative  = (int)((TimeCurrent() - BasketNegativeSinceTime) / 60);
+      datetime sinceRef = (LastForceHedgeTimeFire > 0) ? LastForceHedgeTimeFire : BasketNegativeSinceTime;
+      int minsToNext    = ForceHedgeTimeMinutes - (int)((TimeCurrent() - sinceRef) / 60);
+      if(minsToNext < 0) minsToNext = 0;
+
       ObjectSetString(0, UI_PREFIX+"Val_NegTime", OBJPROP_TEXT,
-                       StringFormat("%d / %d min", minsNegative, ForceHedgeTimeMinutes));
-      ObjectSetInteger(0, UI_PREFIX+"Val_NegTime", OBJPROP_COLOR, ForceHedgeTimeArmed ? UI_Loss : C'255,193,7');
+                       StringFormat(GetUIString("ติดลบ %d min | ยิงถัดไปใน %d min", "%d min neg | next in %d min"), minsNegative, minsToNext));
+      ObjectSetInteger(0, UI_PREFIX+"Val_NegTime", OBJPROP_COLOR, (LastForceHedgeTimeFire > 0) ? UI_Loss : C'255,193,7');
    }
 }
 
