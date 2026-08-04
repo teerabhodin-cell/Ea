@@ -186,6 +186,7 @@ bool     IsTestingMode    = false; // true in Strategy Tester - skips all dashbo
 
 datetime lastFilterBlockLogTime = 0; // throttles the "why didn't it open" filter diagnostic to once/minute
 datetime lastGapLogTime         = 0; // throttles the GAP EXCEEDED re-anchor messages so a choppy market can't spam the Journal every tick
+datetime lastSpreadLogTime      = 0; // throttles the SPREAD BLOCKED message - without this, a wide spread during a fast move silently blocks entries with zero Journal output, indistinguishable from a phantom filter
 datetime lastTickTimeForGap     = 0; // เวลาของทิคก่อนหน้า ใช้แยก "เทรนด์วิ่งแรงต่อเนื่อง" ออกจาก "Gap จริง" (ราคาข้ามช่วงที่ไม่มีทิคเลย)
 int      SecondsSinceLastTick   = 0; // อัปเดตครั้งเดียวต่อทิคใน OnTick() แล้วอ่านใช้ใน ExecuteGridLogic()
 
@@ -1419,7 +1420,8 @@ void CheckAndExecuteVirtualGrid()
 
       if(canSendBuy)
       {
-         if(SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) <= adjSpread)
+         long currentSpread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+         if(currentSpread <= adjSpread)
          {
             int nextLevel = buyCount + 1;
             double lot = GetCalculatedLotSize(nextLevel);
@@ -1446,6 +1448,14 @@ void CheckAndExecuteVirtualGrid()
                BuyGapAnchor = 0.0; // lastBuyPrice now reflects this real fill, override no longer needed
                return;
             }
+         }
+         else if(TimeCurrent() - lastSpreadLogTime >= 5)
+         {
+            // ไม่ใช่ filter เลยสักตัว แต่ spread กว้างเกิน MaxSpreadAllowed ตอนราคาวิ่งแรง/ข่าวแรง
+            // จะบล็อคเงียบๆ เหมือนโดน filter บล็อคทุกประการ ถ้าไม่มี log บรรทัดนี้จะดูเหมือนบั๊กลึกลับ
+            lastSpreadLogTime = TimeCurrent();
+            PrintFormat("📊 [BUY SPREAD BLOCKED] Current spread %d pts > MaxSpreadAllowed %d pts - order eligible but skipped.",
+                        currentSpread, adjSpread);
          }
       }
       else if(isGenuineGap)
@@ -1491,7 +1501,8 @@ void CheckAndExecuteVirtualGrid()
 
       if(canSendSell)
       {
-         if(SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) <= adjSpread)
+         long currentSpread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+         if(currentSpread <= adjSpread)
          {
             int nextLevel = sellCount + 1;
             double lot = GetCalculatedLotSize(nextLevel);
@@ -1517,6 +1528,12 @@ void CheckAndExecuteVirtualGrid()
                SellGapAnchor = 0.0; // lastSellPrice now reflects this real fill, override no longer needed
                return;
             }
+         }
+         else if(TimeCurrent() - lastSpreadLogTime >= 5)
+         {
+            lastSpreadLogTime = TimeCurrent();
+            PrintFormat("📊 [SELL SPREAD BLOCKED] Current spread %d pts > MaxSpreadAllowed %d pts - order eligible but skipped.",
+                        currentSpread, adjSpread);
          }
       }
       else if(isGenuineGap)
