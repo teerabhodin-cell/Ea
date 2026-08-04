@@ -589,7 +589,26 @@ void CheckForceHedgeOnDD()
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    if(ask <= 0 || bid <= 0) return;
 
-   double lot = GetCalculatedLotSize(neededSideCount + 1) * ForceHedgeLotMultiplier;
+   // Force Hedge IS its own recovery mechanism (active: force-open now, vs.
+   // Recovery Mode's passive boost-when-the-grid-triggers-anyway) - it computes
+   // lot from the same BaseLot/LotMultiplier progression directly instead of
+   // going through GetCalculatedLotSize(), which would also bake in
+   // UseAutoReduceLot's cut and UseRecoveryMode's boost. Stacking those on top
+   // of ForceHedgeLotMultiplier made the two DD-recovery systems compound in a
+   // way that's hard to reason about (and RecoveryMode's own trigger check uses
+   // the session's all-time-peak DD, which never resets, so it could stay
+   // silently baked in long after the account recovered from an earlier spike).
+   double baseLot = BaseLot;
+   if(UseDynamicLot)
+   {
+      double currentEq = AccountInfoDouble(ACCOUNT_EQUITY);
+      if(BalancePerLot > 0)
+      {
+         baseLot = NormalizeDouble((currentEq / BalancePerLot) * BaseLot, 2);
+         if(baseLot < 0.01) baseLot = 0.01;
+      }
+   }
+   double lot = baseLot * MathPow(LotMultiplier, neededSideCount) * ForceHedgeLotMultiplier;
 
    double minVol  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double maxVol  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
