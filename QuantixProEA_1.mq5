@@ -59,7 +59,6 @@ input int    MaxSpreadAllowed    = 40;     // (Virtual Mode) สเปรดส�
 input group "--- Basket Profit Target (Trailing) ---"
 input double TargetProfit        = 1.0;    // Minimum Profit ($) to activate Trailing
 input double TrailingStopUSD     = 0.5;    // Trailing Distance ($)
-input double ProfitFloorPercent  = 0.30;   // Safety Floor % ล็อกทุนขั้นต่ำ (30%)
 
 input group "--- PRO TERMINAL UI CUSTOMIZE ---"
 input color  UI_MainBG        = C'18, 20, 28';    // Main BG Color (Dark Navy)
@@ -347,18 +346,14 @@ void OnTick()
          }
          
          double tsTriggerLine = MaxBasketProfit - TrailingStopUSD;
-         
-         // Safety Floor
-         double minSafetyFloor = TargetProfit * ProfitFloorPercent;
-         if(tsTriggerLine < minSafetyFloor) tsTriggerLine = minSafetyFloor;
 
          DrawVisualTSLine(tsTriggerLine);
-         
+
          if(currentProfit <= tsTriggerLine)
          {
-            IsClosingState = true; 
-            PrintFormat("🚨 [BASKET TS TRIGGERED] Peak: $%.2f | Floating: $%.2f | Floor: $%.2f", 
-                        MaxBasketProfit, currentProfit, minSafetyFloor);
+            IsClosingState = true;
+            PrintFormat("🚨 [BASKET TS TRIGGERED] Peak: $%.2f | Floating: $%.2f",
+                        MaxBasketProfit, currentProfit);
             ClearEverythingAsync();
             DeleteVisualTSLine();
             RecalculateBasePrice();
