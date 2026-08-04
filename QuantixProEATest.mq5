@@ -161,6 +161,8 @@ int      bbHandle        = INVALID_HANDLE;
 // --- [ UI OPTIMIZATION GLOBAL VARS ] ---
 uint     lastUIUpdateTime = 0;
 
+datetime lastFilterBlockLogTime = 0; // throttles the "why didn't it open" filter diagnostic to once/minute
+
 //====================== FUNCTION DECLARE ==========================//
 
 bool IsTradingAllowedByTime();
@@ -171,6 +173,7 @@ bool CheckRSIFilter(bool isBuy);
 bool CheckBollingerFilter(bool isBuy);
 double GetCalculatedLotSize(int nextLevel);
 void ApplyBasketBreakevenAndPartial(double currentProfit);
+void LogFilterBlockReason(bool isBuy);
 void ExecuteGridLogic();
 void PlacePendingGridServer();
 void CheckAndExecuteVirtualGrid();
@@ -329,6 +332,45 @@ bool CheckBollingerFilter(bool isBuy)
 
    if(isBuy) return (ask >= lowerVals[0]);
    else      return (bid <= upperVals[0]);
+}
+
+//+------------------------------------------------------------------+
+//| Diagnostic: which filter(s) are blocking Buy/Sell right now      |
+//| Without this, "why doesn't it open a position" is unanswerable   |
+//| from the dashboard alone - the entry gate is a silent AND of up  |
+//| to 5 filters, and the wait target line looks the same whether    |
+//| price hasn't reached it yet or a filter is vetoing it forever.   |
+//| Throttled to once/minute per direction so it doesn't spam.       |
+//+------------------------------------------------------------------+
+void LogFilterBlockReason(bool isBuy)
+{
+   if(TimeCurrent() - lastFilterBlockLogTime < 60) return;
+
+   string blockers = "";
+
+   if(UseEMAFilter && emaHandle != INVALID_HANDLE)
+   {
+      double emaVals[];
+      ArraySetAsSeries(emaVals, true);
+      if(CopyBuffer(emaHandle, 0, 1, 1, emaVals) > 0)
+      {
+         double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         if(isBuy && StrictBuyFilter && ask < emaVals[0])
+            blockers += StringFormat("EMA(Ask %.3f < %.3f) ", ask, emaVals[0]);
+         if(!isBuy && StrictSellFilter && bid > emaVals[0])
+            blockers += StringFormat("EMA(Bid %.3f > %.3f) ", bid, emaVals[0]);
+      }
+   }
+   if(UseMTFFilter && !CheckMTFFilter(isBuy)) blockers += "MTF ";
+   if(UseADXFilter && !CheckADXFilter(isBuy)) blockers += "ADX ";
+   if(UseRSIFilter && !CheckRSIFilter(isBuy)) blockers += "RSI ";
+   if(UseBollingerFilter && !CheckBollingerFilter(isBuy)) blockers += "Bollinger ";
+
+   if(blockers == "") return; // nothing actually blocked it - price just hasn't reached the target yet
+
+   lastFilterBlockLogTime = TimeCurrent();
+   PrintFormat("🔍 [%s BLOCKED] %s", isBuy ? "BUY" : "SELL", blockers);
 }
 
 //+------------------------------------------------------------------+
@@ -1040,6 +1082,9 @@ void CheckAndExecuteVirtualGrid()
 
    bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true)  && CheckADXFilter(true)  && CheckRSIFilter(true)  && CheckBollingerFilter(true);
    bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false) && CheckADXFilter(false) && CheckRSIFilter(false) && CheckBollingerFilter(false);
+
+   if(buyCount < TotalLevels && !canBuyFilters)   LogFilterBlockReason(true);
+   if(sellCount < TotalLevels && !canSellFilters) LogFilterBlockReason(false);
 
    // CHECK BUY GRID
    if(buyCount < TotalLevels && canBuyFilters)
