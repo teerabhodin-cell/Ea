@@ -110,7 +110,8 @@ input int    ForceHedgeTimeMinutes      = 30;     // จำนวนนาที
 
 input group "===== 9. ป้องกัน Gap / Slippage ====="
 input bool   UseGapProtection    = true;   // เปิด/ปิด การเช็ค Gap ราคาโดด (Enable Gap Check)
-input int    MaxAllowedGapPoints = 100;    // Gap ยอมรับได้สูงสุด (Points) ถ้าราคาโดดข้ามจะทำการ Reset
+input int    MaxAllowedGapPoints = 100;    // Gap ยอมรับได้สูงสุด (Points) ถ้าราคาโดดข้ามจะทำการ Reset - แต่จะนับเป็น Gap จริงก็ต่อเมื่อห่างจากทิคก่อนหน้าเกิน GapDetectionSeconds ด้วย (กันเทรนด์แรงต่อเนื่องโดนเข้าใจผิดว่าเป็น Gap ทุกทิค แล้วไม่เปิดไม้ต่อเลย)
+input int    GapDetectionSeconds = 60;     // ระยะเวลา (วินาที) ที่ต้องไม่มีทิคเข้ามาเลย ถึงจะถือว่าเป็น Gap จริง (เช่น ราคาข้ามวันหยุด/สุดสัปดาห์) - ถ้าทิคยังเข้ามาต่อเนื่อง (ตลาดวิ่งแรงแต่ไม่ได้ขาดช่วง) จะไม่ถือเป็น Gap และเปิดไม้ต่อได้ตามปกติแม้ระยะจะไกลเกิน MaxAllowedGapPoints ก็ตาม
 input int    MaxSlippagePoints   = 20;     // ล็อค Slippage สูงสุด (Points) แนะนำ 20-30 เพื่อให้รวบติดชัวร์
 input int    MaxSpreadAllowed    = 40;     // (Virtual Mode) สเปรดสูงสุดที่อนุญาตให้เปิดไม้ (Points)
 
@@ -185,6 +186,8 @@ bool     IsTestingMode    = false; // true in Strategy Tester - skips all dashbo
 
 datetime lastFilterBlockLogTime = 0; // throttles the "why didn't it open" filter diagnostic to once/minute
 datetime lastGapLogTime         = 0; // throttles the GAP EXCEEDED re-anchor messages so a choppy market can't spam the Journal every tick
+datetime lastTickTimeForGap     = 0; // เวลาของทิคก่อนหน้า ใช้แยก "เทรนด์วิ่งแรงต่อเนื่อง" ออกจาก "Gap จริง" (ราคาข้ามช่วงที่ไม่มีทิคเลย)
+int      SecondsSinceLastTick   = 0; // อัปเดตครั้งเดียวต่อทิคใน OnTick() แล้วอ่านใช้ใน ExecuteGridLogic()
 
 //====================== FUNCTION DECLARE ==========================//
 
@@ -894,6 +897,11 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 //+------------------------------------------------------------------+
 void OnTick()
 {
+   // วัดระยะเวลาตั้งแต่ทิคก่อนหน้า - ใช้แยกแยะ "ราคาวิ่งแรงต่อเนื่อง" (ทิคยังเข้ามาปกติ)
+   // ออกจาก "Gap จริง" (ไม่มีทิคเข้ามาเลยช่วงหนึ่ง เช่น ข้ามคืน/สุดสัปดาห์) ใน Gap Protection ด้านล่าง
+   SecondsSinceLastTick = (lastTickTimeForGap > 0) ? (int)(TimeCurrent() - lastTickTimeForGap) : 0;
+   lastTickTimeForGap   = TimeCurrent();
+
    bool equityLocked = (UseEquityLock && AccountInfoDouble(ACCOUNT_EQUITY) < MinEquityLimit);
 
    int    openPositions      = 0;
@@ -1405,16 +1413,13 @@ void CheckAndExecuteVirtualGrid()
 
       double diffPoints = (ask - targetPrice) / point;
 
-      bool canSendBuy = false;
-      if(!UseGapProtection)
-      {
-         if(ask >= targetPrice) canSendBuy = true;
-      }
-      else
-      {
-         // รองรับการคำนวณจุดทศนิยมทุกรูปแบบ ทั้งแบบเลยเป้าและอยู่ในช่วง Gap ที่กำหนด
-         if(ask >= targetPrice && diffPoints <= adjGapLimit) canSendBuy = true;
-      }
+      // เป็น Gap "จริง" ก็ต่อเมื่อระยะเกิน adjGapLimit *และ* ไม่มีทิคเข้ามาเลยนานเกิน
+      // GapDetectionSeconds (เช่น ข้ามคืน/สุดสัปดาห์) - ถ้าทิคยังเข้ามาต่อเนื่อง (แค่ตลาดวิ่งแรง)
+      // จะไม่ถือเป็น Gap เลย แล้วเปิดไม้ต่อได้ตามปกติแม้ระยะจะไกลเกิน adjGapLimit ก็ตาม เพราะไม่งั้น
+      // เทรนด์แรงต่อเนื่องจะโดน re-anchor วนไปเรื่อยๆ ทุกทิคโดยไม่มีวันเปิดไม้ต่อได้เลย
+      bool isGenuineGap = (UseGapProtection && diffPoints > adjGapLimit && SecondsSinceLastTick >= GapDetectionSeconds);
+
+      bool canSendBuy = (ask >= targetPrice) && !isGenuineGap;
 
       if(canSendBuy)
       {
@@ -1447,7 +1452,7 @@ void CheckAndExecuteVirtualGrid()
             }
          }
       }
-      else if(UseGapProtection && diffPoints > adjGapLimit)
+      else if(isGenuineGap)
       {
          // FIXED (round 2): assigning to lastBuyPrice here was a no-op - it's a
          // local variable rebuilt from real filled positions on every call, so it
@@ -1482,16 +1487,11 @@ void CheckAndExecuteVirtualGrid()
 
       double diffPoints = (targetPrice - bid) / point;
 
-      bool canSendSell = false;
-      if(!UseGapProtection)
-      {
-         if(bid <= targetPrice) canSendSell = true;
-      }
-      else
-      {
-         // รองรับการคำนวณจุดทศนิยมทุกรูปแบบ ทั้งแบบเลยเป้าและอยู่ในช่วง Gap ที่กำหนด
-         if(bid <= targetPrice && diffPoints <= adjGapLimit) canSendSell = true;
-      }
+      // เป็น Gap "จริง" ก็ต่อเมื่อระยะเกิน adjGapLimit *และ* ไม่มีทิคเข้ามาเลยนานเกิน
+      // GapDetectionSeconds - เหตุผลเดียวกับฝั่ง Buy ด้านบน
+      bool isGenuineGap = (UseGapProtection && diffPoints > adjGapLimit && SecondsSinceLastTick >= GapDetectionSeconds);
+
+      bool canSendSell = (bid <= targetPrice) && !isGenuineGap;
 
       if(canSendSell)
       {
@@ -1523,7 +1523,7 @@ void CheckAndExecuteVirtualGrid()
             }
          }
       }
-      else if(UseGapProtection && diffPoints > adjGapLimit)
+      else if(isGenuineGap)
       {
          // FIXED (round 2): same persistence bug as the Buy side - assigning to
          // lastSellPrice here was a no-op. SellGapAnchor actually persists.
