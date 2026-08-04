@@ -29,7 +29,7 @@ enum ENUM_GRID_TYPE
 //=========================== INPUT ================================//
 input group "===== 1. เวลาเทรด & ภาษา ====="
 input ENUM_LANGUAGE Language = LNG_TH; // Select Language ( default: Thai )
-input bool    UseTimer         = true;    // เปิดใช้งานระบบคุมเวลา (Enable Time Filter)
+input bool    UseTimer         = false;   // เปิดใช้งานระบบคุมเวลา (Enable Time Filter)
 input int     StartHour        = 2;       // เวลาเริ่มทำงาน (เวลา Server)
 input int     StartMinute      = 0;
 input int     EndHour          = 23;      // เวลาหยุดทำงาน (เวลา Server)
@@ -40,7 +40,7 @@ input ENUM_GRID_TYPE GridType       = GRID_VIRTUAL; // เลือกรูป�
 input double BaseLot                = 0.01;
 input double LotMultiplier          = 2.0;
 input int    TotalLevels            = 10;      // จำนวนชั้นต่อฝั่ง (10 Buy Stop + 10 Sell Stop)
-input bool   UseATRDistance         = true;    // เปิดใช้ระยะ Grid ตามค่า ATR
+input bool   UseATRDistance         = false;   // เปิดใช้ระยะ Grid ตามค่า ATR
 input int    ATR_Period             = 14;      // รอบคำนวณ ATR (Period)
 input double ATR_Multiplier         = 1.5;     // ตัวคูณ ATR เช่น 1.5 เท่าของ ATR
 input bool   UseAdaptiveATRGrid     = false;   // เปิดใช้ระบบปรับระยะ Grid ตามความผันผวนอัตโนมัติ (ขยายระยะ Grid เมื่อ Drawdown สูงขึ้น)
@@ -53,10 +53,10 @@ input double TrailingStopUSD     = 0.5;    // Trailing Distance ($)
 input double ProfitFloorPercent  = 0.30;   // Safety Floor % ล็อกทุนขั้นต่ำ (30%)
 
 input group "===== 4. ตัวกรองเทรนด์ (EMA / MTF / ADX / RSI / Bollinger) ====="
-input bool   UseEMAFilter           = true;    // เปิดใช้ตัวกรองเทรนด์ EMA
+input bool   UseEMAFilter           = false;   // เปิดใช้ตัวกรองเทรนด์ EMA
 input int    EMA_Period             = 200;     // Period ของเส้น EMA
-input bool   StrictBuyFilter        = true;    // ล็อคฝั่ง Buy: ห้ามเปิด Buy หากราคาอยู่ต่ำกว่า EMA
-input bool   StrictSellFilter       = true;    // ล็อคฝั่ง Sell: ห้ามเปิด Sell หากราคาอยู่เหนือ EMA
+input bool   StrictBuyFilter        = false;   // ล็อคฝั่ง Buy: ห้ามเปิด Buy หากราคาอยู่ต่ำกว่า EMA
+input bool   StrictSellFilter       = false;   // ล็อคฝั่ง Sell: ห้ามเปิด Sell หากราคาอยู่เหนือ EMA
 input bool   UseMTFFilter          = false;   // เปิดใช้ตัวกรองเทรนด์จาก Timeframe สูงกว่า (ตั้ง MTF_Period ให้สูงกว่า Timeframe ของกราฟที่แปะ EA จริงๆ ไม่งั้นจะซ้ำกับ EMA filter หลัก)
 input ENUM_TIMEFRAMES MTF_Period   = PERIOD_H1; // Timeframe ที่ใช้กรองเทรนด์หลัก
 input bool   UseADXFilter           = false;   // เปิดใช้ตัวกรองความแรงเทรนด์ ADX
@@ -79,7 +79,7 @@ input bool   UseAutoReduceLot       = false;   // เปิดใช้งาน
 input double ReduceLotThresholdDD   = 5.0;     // เปอร์เซ็นต์ Drawdown ที่เริ่มสั่งลดขนาด Lot ลงครึ่งหนึ่ง
 
 input group "===== 6. Max Drawdown Stop (เบรกฉุกเฉิน) ====="
-input bool   UseMaxDDStop           = true;    // เปิดใช้งานระบบตัดขาดทุนฉุกเฉินเมื่อ Max DD เกินกำหนด
+input bool   UseMaxDDStop           = false;   // เปิดใช้งานระบบตัดขาดทุนฉุกเฉินเมื่อ Max DD เกินกำหนด
 input double MaxAllowedDD_USD       = 50.0;    // ยอมให้ขาดทุนสูงสุดเป็นเงิน ($) ถ้าเกินจะปิดทิ้งทั้งหมดทันที (ตั้งเป็น 0 เพื่อปิดการเช็คแบบเงิน)
 input double MaxAllowedDD_Pct       = 10.0;    // ยอมให้ขาดทุนสูงสุดเป็นเปอร์เซ็นต์ (%) จากยอด Balance สูงสุด (ตั้งเป็น 0 เพื่อปิดการเช็คแบบ %)
 input bool   UseEmergencySL         = false;   // ติด Stop Loss ฉุกเฉินบนทุกไม้ที่เปิด (server-side) เผื่อ EA/เทอร์มินัลหลุดการเชื่อมต่อ - ไม่ใช่ SL ของกลยุทธ์ปกติ ตั้งกว้างมากๆ ไม่ให้ชนตอนเทรดปกติ
@@ -88,10 +88,10 @@ input bool   UseTotalDDGuard        = false;   // เบรกฉุกเฉิ
 input double MaxTotalDD_Pct         = 15.0;    // DD สะสมสูงสุด (%) ของพอร์ตทั้งหมดที่ยอมรับได้ ถ้าเกินจะปิดไม้ทั้งหมดและ "หยุดเปิดไม้ใหม่ถาวร" (ต้อง restart EA เองถึงจะกลับมาเทรดได้อีกครั้ง)
 
 input group "===== 7. แก้ไม้: Breakeven / Partial Close / Recovery Mode ====="
-input bool   UseBasketBreakeven     = true;    // เปิดระบบขยับจุดคุ้มทุน (Breakeven / ล็อคกำไรบางส่วน)
+input bool   UseBasketBreakeven     = false;   // เปิดระบบขยับจุดคุ้มทุน (Breakeven / ล็อคกำไรบางส่วน)
 input double BreakevenTriggerUSD    = 10.0;    // กำไรขั้นต่ำที่จะเริ่มเปิดใช้งานระบบ Breakeven
 input double BreakevenLockUSD       = 3.0;     // กำไรขั้นต่ำที่จะต้องเหลือล็อกไว้เมื่อราคาถอยกลับ
-input bool   UsePartialClose        = true;    // เปิดใช้งานระบบทยอยปิดทำกำไรบางส่วน (Partial Close)
+input bool   UsePartialClose        = false;   // เปิดใช้งานระบบทยอยปิดทำกำไรบางส่วน (Partial Close)
 input double PartialCloseProfitUSD  = 15.0;    // กำไรที่ถึงเป้าแล้วสั่งปิดครึ่งหนึ่งของไม้ทั้งหมด
 input double PartialClosePercent    = 50.0;    // สัดส่วนเปอร์เซ็นต์ของออเดอร์ที่จะปิด (เช่น 50%)
 input bool   UseRecoveryMode        = false;   // เปิดใช้งานโหมดแก้ไม้ (Recovery Mode) เร่งเก็บบาสเกตเมื่อ Drawdown สูงเกิน RecoveryDD_TriggerPercent
@@ -109,7 +109,7 @@ input bool   UseForceHedgeOnTime        = false;  // เปิด/ปิดร�
 input int    ForceHedgeTimeMinutes      = 30;     // จำนวนนาทีที่ยอมให้บาสเก็ตติดลบต่อเนื่องก่อนบังคับเปิดไม้แก้ฝั่งที่มีไม้น้อยกว่า - ยิงซ้ำได้ทุกๆ N นาทีนี้ถ้ายังติดลบไม่หยุด (ไม่ต้องรอพลิกบวกก่อน) จนกว่า Buy/Sell จะสมดุลกันหรือชนเพดาน TotalLevels/Level Unlock
 
 input group "===== 9. ป้องกัน Gap / Slippage ====="
-input bool   UseGapProtection    = true;   // เปิด/ปิด การเช็ค Gap ราคาโดด (Enable Gap Check)
+input bool   UseGapProtection    = false;  // เปิด/ปิด การเช็ค Gap ราคาโดด (Enable Gap Check)
 input int    MaxAllowedGapPoints = 100;    // Gap ยอมรับได้สูงสุด (Points) ถ้าราคาโดดข้ามจะทำการ Reset - แต่จะนับเป็น Gap จริงก็ต่อเมื่อห่างจากทิคก่อนหน้าเกิน GapDetectionSeconds ด้วย (กันเทรนด์แรงต่อเนื่องโดนเข้าใจผิดว่าเป็น Gap ทุกทิค แล้วไม่เปิดไม้ต่อเลย)
 input int    GapDetectionSeconds = 60;     // ระยะเวลา (วินาที) ที่ต้องไม่มีทิคเข้ามาเลย ถึงจะถือว่าเป็น Gap จริง (เช่น ราคาข้ามวันหยุด/สุดสัปดาห์) - ถ้าทิคยังเข้ามาต่อเนื่อง (ตลาดวิ่งแรงแต่ไม่ได้ขาดช่วง) จะไม่ถือเป็น Gap และเปิดไม้ต่อได้ตามปกติแม้ระยะจะไกลเกิน MaxAllowedGapPoints ก็ตาม
 input int    MaxSlippagePoints   = 20;     // ล็อค Slippage สูงสุด (Points) แนะนำ 20-30 เพื่อให้รวบติดชัวร์
