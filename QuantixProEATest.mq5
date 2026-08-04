@@ -101,6 +101,10 @@ input double PartialCloseProfitUSD  = 15.0;    // กำไรที่ถึง
 input double PartialClosePercent    = 50.0;    // สัดส่วนเปอร์เซ็นต์ของออเดอร์ที่จะปิด (เช่น 50%)
 input bool   UseRecoveryMode        = false;   // เปิดใช้งานโหมดแก้ไม้ (Recovery Mode) เร่งเก็บบาสเกตเมื่อพอร์ตติดลบสะสม
 
+input group "--- Level Unlock (Overflow Recovery) ---"
+input bool   UseLevelUnlock      = false;   // เปิดใช้ระบบปลดล็อคชั้นเพิ่ม: เมื่อ Buy และ Sell เปิดเต็ม TotalLevels ทั้ง 2 ฝั่งแล้ว จะอนุญาตให้เปิดไม้เพิ่มต่อได้จนกว่าบาสเก็ตจะกำไรถึง TargetProfit (โค้ดหยุดเปิดไม้เองอัตโนมัติทันทีที่ถึงเป้าอยู่แล้ว) - เสี่ยงสูง lot จะโตต่อเนื่องตาม LotMultiplier ควรเปิด UseMaxDDStop คู่กันเสมอ
+input int    MaxUnlockedLevels   = 5;       // จำนวนชั้นเพิ่มสูงสุดต่อฝั่งที่ยอมให้เปิดเกิน TotalLevels (ตั้ง 0 = ไม่จำกัดจำนวนชั้น อันตรายมาก)
+
 input group "--- Execution & Gap/Slippage Protection ---"
 input bool   UseGapProtection    = true;   // เปิด/ปิด การเช็ค Gap ราคาโดด (Enable Gap Check)
 input int    MaxAllowedGapPoints = 100;    // Gap ยอมรับได้สูงสุด (Points) ถ้าราคาโดดข้ามจะทำการ Reset
@@ -1097,11 +1101,23 @@ void CheckAndExecuteVirtualGrid()
    bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true)  && CheckADXFilter(true)  && CheckRSIFilter(true)  && CheckBollingerFilter(true);
    bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false) && CheckADXFilter(false) && CheckRSIFilter(false) && CheckBollingerFilter(false);
 
-   if(buyCount < TotalLevels && !canBuyFilters)   LogFilterBlockReason(true);
-   if(sellCount < TotalLevels && !canSellFilters) LogFilterBlockReason(false);
+   // Level Unlock: once BOTH sides have filled every configured TotalLevels
+   // (worst-case scenario - fully loaded grid, no more room to hedge), optionally
+   // allow opening further levels past the cap. This does NOT need its own
+   // profit check - ExecuteGridLogic() is already gated by
+   // (MaxBasketProfit < TargetProfit) in OnTick(), so grid execution (and this
+   // unlock) automatically stops the moment the basket reaches TargetProfit.
+   bool bothSidesMaxed = (buyCount >= TotalLevels && sellCount >= TotalLevels);
+   bool buyLevelAvailable  = (buyCount  < TotalLevels) ||
+      (UseLevelUnlock && bothSidesMaxed && (MaxUnlockedLevels <= 0 || buyCount  < TotalLevels + MaxUnlockedLevels));
+   bool sellLevelAvailable = (sellCount < TotalLevels) ||
+      (UseLevelUnlock && bothSidesMaxed && (MaxUnlockedLevels <= 0 || sellCount < TotalLevels + MaxUnlockedLevels));
+
+   if(buyLevelAvailable  && !canBuyFilters)  LogFilterBlockReason(true);
+   if(sellLevelAvailable && !canSellFilters) LogFilterBlockReason(false);
 
    // CHECK BUY GRID
-   if(buyCount < TotalLevels && canBuyFilters)
+   if(buyLevelAvailable && canBuyFilters)
    {
       // lastBuyPrice is a LOCAL variable recomputed every call from real filled
       // positions - re-anchoring it in the gap branch below does NOT persist to
@@ -1177,7 +1193,7 @@ void CheckAndExecuteVirtualGrid()
    }
 
    // CHECK SELL GRID
-   if(sellCount < TotalLevels && canSellFilters)
+   if(sellLevelAvailable && canSellFilters)
    {
       // Same persistence issue as the Buy side, mirrored: lastSellPrice is local
       // and rebuilt from real positions every call, so SellGapAnchor is the
