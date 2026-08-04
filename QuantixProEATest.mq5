@@ -29,76 +29,76 @@ enum ENUM_GRID_TYPE
 //=========================== INPUT ================================//
 input group "===== 1. Time & Language ====="
 input ENUM_LANGUAGE Language = LNG_TH; // Select Language ( default: Thai )
-input bool    UseTimer         = false;   // Time Filter (คุมเวลา)
+input bool    UseTimer         = true;    // Time Filter (คุมเวลา)
 input int     StartHour        = 2;       // Start Hour (ชม.เริ่ม)
 input int     StartMinute      = 0;
-input int     EndHour          = 23;      // Stop Hour (ชม.หยุด)
+input int     EndHour          = 22;      // Stop Hour (ชม.หยุด)
 input int     EndMinute        = 0;
 
 input group "===== 2. Main Grid ====="
 input ENUM_GRID_TYPE GridType       = GRID_VIRTUAL; // Grid Type (รูปแบบ Grid)
-input double BaseLot                = 0.01;
-input double LotMultiplier          = 2.0;
+input double BaseLot                = 0.05;
+input double LotMultiplier          = 1.5;
 input int    TotalLevels            = 10;      // Levels per Side (จำนวนชั้น/ฝั่ง)
-input bool   UseATRDistance         = false;   // Use ATR Distance (ระยะตาม ATR)
+input bool   UseATRDistance         = true;    // Use ATR Distance (ระยะตาม ATR)
 input int    ATR_Period             = 14;      // ATR Period
-input double ATR_Multiplier         = 1.5;     // ATR Multiplier
+input double ATR_Multiplier         = 1.05;    // ATR Multiplier
 input bool   UseAdaptiveATRGrid     = false;   // Per-Side ATR Distance (แยกระยะต่อฝั่ง)
-input int    DistancePoints         = 300;     // Fixed Distance, pts (ระยะคงที่)
+input int    DistancePoints         = 250;     // Fixed Distance, pts (ระยะคงที่)
 input ulong  MagicNumber            = 112233;
 
 input group "===== 3. Target & Trailing ====="
-input double TargetProfit        = 1.0;    // Target Profit $ (เป้ากำไร)
-input double TrailingStopUSD     = 0.5;    // Trailing Distance $ (ระยะเทรล)
+input double TargetProfit        = 5.0;    // Target Profit $ (เป้ากำไร)
+input double TrailingStopUSD     = 0.2;    // Trailing Distance $ (ระยะเทรล)
 
 input group "===== 4. Trend Filters ====="
 input bool   UseEMAFilter           = false;   // Use EMA Filter (ใช้ EMA)
 input int    EMA_Period             = 200;     // EMA Period
 input bool   StrictBuyFilter        = false;   // Block Buy < EMA (ล็อค Buy)
 input bool   StrictSellFilter       = false;   // Block Sell > EMA (ล็อค Sell)
-input bool   UseMTFFilter          = false;   // Use MTF Filter (ใช้ MTF)
+input bool   UseMTFFilter          = true;    // Use MTF Filter (ใช้ MTF)
 input ENUM_TIMEFRAMES MTF_Period   = PERIOD_H1; // MTF Timeframe
 
 input group "===== 5. Lot & Capital ====="
 input bool   UseDynamicLot          = false;   // Dynamic Lot by Equity (Lot ตาม Equity)
-input double BalancePerLot          = 10000.0; // Equity per 0.01 Lot
+input double BalancePerLot          = 8000.0;  // Equity per 0.01 Lot
 input bool   UseEquityLock          = false;   // Equity Lock (ล็อคพอร์ต)
-input double MinEquityLimit         = 500.0;   // Min Equity Limit
+input double MinEquityLimit         = 4000.0;  // Min Equity Limit
 input bool   UseAutoReduceLot       = false;   // Auto Reduce Lot on DD (ลด Lot อัตโนมัติ)
-input double ReduceLotThresholdDD   = 5.0;     // Reduce Lot DD Trigger %
+input double ReduceLotThresholdDD   = 20.0;    // Reduce Lot DD Trigger %
 
 input group "===== 6. Max DD Stop ====="
 input bool   UseMaxDDStop           = false;   // Max DD Stop (ตัดขาดทุน)
-input double MaxAllowedDD_USD       = 50.0;    // Max DD Allowed $ (0=off)
-input double MaxAllowedDD_Pct       = 10.0;    // Max DD Allowed % (0=off)
+input double MaxAllowedDD_USD       = 1000.0;  // Max DD Allowed $ (0=off)
+input double MaxAllowedDD_Pct       = 0.0;     // Max DD Allowed % (0=off)
 input bool   UseEmergencySL         = false;   // Emergency SL (SL ฉุกเฉิน)
-input int    EmergencySL_Points     = 3000;    // Emergency SL Distance, pts
+input int    EmergencySL_Points     = 10000;   // Emergency SL Distance, pts
 input bool   UseTotalDDGuard        = false;   // Total DD Guard (คุม DD สะสม)
 input double MaxTotalDD_Pct         = 15.0;    // Max Total DD %
 
 input group "===== 7. Position Mgmt ====="
 input bool   UseBasketBreakeven     = false;   // Breakeven (คุ้มทุน)
-input double BreakevenTriggerUSD    = 10.0;    // Breakeven Trigger $
-input double BreakevenLockUSD       = 3.0;     // Breakeven Lock $
+input double BreakevenTriggerUSD    = 5.0;     // Breakeven Trigger $
+input double BreakevenLockUSD       = 2.0;     // Breakeven Lock $
 input bool   UsePartialClose        = false;   // Partial Close (ปิดบางส่วน)
-input double PartialCloseProfitUSD  = 15.0;    // Partial Close Trigger $
+input double PartialCloseProfitUSD  = 20.0;    // Partial Close Trigger $
 input double PartialClosePercent    = 50.0;    // Partial Close %
 input bool   UseRecoveryMode        = false;   // Recovery Mode (แก้ไม้)
-input double RecoveryDD_TriggerPercent = 5.0;  // Recovery DD Trigger %
-input double RecoveryLotBoost          = 1.2;  // Recovery Lot Boost
+input double RecoveryDD_TriggerPercent = 10.0; // Recovery DD Trigger %
+input double RecoveryLotBoost          = 2.0;  // Recovery Lot Boost
 
 input group "===== 8. Overflow ====="
-input bool   UseLevelUnlock      = false;   // Level Unlock (ปลดล็อคชั้น)
-input int    MaxUnlockedLevels   = 5;       // Max Unlocked Levels (0=∞)
+input bool   UseLevelUnlock      = true;    // Level Unlock (ปลดล็อคชั้น)
+input int    MaxUnlockedLevels   = 0;       // Max Unlocked Levels (0=∞)
 input bool   UseForceHedgeOnDD          = false;  // Force Hedge on DD
-input double ForceHedgeDD_TriggerPercent = 6.0;   // Force Hedge DD Trigger %
-input double ForceHedgeResetPercent      = 3.0;   // Force Hedge Reset %
-input double ForceHedgeLotMultiplier     = 1.0;   // Force Hedge Lot Multiplier
+input double ForceHedgeDD_TriggerPercent = 10.0;  // Force Hedge DD Trigger %
+input double ForceHedgeResetPercent      = 5.0;   // Force Hedge Reset %
+input double ForceHedgeLotMultiplier     = 1.4;   // Force Hedge Lot Multiplier
 input bool   UseForceHedgeOnTime        = false;  // Force Hedge on Time
-input int    ForceHedgeTimeMinutes      = 30;     // Force Hedge Time, Min
+input int    ForceHedgeTimeMinutes      = 33;     // Force Hedge Time, Min
 
 input group "===== 9. Gap / Slippage ====="
-input bool   UseGapProtection    = false;  // Gap Protection (กันช่องว่างราคา)
+input bool   UseGapProtection    = true;   // Gap Protection (กันช่องว่างราคา)
 input int    MaxAllowedGapPoints = 100;    // Max Gap Allowed, pts
 input int    GapDetectionSeconds = 60;     // Gap Detection, Sec
 input int    MaxSlippagePoints   = 20;     // Max Slippage, pts
