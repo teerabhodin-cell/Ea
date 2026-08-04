@@ -98,13 +98,15 @@ input bool   UseRecoveryMode        = false;   // เปิดใช้งาน
 input double RecoveryDD_TriggerPercent = 5.0;  // Drawdown (%) ขั้นต่ำที่จะเริ่มเปิดใช้งาน Recovery Boost (ต่ำกว่านี้ lot คำนวณตามปกติ ไม่บวกเพิ่ม)
 input double RecoveryLotBoost          = 1.2;  // ตัวคูณ lot เพิ่มเติมตอน Recovery Mode ทำงาน (คูณทับ lot ที่คำนวณได้ตามปกติ)
 
-input group "===== 8. Overflow: Level Unlock & Force Hedge on High DD ====="
+input group "===== 8. Overflow: Level Unlock & Force Hedge (DD สูง / ติดลบนาน) ====="
 input bool   UseLevelUnlock      = false;   // เปิดใช้ระบบปลดล็อคชั้นเพิ่ม: เมื่อฝั่งใดฝั่งหนึ่ง (Buy หรือ Sell) เปิดเต็ม TotalLevels แล้ว จะอนุญาตให้ฝั่งนั้นเปิดไม้เพิ่มต่อได้จนกว่าบาสเก็ตจะกำไรถึง TargetProfit (โค้ดหยุดเปิดไม้เองอัตโนมัติทันทีที่ถึงเป้าอยู่แล้ว) - เสี่ยงสูง lot จะโตต่อเนื่องตาม LotMultiplier ควรเปิด UseMaxDDStop คู่กันเสมอ
 input int    MaxUnlockedLevels   = 5;       // จำนวนชั้นเพิ่มสูงสุดต่อฝั่งที่ยอมให้เปิดเกิน TotalLevels (ตั้ง 0 = ไม่จำกัดจำนวนชั้น อันตรายมาก)
 input bool   UseForceHedgeOnDD          = false;  // เปิด/ปิดระบบบังคับเปิดไม้ฝั่งตรงข้ามเมื่อ DD สูง (ข้าม EMA/MTF/ADX/RSI/Bollinger filter ทั้งหมด - เพราะจุดประสงค์คือ hedge ฝั่งที่ filter กำลังบล็อกอยู่)
 input double ForceHedgeDD_TriggerPercent = 6.0;   // Drawdown (%) ขั้นต่ำที่จะบังคับเปิดไม้ฝั่งที่มีไม้น้อยกว่า (ฝั่งที่ไม่ได้ hedge อยู่)
 input double ForceHedgeResetPercent      = 3.0;   // DD ต้องลดต่ำกว่าค่านี้ก่อน ถึงจะบังคับเปิดซ้ำได้อีกครั้ง (กัน spam เปิดรัวๆ ตอน DD ค้างสูง)
 input double ForceHedgeLotMultiplier     = 1.0;   // ตัวคูณ lot ของไม้ที่ถูกบังคับเปิด (คูณทับ lot ปกติของระดับถัดไปฝั่งนั้น)
+input bool   UseForceHedgeOnTime        = false;  // เปิด/ปิดระบบบังคับเปิดไม้แก้เมื่อบาสเก็ตติดลบนานเกินกำหนด (ดูแค่ "เวลา" ที่ติดลบต่อเนื่อง ไม่สน DD% เลย - ใช้แยกจาก/ควบคู่กับ Force Hedge on DD ด้านบนได้ ยิงฝั่งเดียวกันแบบเดียวกัน ใช้ ForceHedgeLotMultiplier ตัวคูณเดียวกัน)
+input int    ForceHedgeTimeMinutes      = 30;     // จำนวนนาทีที่ยอมให้บาสเก็ตติดลบต่อเนื่องก่อนบังคับเปิดไม้แก้ฝั่งที่มีไม้น้อยกว่า (นับใหม่ทุกครั้งที่บาสเก็ตพลิกมาเป็นบวกหรือปิดหมด)
 
 input group "===== 9. ป้องกัน Gap / Slippage ====="
 input bool   UseGapProtection    = true;   // เปิด/ปิด การเช็ค Gap ราคาโดด (Enable Gap Check)
@@ -156,6 +158,8 @@ bool     TradingHalted              = false; // true = ทะลุ MaxTotalDD_P
 bool     PartialCloseExecuted = false; // ป้องกันการสั่งปิดบางส่วนซ้ำรอบเดิม
 bool     BreakevenActivated   = false; // latch เมื่อกำไรแตะ BreakevenTriggerUSD แล้ว (ต้อง latch ไว้ก่อน ไม่งั้นเงื่อนไข Trigger/Lock จะไม่มีวันเป็นจริงพร้อมกัน)
 bool     ForceHedgeArmed      = false; // latch กัน Force Hedge ยิงรัวๆ ทุกทิคตอน DD ค้างสูง ต้องรอ DD ลดต่ำกว่า ForceHedgeResetPercent ก่อนถึงจะยิงซ้ำได้
+datetime BasketNegativeSinceTime = 0;   // เวลาที่บาสเก็ตเริ่มติดลบต่อเนื่อง (0 = ไม่ได้ติดลบอยู่ตอนนี้) ใช้กับ Force Hedge on Time
+bool     ForceHedgeTimeArmed     = false; // latch กัน Force Hedge on Time ยิงรัวๆ ทุกทิคตอนติดลบค้างนาน ต้องรอบาสเก็ตพลิกบวก/ปิดก่อนถึงจะยิงซ้ำได้
 
 // สถิติสรุปผล (นับตอนบาสเก็ตปิดจริงใน ClearEverythingAsync เท่านั้น)
 int      StatsTotalBaskets   = 0;
@@ -194,6 +198,8 @@ double GetCalculatedLotSize(int nextLevel);
 double CalcEmergencySL(bool isBuy, double entryPrice, double point);
 void ApplyBasketBreakevenAndPartial(double currentProfit);
 void CheckForceHedgeOnDD();
+bool TryOpenForceHedgeOrder(string reasonTag, string logDetail);
+void CheckForceHedgeOnTime();
 void LogFilterBlockReason(bool isBuy);
 void ExecuteGridLogic();
 void PlacePendingGridServer();
@@ -559,27 +565,12 @@ void ApplyBasketBreakevenAndPartial(double currentProfit)
 //| ForceHedgeResetPercent, so it fires once per DD spike instead of   |
 //| stacking a new forced order every tick while DD stays elevated.    |
 //+------------------------------------------------------------------+
-void CheckForceHedgeOnDD()
+// Shared executor for both Force Hedge triggers (DD-based and Time-based) -
+// they open the exact same kind of order via the exact same lot/cap logic,
+// just armed by a different condition. reasonTag goes into the order
+// comment and log line so it's obvious in the journal which trigger fired.
+bool TryOpenForceHedgeOrder(string reasonTag, string logDetail)
 {
-   if(!UseForceHedgeOnDD || IsClosingState || TradingHalted) return;
-
-   double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-   double liveDDPercent = 0.0;
-   if(PeakBalanceForDD > 0)
-   {
-      double liveDDVal = PeakBalanceForDD - currentEquity;
-      if(liveDDVal < 0) liveDDVal = 0;
-      liveDDPercent = (liveDDVal / PeakBalanceForDD) * 100.0;
-   }
-
-   if(liveDDPercent < ForceHedgeResetPercent)
-   {
-      ForceHedgeArmed = false;
-      return;
-   }
-
-   if(liveDDPercent < ForceHedgeDD_TriggerPercent || ForceHedgeArmed) return;
-
    int buyCount = 0, sellCount = 0;
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
@@ -591,19 +582,19 @@ void CheckForceHedgeOnDD()
       else sellCount++;
    }
 
-   if(buyCount == sellCount) return; // สมดุลอยู่แล้ว ไม่มีฝั่งไหนต้องบังคับเปิดเพิ่ม
+   if(buyCount == sellCount) return false; // สมดุลอยู่แล้ว ไม่มีฝั่งไหนต้องบังคับเปิดเพิ่ม
 
    bool needBuy = (sellCount > buyCount);
    int  neededSideCount = needBuy ? buyCount : sellCount;
 
    int cap = TotalLevels;
    if(UseLevelUnlock) cap += (MaxUnlockedLevels <= 0 ? 999999 : MaxUnlockedLevels);
-   if(neededSideCount >= cap) return; // เต็มเพดานแล้ว (รวม Level Unlock ถ้าเปิด) บังคับเพิ่มไม่ได้
+   if(neededSideCount >= cap) return false; // เต็มเพดานแล้ว (รวม Level Unlock ถ้าเปิด) บังคับเพิ่มไม่ได้
 
    double ask   = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid   = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   if(ask <= 0 || bid <= 0) return;
+   if(ask <= 0 || bid <= 0) return false;
 
    // Force Hedge IS its own recovery mechanism (active: force-open now, vs.
    // Recovery Mode's passive boost-when-the-grid-triggers-anyway) - it computes
@@ -646,20 +637,74 @@ void CheckForceHedgeOnDD()
    request.sl           = CalcEmergencySL(needBuy, needBuy ? ask : bid, point);
    request.deviation    = MaxSlippagePoints * m_multiplier;
    request.magic        = MagicNumber;
-   request.comment      = needBuy ? "FORCE-HEDGE-BUY" : "FORCE-HEDGE-SELL";
+   request.comment      = reasonTag + (needBuy ? "-BUY" : "-SELL");
    request.type_filling = fillMode;
 
    if(OrderSend(request, result))
    {
-      ForceHedgeArmed = true;
       LastOrderSentTime = TimeCurrent();
-      PrintFormat("🆘 [FORCE HEDGE] Live DD %.2f%% >= %.2f%% -> Forced %s %.2f lot (Buy:%d Sell:%d before).",
-                  liveDDPercent, ForceHedgeDD_TriggerPercent, needBuy ? "BUY" : "SELL", lot, buyCount, sellCount);
+      PrintFormat("🆘 [%s] %s -> Forced %s %.2f lot (Buy:%d Sell:%d before).",
+                  reasonTag, logDetail, needBuy ? "BUY" : "SELL", lot, buyCount, sellCount);
+      return true;
    }
-   else
+
+   Print(reasonTag, " OrderSend failed: ", GetLastError(), " retcode: ", result.retcode);
+   return false;
+}
+
+void CheckForceHedgeOnDD()
+{
+   if(!UseForceHedgeOnDD || IsClosingState || TradingHalted) return;
+
+   double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double liveDDPercent = 0.0;
+   if(PeakBalanceForDD > 0)
    {
-      Print("Force Hedge OrderSend failed: ", GetLastError(), " retcode: ", result.retcode);
+      double liveDDVal = PeakBalanceForDD - currentEquity;
+      if(liveDDVal < 0) liveDDVal = 0;
+      liveDDPercent = (liveDDVal / PeakBalanceForDD) * 100.0;
    }
+
+   if(liveDDPercent < ForceHedgeResetPercent)
+   {
+      ForceHedgeArmed = false;
+      return;
+   }
+
+   if(liveDDPercent < ForceHedgeDD_TriggerPercent || ForceHedgeArmed) return;
+
+   string detail = StringFormat("Live DD %.2f%% >= %.2f%%", liveDDPercent, ForceHedgeDD_TriggerPercent);
+   if(TryOpenForceHedgeOrder("FORCE-HEDGE-DD", detail)) ForceHedgeArmed = true;
+}
+
+//+------------------------------------------------------------------+
+//| Force Hedge on Time                                              |
+//| Independent of DD% entirely - if the basket has been sitting     |
+//| continuously underwater (currentProfit < 0) for longer than      |
+//| ForceHedgeTimeMinutes, force-open the underweight side right     |
+//| away instead of waiting for the grid to reach the next level or  |
+//| for DD% to climb high enough to trip Force Hedge on DD.          |
+//| BasketNegativeSinceTime is tracked once per tick in OnTick() and |
+//| resets to 0 the moment the basket turns flat/positive or closes, |
+//| which also re-arms this trigger for the next negative streak.    |
+//+------------------------------------------------------------------+
+void CheckForceHedgeOnTime()
+{
+   if(!UseForceHedgeOnTime || IsClosingState || TradingHalted) return;
+
+   if(BasketNegativeSinceTime == 0)
+   {
+      ForceHedgeTimeArmed = false;
+      return;
+   }
+
+   if(ForceHedgeTimeArmed) return;
+
+   int secondsNegative = (int)(TimeCurrent() - BasketNegativeSinceTime);
+   if(secondsNegative < ForceHedgeTimeMinutes * 60) return;
+
+   string detail = StringFormat("Basket negative for %d min >= %d min", secondsNegative / 60, ForceHedgeTimeMinutes);
+   if(TryOpenForceHedgeOrder("FORCE-HEDGE-TIME", detail)) ForceHedgeTimeArmed = true;
 }
 
 //+------------------------------------------------------------------+
@@ -687,6 +732,8 @@ int OnInit()
    PartialCloseExecuted = false;
    BreakevenActivated   = false;
    ForceHedgeArmed      = false;
+   BasketNegativeSinceTime = 0;
+   ForceHedgeTimeArmed     = false;
    StatsTotalBaskets    = 0;
    StatsWinCount        = 0;
    StatsLossCount       = 0;
@@ -851,6 +898,17 @@ void OnTick()
       pendingOrders++;
    }
 
+   // ติดตามว่าบาสเก็ตติดลบต่อเนื่องมานานแค่ไหน สำหรับ Force Hedge on Time -
+   // นับใหม่ทันทีที่พลิกมาเป็นบวก/เท่าทุน หรือปิดหมด
+   if(openPositions > 0 && currentProfit < 0)
+   {
+      if(BasketNegativeSinceTime == 0) BasketNegativeSinceTime = TimeCurrent();
+   }
+   else
+   {
+      BasketNegativeSinceTime = 0;
+   }
+
    // ปลดล็อกสภาวะ Closing เมื่อพอร์ตเคลียร์เกลี้ยงจริง และเว้นระยะ Cooldown 3 วินาที
    if(openPositions == 0 && pendingOrders == 0)
    {
@@ -976,6 +1034,7 @@ void OnTick()
    // 4. Update Drawdown Tracker & HUD UI (Throttled Update: ทุกๆ 500ms)
    UpdateDrawdownTracker();
    CheckForceHedgeOnDD();
+   CheckForceHedgeOnTime();
 
    uint now = GetTickCount();
    if(now - lastUIUpdateTime >= 500)
@@ -1609,6 +1668,8 @@ void ClearEverythingAsync()
    PartialCloseExecuted  = false;
    BreakevenActivated    = false;
    ForceHedgeArmed       = false;
+   BasketNegativeSinceTime = 0;
+   ForceHedgeTimeArmed     = false;
 }
 
 //+------------------------------------------------------------------+
@@ -1803,7 +1864,7 @@ void InitDashboard()
 
    // 2. SYSTEM STATUS PANEL (Force Hedge / Level Unlock / Basket Stats)
    int SysY = Y + 270;
-   CreatePanel(UI_PREFIX+"SysBG", X_Right, SysY, PanelW, 176, UI_PanelBG, UI_PanelBG);
+   CreatePanel(UI_PREFIX+"SysBG", X_Right, SysY, PanelW, 200, UI_PanelBG, UI_PanelBG);
    CreateLabel(UI_PREFIX+"SysTitle", X_Right+12, SysY+6, GetUIString("สถานะระบบเสริม (SYSTEM STATUS)", "SYSTEM STATUS"), 8, UI_Accent);
 
    int sysY = SysY + 26;
@@ -1825,6 +1886,10 @@ void InitDashboard()
    sysY += accGap;
    CreateLabel(UI_PREFIX+"Lbl_AvgWL", X_Right+12, sysY, GetUIString("เฉลี่ยกำไร/ขาดทุน:", "Avg Win/Loss:"), 8, UI_TextDim);
    CreateLabel(UI_PREFIX+"Val_AvgWL", ValX_Acc, sysY, "+$0.00 / -$0.00", 8, clrWhite);
+
+   sysY += accGap;
+   CreateLabel(UI_PREFIX+"Lbl_NegTime", X_Right+12, sysY, GetUIString("ติดลบนาน (Force Hedge Time):", "Negative Duration:"), 8, UI_TextDim);
+   CreateLabel(UI_PREFIX+"Val_NegTime", ValX_Acc, sysY, "OFF", 8, UI_TextDim);
 
    ChartRedraw();
 }
@@ -1973,6 +2038,24 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
    double avgWin  = (StatsWinCount  > 0) ? (StatsSumWinProfit  / StatsWinCount)  : 0.0;
    double avgLoss = (StatsLossCount > 0) ? (StatsSumLossAmount / StatsLossCount) : 0.0;
    ObjectSetString(0, UI_PREFIX+"Val_AvgWL", OBJPROP_TEXT, StringFormat("+$%.2f / -$%.2f", avgWin, avgLoss));
+
+   if(!UseForceHedgeOnTime)
+   {
+      ObjectSetString(0, UI_PREFIX+"Val_NegTime", OBJPROP_TEXT, GetUIString("ปิดใช้งาน", "OFF"));
+      ObjectSetInteger(0, UI_PREFIX+"Val_NegTime", OBJPROP_COLOR, UI_TextDim);
+   }
+   else if(BasketNegativeSinceTime == 0)
+   {
+      ObjectSetString(0, UI_PREFIX+"Val_NegTime", OBJPROP_TEXT, GetUIString("ยังไม่ติดลบ", "Not negative"));
+      ObjectSetInteger(0, UI_PREFIX+"Val_NegTime", OBJPROP_COLOR, UI_Profit);
+   }
+   else
+   {
+      int minsNegative = (int)((TimeCurrent() - BasketNegativeSinceTime) / 60);
+      ObjectSetString(0, UI_PREFIX+"Val_NegTime", OBJPROP_TEXT,
+                       StringFormat("%d / %d min", minsNegative, ForceHedgeTimeMinutes));
+      ObjectSetInteger(0, UI_PREFIX+"Val_NegTime", OBJPROP_COLOR, ForceHedgeTimeArmed ? UI_Loss : C'255,193,7');
+   }
 }
 
 void DeleteDashboard()
