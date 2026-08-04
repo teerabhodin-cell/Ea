@@ -302,6 +302,29 @@ void OnTick()
          LastCloseAllTime = TimeCurrent();
       }
 
+      // FIXED: previously the base price only got (re)calculated once, the very
+      // first time GridCreated flipped true. If price then drifted far away while
+      // the basket stayed flat (no trade ever opened), GridBasePrice stayed frozen
+      // forever - the Wait BUY/SELL targets kept pointing at wherever the EA
+      // happened to start, however far that got from the live market, so no order
+      // could ever trigger again. Re-sync to the current price whenever it has
+      // drifted more than 2 grid steps from the stale base, same as GridCreated
+      // being false.
+      double ask   = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double bid   = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+
+      if(ask > 0 && bid > 0 && GridBasePrice > 0)
+      {
+         double currentMid = (ask + bid) / 2.0;
+         int currentDist = (CachedGridDistance > 0) ? CachedGridDistance : GetDynamicGridDistance();
+
+         if(MathAbs(currentMid - GridBasePrice) > (currentDist * point * 2.0))
+         {
+            RecalculateBasePrice();
+         }
+      }
+
       if(!GridCreated)
       {
          RecalculateBasePrice();
