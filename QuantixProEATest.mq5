@@ -167,6 +167,7 @@ uint     lastUIUpdateTime = 0;
 bool     IsTestingMode    = false; // true in Strategy Tester - skips all dashboard object creation/updates to speed up backtests
 
 datetime lastFilterBlockLogTime = 0; // throttles the "why didn't it open" filter diagnostic to once/minute
+datetime lastGapLogTime         = 0; // throttles the GAP EXCEEDED re-anchor messages so a choppy market can't spam the Journal every tick
 
 //====================== FUNCTION DECLARE ==========================//
 
@@ -1166,8 +1167,12 @@ void CheckAndExecuteVirtualGrid()
          // sticks, and effectiveLastBuy (MathMax above) picks it up next tick.
          if(buyCount == 0) GridBasePriceBuy = ask;
          else BuyGapAnchor = ask;
-         PrintFormat("⚠️ [BUY GAP EXCEEDED] Re-anchored to Ask %.5f (was Target: %.5f | Diff: %.0f pts > Max: %d).",
-                     ask, targetPrice, diffPoints, adjGapLimit);
+         if(TimeCurrent() - lastGapLogTime >= 5)
+         {
+            lastGapLogTime = TimeCurrent();
+            PrintFormat("⚠️ [BUY GAP EXCEEDED] Re-anchored to Ask %.5f (was Target: %.5f | Diff: %.0f pts > Max: %d).",
+                        ask, targetPrice, diffPoints, adjGapLimit);
+         }
       }
    }
 
@@ -1234,8 +1239,12 @@ void CheckAndExecuteVirtualGrid()
          // lastSellPrice here was a no-op. SellGapAnchor actually persists.
          if(sellCount == 0) GridBasePriceSell = bid;
          else SellGapAnchor = bid;
-         PrintFormat("⚠️ [SELL GAP EXCEEDED] Re-anchored to Bid %.5f (was Target: %.5f | Diff: %.0f pts > Max: %d).",
-                     bid, targetPrice, diffPoints, adjGapLimit);
+         if(TimeCurrent() - lastGapLogTime >= 5)
+         {
+            lastGapLogTime = TimeCurrent();
+            PrintFormat("⚠️ [SELL GAP EXCEEDED] Re-anchored to Bid %.5f (was Target: %.5f | Diff: %.0f pts > Max: %d).",
+                        bid, targetPrice, diffPoints, adjGapLimit);
+         }
       }
    }
 }
@@ -1344,7 +1353,12 @@ void ClearEverythingAsync()
       }
 
       retryCount++;
-      if(retryCount < 10) Sleep(50);
+      // Sleep() blocks real wall-clock time in the Strategy Tester too, and every
+      // basket close (TS/Breakeven/DD Stop/time-filter) pays it at least once
+      // even when OrderSend() already closed everything on the first pass - it's
+      // only needed live, to give the broker time to actually process the close.
+      // In the tester OrderSend() is synchronous/deterministic, so skip it.
+      if(retryCount < 10 && !IsTestingMode) Sleep(50);
    }
 
    GridCreated           = false;
