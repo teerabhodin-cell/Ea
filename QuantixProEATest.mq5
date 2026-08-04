@@ -26,6 +26,18 @@ enum ENUM_GRID_TYPE
    GRID_PENDING  // Pending Order (ตั้ง Buy Stop / Sell Stop บน Server)
 };
 
+//=========================== HARD LICENSE LOCK ================================//
+// รายชื่อเลขบัญชี MT5 ที่อนุญาตให้รัน EA นี้ได้ - แก้ตรงนี้แล้ว compile เป็น .ex5
+// ใหม่ก่อนแจกจ่ายเสมอ **ห้ามทำเป็น input เด็ดขาด** เพราะถ้าเป็น input ผู้ใช้จะเปิดหน้า
+// Inputs แล้วแก้ค่าเองได้ทันที ทำให้ล็อคไม่มีความหมายอะไรเลย - ต้องเป็นค่าคงที่ใน
+// source code เท่านั้นถึงจะบังคับได้จริง (คนละ .ex5 ต่อคนละบัญชี หรือแก้เลขนี้เอง)
+//
+// ตัวอย่าง: ใส่ได้หลายเลขคั่นด้วย comma
+// const long LicensedAccountNumbers[] = {12345678, 87654321};
+const long LicensedAccountNumbers[] = {0}; // <<< TODO: ใส่เลขบัญชีจริงก่อน compile แจกจ่าย (0 = placeholder, ล็อคทุกบัญชีไว้ก่อน)
+
+bool IsLicensed = false; // เซ็ตค่าจริงใน OnInit() - เทียบ ACCOUNT_LOGIN ปัจจุบันกับลิสต์ด้านบน
+
 //=========================== INPUT ================================//
 input group "===== 1. Time & Language ====="
 input ENUM_LANGUAGE Language = LNG_TH; // Select Language ( default: Thai )
@@ -209,6 +221,7 @@ ENUM_ORDER_TYPE_FILLING GetBestFillingMode();
 // UI Engine Functions
 void InitDashboard();
 void DeleteDashboard();
+void ShowUnlicensedWarning();
 void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, int openPos, int pendingOrders);
 void CreateLabel(string name, int x, int y, string text, int size = 9, color clr = clrWhite, string font = "");
 void CreatePanel(string name, int x, int y, int w, int h, color bgClr, color borderClr);
@@ -668,6 +681,31 @@ int OnInit()
 {
    IsTestingMode = (bool)MQLInfoInteger(MQL_TESTER);
 
+   // Hard License Lock: skipped in the Strategy Tester (virtual account numbers
+   // don't match any real license anyway, and backtesting isn't "using" the
+   // strategy on real money) - enforced strictly on live/demo accounts. See the
+   // LicensedAccountNumbers array near the top of the file.
+   long currentAccount = AccountInfoInteger(ACCOUNT_LOGIN);
+   IsLicensed = IsTestingMode;
+   if(!IsLicensed)
+   {
+      for(int li = 0; li < ArraySize(LicensedAccountNumbers); li++)
+      {
+         if(LicensedAccountNumbers[li] == currentAccount) { IsLicensed = true; break; }
+      }
+   }
+
+   if(!IsLicensed)
+   {
+      string licMsg = StringFormat("QuantixPro EA: Account #%d is NOT LICENSED to run this EA. Contact the developer to register this account.", currentAccount);
+      Print("🔒 [LICENSE] ", licMsg);
+      Alert(licMsg);
+      // Deliberately still returns INIT_SUCCEEDED below so the chart keeps the EA
+      // attached and shows a persistent unlicensed warning instead of silently
+      // detaching - OnTick() hard-stops before any trading logic runs whenever
+      // IsLicensed is false, so this is a functional lock either way.
+   }
+
    // FIXED: derive m_multiplier from the attached symbol's digit count so every
    // *Points input (DistancePoints, MaxSlippagePoints, MaxAllowedGapPoints,
    // MaxSpreadAllowed) keeps meaning the same real price distance whether the
@@ -738,7 +776,11 @@ int OnInit()
       DeleteAllPendingOrders();
    }
 
-   InitDashboard();
+   // Skip the normal dashboard entirely when unlicensed - OnTick() draws the
+   // warning panel instead, and letting both InitDashboard() and
+   // ShowUnlicensedWarning() create objects at the same top-left corner would
+   // overlap them.
+   if(IsLicensed) InitDashboard();
 
    return(INIT_SUCCEEDED);
 }
@@ -789,6 +831,17 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 //+------------------------------------------------------------------+
 void OnTick()
 {
+   // Hard License Lock: single choke point - every trading path (grid entries,
+   // Force Hedge, trailing stop, everything) is reached only from inside
+   // OnTick(), so stopping here before any of it runs is a complete, functional
+   // lock. Still draws a persistent on-chart warning so it's obvious why nothing
+   // is happening, instead of the EA looking silently broken.
+   if(!IsLicensed)
+   {
+      if(!IsTestingMode) ShowUnlicensedWarning();
+      return;
+   }
+
    // วัดระยะเวลาตั้งแต่ทิคก่อนหน้า - ใช้แยกแยะ "ราคาวิ่งแรงต่อเนื่อง" (ทิคยังเข้ามาปกติ)
    // ออกจาก "Gap จริง" (ไม่มีทิคเข้ามาเลยช่วงหนึ่ง เช่น ข้ามคืน/สุดสัปดาห์) ใน Gap Protection ด้านล่าง
    SecondsSinceLastTick = (lastTickTimeForGap > 0) ? (int)(TimeCurrent() - lastTickTimeForGap) : 0;
@@ -1712,6 +1765,30 @@ void CreateButton(string name, int x, int y, int w, int h, string text, color bg
    ObjectSetString(0, name, OBJPROP_FONT, GetUIFont());
    ObjectSetString(0, name, OBJPROP_TEXT, text);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+}
+
+//+------------------------------------------------------------------+
+//| Persistent on-chart warning shown instead of the normal dashboard |
+//| whenever the current account isn't in LicensedAccountNumbers.     |
+//| Draws once (checks ObjectFind first) - OnTick() calls this every  |
+//| tick while unlicensed, so this must stay cheap and idempotent.    |
+//+------------------------------------------------------------------+
+void ShowUnlicensedWarning()
+{
+   if(ObjectFind(0, UI_PREFIX+"LicWarnBG") >= 0) return;
+
+   long accNum = AccountInfoInteger(ACCOUNT_LOGIN);
+
+   CreatePanel(UI_PREFIX+"LicWarnShadow", 20, 20, 560, 110, clrBlack, clrBlack);
+   CreatePanel(UI_PREFIX+"LicWarnBG", 15, 15, 560, 110, C'26,10,10', clrRed);
+   CreateLabel(UI_PREFIX+"LicWarnTitle", 32, 30, "🔒 " + GetUIString("EA ยังไม่ได้ลงทะเบียน", "EA NOT LICENSED"), 14, clrRed, "Impact");
+   CreateLabel(UI_PREFIX+"LicWarnAcc", 32, 58, StringFormat("Account #%d", accNum), 10, clrWhite, "Impact");
+   CreateLabel(UI_PREFIX+"LicWarnBody", 32, 80, GetUIString(
+                  "บัญชีนี้ไม่ได้รับอนุญาตให้ใช้งาน EA ตัวนี้ - EA จะไม่เปิดไม้ใดๆ กรุณาติดต่อผู้พัฒนาเพื่อลงทะเบียนบัญชีนี้",
+                  "This account is not authorized to run this EA - no trading will occur. Contact the developer to register this account."),
+               9, C'220,200,200');
+
+   ChartRedraw();
 }
 
 void InitDashboard()
