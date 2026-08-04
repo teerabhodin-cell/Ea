@@ -27,84 +27,84 @@ enum ENUM_GRID_TYPE
 };
 
 //=========================== INPUT ================================//
-input group "===== 1. Trading Time & Language (เวลาเทรด & ภาษา) ====="
+input group "===== 1. Time & Language ====="
 input ENUM_LANGUAGE Language = LNG_TH; // Select Language ( default: Thai )
-input bool    UseTimer         = false;   // Enable Time Filter (เปิดใช้งานระบบคุมเวลา)
-input int     StartHour        = 2;       // Start trading hour, Server Time (เวลาเริ่มทำงาน ตามเวลา Server)
+input bool    UseTimer         = false;   // Time Filter (คุมเวลา)
+input int     StartHour        = 2;       // Start Hour (ชม.เริ่ม)
 input int     StartMinute      = 0;
-input int     EndHour          = 23;      // Stop trading hour, Server Time (เวลาหยุดทำงาน ตามเวลา Server)
+input int     EndHour          = 23;      // Stop Hour (ชม.หยุด)
 input int     EndMinute        = 0;
 
-input group "===== 2. Main Grid (Grid หลัก) ====="
-input ENUM_GRID_TYPE GridType       = GRID_VIRTUAL; // Select Grid type: Virtual or Pending (เลือกรูปแบบ Grid)
+input group "===== 2. Main Grid ====="
+input ENUM_GRID_TYPE GridType       = GRID_VIRTUAL; // Grid Type (รูปแบบ Grid)
 input double BaseLot                = 0.01;
 input double LotMultiplier          = 2.0;
-input int    TotalLevels            = 10;      // Levels per side (10 Buy Stop + 10 Sell Stop) (จำนวนชั้นต่อฝั่ง)
-input bool   UseATRDistance         = false;   // Use ATR-based grid distance (เปิดใช้ระยะ Grid ตามค่า ATR)
-input int    ATR_Period             = 14;      // ATR calculation period (รอบคำนวณ ATR)
-input double ATR_Multiplier         = 1.5;     // ATR multiplier, e.g. 1.5x ATR (ตัวคูณ ATR)
-input bool   UseAdaptiveATRGrid     = false;   // Independent per-side (Buy/Sell) grid distance, recalculated fresh from live ATR each time that side fills - the still-pending side is untouched (requires UseATRDistance=true to have any effect) (แยกระยะ Grid เป็นอิสระต่อฝั่ง คำนวณจาก ATR สดทุกครั้งที่ฝั่งนั้น fill ต้องเปิด UseATRDistance ด้วย)
-input int    DistancePoints         = 300;     // Fixed distance in points (used when UseATRDistance is off) (ระยะห่าง Fixed Points ใช้กรณีปิด UseATRDistance)
+input int    TotalLevels            = 10;      // Levels per Side (จำนวนชั้น/ฝั่ง)
+input bool   UseATRDistance         = false;   // Use ATR Distance (ระยะตาม ATR)
+input int    ATR_Period             = 14;      // ATR Period
+input double ATR_Multiplier         = 1.5;     // ATR Multiplier
+input bool   UseAdaptiveATRGrid     = false;   // Per-Side ATR Distance (แยกระยะต่อฝั่ง)
+input int    DistancePoints         = 300;     // Fixed Distance, pts (ระยะคงที่)
 input ulong  MagicNumber            = 112233;
 
-input group "===== 3. Target Profit & Trailing Stop (เป้ากำไร & Trailing Stop) ====="
-input double TargetProfit        = 1.0;    // Minimum Profit ($) to activate Trailing (กำไรขั้นต่ำที่จะเริ่มเทรลลิ่ง)
-input double TrailingStopUSD     = 0.5;    // Trailing Distance ($) (ระยะห่าง Trailing)
+input group "===== 3. Target & Trailing ====="
+input double TargetProfit        = 1.0;    // Target Profit $ (เป้ากำไร)
+input double TrailingStopUSD     = 0.5;    // Trailing Distance $ (ระยะเทรล)
 
-input group "===== 4. Trend Filters: EMA / MTF (ตัวกรองเทรนด์) ====="
-input bool   UseEMAFilter           = false;   // Enable EMA trend filter (เปิดใช้ตัวกรองเทรนด์ EMA)
-input int    EMA_Period             = 200;     // EMA period (Period ของเส้น EMA)
-input bool   StrictBuyFilter        = false;   // Lock Buy side: block Buy when price is below EMA (ล็อคฝั่ง Buy ห้ามเปิดหากราคาต่ำกว่า EMA)
-input bool   StrictSellFilter       = false;   // Lock Sell side: block Sell when price is above EMA (ล็อคฝั่ง Sell ห้ามเปิดหากราคาเหนือ EMA)
-input bool   UseMTFFilter          = false;   // Enable higher-timeframe trend filter (set MTF_Period higher than the chart's actual timeframe, otherwise it duplicates the main EMA filter) (เปิดตัวกรองเทรนด์จาก Timeframe สูงกว่า ตั้ง MTF_Period ให้สูงกว่ากราฟจริง ไม่งั้นจะซ้ำกับ EMA filter)
-input ENUM_TIMEFRAMES MTF_Period   = PERIOD_H1; // Timeframe used for the higher-TF trend filter (Timeframe ที่ใช้กรองเทรนด์หลัก)
+input group "===== 4. Trend Filters ====="
+input bool   UseEMAFilter           = false;   // Use EMA Filter (ใช้ EMA)
+input int    EMA_Period             = 200;     // EMA Period
+input bool   StrictBuyFilter        = false;   // Block Buy < EMA (ล็อค Buy)
+input bool   StrictSellFilter       = false;   // Block Sell > EMA (ล็อค Sell)
+input bool   UseMTFFilter          = false;   // Use MTF Filter (ใช้ MTF)
+input ENUM_TIMEFRAMES MTF_Period   = PERIOD_H1; // MTF Timeframe
 
-input group "===== 5. Lot Size & Capital Protection (ขนาด Lot & ป้องกันทุน) ====="
-input bool   UseDynamicLot          = false;   // Enable automatic lot sizing based on Equity (เปิดใช้งานการคำนวณ Lot อัตโนมัติตาม Equity)
-input double BalancePerLot          = 10000.0; // Equity amount per 0.01 lot (สัดส่วนเงิน Equity ต่อ Lot เริ่มต้น 0.01)
-input bool   UseEquityLock          = false;   // Enable Equity Lock: stop opening new orders immediately if Equity falls below the limit (เปิดระบบล็อคพอร์ต หยุดเปิดไม้ใหม่หาก Equity ต่ำกว่ากำหนด)
-input double MinEquityLimit         = 500.0;   // Minimum Equity limit - new orders stop below this (ขีดจำกัด Equity ขั้นต่ำ หากต่ำกว่านี้จะหยุดเปิดไม้ใหม่)
-input bool   UseAutoReduceLot       = false;   // Enable automatic lot reduction when Drawdown rises (เปิดใช้งานระบบลดขนาด Lot อัตโนมัติเมื่อ Drawdown สูงขึ้น)
-input double ReduceLotThresholdDD   = 5.0;     // Drawdown (%) threshold that halves the lot size (เปอร์เซ็นต์ Drawdown ที่เริ่มลดขนาด Lot ลงครึ่งหนึ่ง)
+input group "===== 5. Lot & Capital ====="
+input bool   UseDynamicLot          = false;   // Dynamic Lot by Equity (Lot ตาม Equity)
+input double BalancePerLot          = 10000.0; // Equity per 0.01 Lot
+input bool   UseEquityLock          = false;   // Equity Lock (ล็อคพอร์ต)
+input double MinEquityLimit         = 500.0;   // Min Equity Limit
+input bool   UseAutoReduceLot       = false;   // Auto Reduce Lot on DD (ลด Lot อัตโนมัติ)
+input double ReduceLotThresholdDD   = 5.0;     // Reduce Lot DD Trigger %
 
-input group "===== 6. Max Drawdown Stop / Emergency Brake (เบรกฉุกเฉิน) ====="
-input bool   UseMaxDDStop           = false;   // Enable emergency stop-loss when Max DD exceeds the limit (เปิดใช้งานระบบตัดขาดทุนฉุกเฉินเมื่อ Max DD เกินกำหนด)
-input double MaxAllowedDD_USD       = 50.0;    // Maximum loss allowed in $ - closes everything immediately if exceeded (set 0 to disable this $ check) (ยอมให้ขาดทุนสูงสุดเป็นเงิน เกินแล้วปิดทิ้งทันที ตั้ง 0 เพื่อปิดการเช็คแบบเงิน)
-input double MaxAllowedDD_Pct       = 10.0;    // Maximum loss allowed as % of peak Balance (set 0 to disable this % check) (ยอมให้ขาดทุนสูงสุดเป็น % จากยอด Balance สูงสุด ตั้ง 0 เพื่อปิดการเช็คแบบ %)
-input bool   UseEmergencySL         = false;   // Attach a server-side emergency Stop Loss to every order, in case the EA/terminal disconnects - not a strategy SL, set very wide so it never triggers in normal trading (ติด SL ฉุกเฉินบนทุกไม้ server-side เผื่อ EA/เทอร์มินัลหลุด ตั้งกว้างมากไม่ให้ชนตอนเทรดปกติ)
-input int    EmergencySL_Points     = 3000;    // Emergency SL distance from entry (points), auto-adjusted by m_multiplier (ระยะ SL ฉุกเฉินจากราคาเข้า ปรับตาม m_multiplier อัตโนมัติแล้ว)
-input bool   UseTotalDDGuard        = false;   // Account-wide emergency brake: caps cumulative DD from the all-time peak Balance since the EA started (does not reset after each stop like MaxDDStop above) - prevents several losing episodes, each within MaxAllowedDD, from compounding into a much larger total loss (เบรกฉุกเฉินระดับพอร์ตรวม คุม DD สะสมจาก Peak Balance ตั้งแต่เริ่ม EA ไม่ reset เหมือน MaxDDStop กันขาดทุนติดกันหลายรอบสะสมจนพอร์ตพัง)
-input double MaxTotalDD_Pct         = 15.0;    // Maximum cumulative account DD (%) allowed - exceeding it closes everything and permanently halts new orders (restart the EA to resume) (DD สะสมสูงสุดของพอร์ตที่ยอมรับได้ เกินแล้วปิดทั้งหมดและหยุดเปิดไม้ใหม่ถาวร ต้อง restart EA เอง)
+input group "===== 6. Max DD Stop ====="
+input bool   UseMaxDDStop           = false;   // Max DD Stop (ตัดขาดทุน)
+input double MaxAllowedDD_USD       = 50.0;    // Max DD Allowed $ (0=off)
+input double MaxAllowedDD_Pct       = 10.0;    // Max DD Allowed % (0=off)
+input bool   UseEmergencySL         = false;   // Emergency SL (SL ฉุกเฉิน)
+input int    EmergencySL_Points     = 3000;    // Emergency SL Distance, pts
+input bool   UseTotalDDGuard        = false;   // Total DD Guard (คุม DD สะสม)
+input double MaxTotalDD_Pct         = 15.0;    // Max Total DD %
 
-input group "===== 7. Position Management: Breakeven / Partial Close / Recovery Mode (แก้ไม้) ====="
-input bool   UseBasketBreakeven     = false;   // Enable Breakeven (move stop to lock in partial profit) (เปิดระบบขยับจุดคุ้มทุน ล็อคกำไรบางส่วน)
-input double BreakevenTriggerUSD    = 10.0;    // Minimum profit ($) that activates Breakeven (กำไรขั้นต่ำที่จะเริ่มเปิดใช้งานระบบ Breakeven)
-input double BreakevenLockUSD       = 3.0;     // Minimum profit ($) locked in if price retraces (กำไรขั้นต่ำที่ต้องเหลือล็อกไว้เมื่อราคาถอยกลับ)
-input bool   UsePartialClose        = false;   // Enable Partial Close (take partial profit) (เปิดใช้งานระบบทยอยปิดทำกำไรบางส่วน)
-input double PartialCloseProfitUSD  = 15.0;    // Profit ($) target that triggers a partial close (กำไรที่ถึงเป้าแล้วสั่งปิดบางส่วน)
-input double PartialClosePercent    = 50.0;    // Percentage of the order volume to close, e.g. 50% (สัดส่วนเปอร์เซ็นต์ของออเดอร์ที่จะปิด)
-input bool   UseRecoveryMode        = false;   // Enable Recovery Mode: boosts lot size to recover faster once Drawdown exceeds RecoveryDD_TriggerPercent (เปิดโหมดแก้ไม้ เร่งเก็บบาสเกตเมื่อ Drawdown สูงเกิน RecoveryDD_TriggerPercent)
-input double RecoveryDD_TriggerPercent = 5.0;  // Minimum Drawdown (%) that activates the Recovery boost (below this, lot is calculated normally) (Drawdown ขั้นต่ำที่จะเริ่มเปิด Recovery Boost ต่ำกว่านี้ lot คำนวณตามปกติ)
-input double RecoveryLotBoost          = 1.2;  // Extra lot multiplier applied while Recovery Mode is active (ตัวคูณ lot เพิ่มเติมตอน Recovery Mode ทำงาน)
+input group "===== 7. Position Mgmt ====="
+input bool   UseBasketBreakeven     = false;   // Breakeven (คุ้มทุน)
+input double BreakevenTriggerUSD    = 10.0;    // Breakeven Trigger $
+input double BreakevenLockUSD       = 3.0;     // Breakeven Lock $
+input bool   UsePartialClose        = false;   // Partial Close (ปิดบางส่วน)
+input double PartialCloseProfitUSD  = 15.0;    // Partial Close Trigger $
+input double PartialClosePercent    = 50.0;    // Partial Close %
+input bool   UseRecoveryMode        = false;   // Recovery Mode (แก้ไม้)
+input double RecoveryDD_TriggerPercent = 5.0;  // Recovery DD Trigger %
+input double RecoveryLotBoost          = 1.2;  // Recovery Lot Boost
 
-input group "===== 8. Overflow: Level Unlock & Force Hedge (High DD / Prolonged Negative) (DD สูง / ติดลบนาน) ====="
-input bool   UseLevelUnlock      = false;   // Enable Level Unlock: once either side (Buy or Sell) has filled every TotalLevels, allow that side to keep opening further levels until the basket reaches TargetProfit (grid execution auto-stops the instant target is reached anyway) - high risk, lot keeps growing per LotMultiplier, always pair with UseMaxDDStop (เปิดระบบปลดล็อคชั้นเพิ่ม เมื่อฝั่งใดฝั่งหนึ่งเต็ม TotalLevels เสี่ยงสูง ควรเปิด UseMaxDDStop คู่กันเสมอ)
-input int    MaxUnlockedLevels   = 5;       // Maximum extra levels per side allowed beyond TotalLevels (0 = unlimited, very dangerous) (จำนวนชั้นเพิ่มสูงสุดต่อฝั่ง ตั้ง 0 = ไม่จำกัด อันตรายมาก)
-input bool   UseForceHedgeOnDD          = false;  // Enable/disable force-opening the opposite side when DD is high (bypasses all EMA/MTF filters - the goal is to hedge the side a filter is currently blocking) (เปิด/ปิดบังคับเปิดไม้ฝั่งตรงข้ามเมื่อ DD สูง ข้าม filter ทั้งหมด)
-input double ForceHedgeDD_TriggerPercent = 6.0;   // Minimum Drawdown (%) that force-opens the underweight side (Drawdown ขั้นต่ำที่จะบังคับเปิดไม้ฝั่งที่มีไม้น้อยกว่า)
-input double ForceHedgeResetPercent      = 3.0;   // DD must drop below this before firing again (prevents spamming orders while DD stays elevated) (DD ต้องลดต่ำกว่านี้ก่อนถึงจะบังคับเปิดซ้ำได้ กัน spam ตอน DD ค้างสูง)
-input double ForceHedgeLotMultiplier     = 1.0;   // Lot multiplier for the forced order, applied on top of that side's normal next-level lot (ตัวคูณ lot ของไม้ที่ถูกบังคับเปิด คูณทับ lot ปกติของระดับถัดไป)
-input bool   UseForceHedgeOnTime        = false;  // Enable/disable force-opening a recovery order once the basket has been negative for too long (only looks at elapsed "time", ignores DD% entirely - can be used separately from or alongside Force Hedge on DD above, fires the same way with the same ForceHedgeLotMultiplier) (เปิด/ปิดบังคับเปิดไม้แก้เมื่อบาสเก็ตติดลบนานเกินกำหนด ดูแค่เวลา ไม่สน DD%)
-input int    ForceHedgeTimeMinutes      = 30;     // Minutes the basket may stay continuously negative before force-opening the underweight side - repeats every N minutes while still negative (no need to flip positive first) until Buy/Sell balance out or hit the TotalLevels/Level Unlock cap (จำนวนนาทีที่ยอมให้บาสเก็ตติดลบต่อเนื่องก่อนบังคับเปิดไม้แก้ ยิงซ้ำได้ทุก N นาทีถ้ายังติดลบไม่หยุด)
+input group "===== 8. Overflow ====="
+input bool   UseLevelUnlock      = false;   // Level Unlock (ปลดล็อคชั้น)
+input int    MaxUnlockedLevels   = 5;       // Max Unlocked Levels (0=∞)
+input bool   UseForceHedgeOnDD          = false;  // Force Hedge on DD
+input double ForceHedgeDD_TriggerPercent = 6.0;   // Force Hedge DD Trigger %
+input double ForceHedgeResetPercent      = 3.0;   // Force Hedge Reset %
+input double ForceHedgeLotMultiplier     = 1.0;   // Force Hedge Lot Multiplier
+input bool   UseForceHedgeOnTime        = false;  // Force Hedge on Time
+input int    ForceHedgeTimeMinutes      = 30;     // Force Hedge Time, Min
 
-input group "===== 9. Gap / Slippage Protection (ป้องกัน Gap / Slippage) ====="
-input bool   UseGapProtection    = false;  // Enable/disable the price gap check (เปิด/ปิดการเช็ค Gap ราคาโดด)
-input int    MaxAllowedGapPoints = 100;    // Maximum gap tolerated (points) - a bigger jump triggers a reset, but only counts as a genuine gap when it's also been longer than GapDetectionSeconds since the last tick (prevents a strong continuous trend from being mistaken for a gap on every tick and never opening another order) (Gap ยอมรับได้สูงสุด เกินแล้ว Reset แต่นับเป็น Gap จริงก็ต่อเมื่อห่างจากทิคก่อนหน้าเกิน GapDetectionSeconds ด้วย)
-input int    GapDetectionSeconds = 60;     // Seconds with zero ticks required to count as a genuine gap (e.g. price jumping over a holiday/weekend) - if ticks keep arriving continuously (a fast market, not a real break), it's not treated as a gap and orders open normally even beyond MaxAllowedGapPoints (ระยะเวลาที่ไม่มีทิคเข้ามาเลยถึงจะถือว่าเป็น Gap จริง ถ้าทิคยังเข้ามาต่อเนื่องจะไม่ถือเป็น Gap)
-input int    MaxSlippagePoints   = 20;     // Maximum slippage allowed (points), 20-30 recommended for reliable fills (ล็อค Slippage สูงสุด แนะนำ 20-30)
-input int    MaxSpreadAllowed    = 40;     // Maximum spread allowed to open an order, points (Virtual Mode) (สเปรดสูงสุดที่อนุญาตให้เปิดไม้)
+input group "===== 9. Gap / Slippage ====="
+input bool   UseGapProtection    = false;  // Gap Protection (กันช่องว่างราคา)
+input int    MaxAllowedGapPoints = 100;    // Max Gap Allowed, pts
+input int    GapDetectionSeconds = 60;     // Gap Detection, Sec
+input int    MaxSlippagePoints   = 20;     // Max Slippage, pts
+input int    MaxSpreadAllowed    = 40;     // Max Spread Allowed, pts
 
-input group "===== 10. Dashboard UI Colors (สี Dashboard UI) ====="
+input group "===== 10. Dashboard Colors ====="
 input color  UI_MainBG        = C'18, 20, 28';    // Main BG Color (Dark Navy)
 input color  UI_Shadow        = C'5, 5, 5';       // Shadow Color (Drop Shadow)
 input color  UI_Accent        = C'33, 150, 243';  // Border & Progress Bar Color (Blue)
