@@ -748,6 +748,12 @@ void OnTick()
          double tsTriggerLine = MaxBasketProfit - TrailingStopUSD;
          DrawVisualTSLine(tsTriggerLine);
 
+         // FIXED: this branch used to `return` without resetting IsClosingState back
+         // to false (every other ManualCloseAllSync() caller does). If the close ever
+         // failed to fully flatten the basket, IsClosingState stayed stuck true
+         // forever, disabling this whole block and the grid gate permanently - the
+         // basket would sit open and unmanaged indefinitely with no further trailing
+         // checks, breakeven, or grid additions.
          if(currentProfit <= tsTriggerLine)
          {
             IsClosingState = true;
@@ -755,6 +761,7 @@ void OnTick()
             DeleteVisualTSLine();
             RecalculateBasePrice();
             PartialCloseExecuted = false;
+            IsClosingState = false;
             return;
          }
       }

@@ -647,13 +647,29 @@ void OnTick()
          double tsTriggerLine = MaxBasketProfit - TrailingStopUSD;
          DrawVisualTSLine(tsTriggerLine);
 
+         // TargetProfit only ARMS the trailing stop - the basket keeps running and
+         // only actually closes once profit pulls back by TrailingStopUSD from its
+         // peak (MaxBasketProfit). That is by design (let winners run).
          if(currentProfit <= tsTriggerLine)
          {
+            // FIXED: every other ManualCloseAllSync() caller resets IsClosingState
+            // back to false right after the call; this branch used to `return`
+            // without doing so. If ManualCloseAllSync() ever failed to fully flatten
+            // the basket (a rejected close order, requote, brief connectivity blip),
+            // IsClosingState stayed stuck at true forever - which disables this
+            // entire block (`if(openPositions > 0 && !IsClosingState)`) AND the grid
+            // gate (`!IsClosingState` in the ExecuteGridLogic() condition) permanently,
+            // since the only other reset path requires openPositions==0 first. The
+            // basket would then sit open and completely unmanaged - no more trailing
+            // checks, no more breakeven, no more grid additions - while price kept
+            // moving, exactly matching profit running far past TargetProfit with no
+            // close ever firing.
             IsClosingState = true;
             ManualCloseAllSync();
             DeleteVisualTSLine();
             RecalculateBasePrice();
             PartialCloseExecuted = false;
+            IsClosingState = false;
             return;
          }
       }
