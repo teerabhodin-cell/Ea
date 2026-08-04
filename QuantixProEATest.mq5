@@ -48,6 +48,16 @@ input int    DistancePoints         = 300;     // ระยะห่าง Fixed
 input int    TotalLevels            = 10;      // จำนวนชั้นต่อฝั่ง (10 Buy Stop + 10 Sell Stop)
 input ulong  MagicNumber            = 112233;
 
+input group "--- Trend Filter (EMA Anti-Sideway) ---"
+input bool   UseEMAFilter           = true;    // เปิดใช้ตัวกรองเทรนด์ EMA
+input int    EMA_Period             = 200;     // Period ของเส้น EMA
+input bool   StrictBuyFilter        = true;    // ล็อคฝั่ง Buy: ห้ามเปิด Buy หากราคาอยู่ต่ำกว่า EMA
+input bool   StrictSellFilter       = true;    // ล็อคฝั่ง Sell: ห้ามเปิด Sell หากราคาอยู่เหนือ EMA
+
+input group "--- Multi Timeframe Filter ---"
+input bool   UseMTFFilter          = false;   // เปิดใช้ตัวกรองเทรนด์จาก Timeframe สูงกว่า (ตั้ง MTF_Period ให้สูงกว่า Timeframe ของกราฟที่แปะ EA จริงๆ ไม่งั้นจะซ้ำกับ EMA filter หลัก)
+input ENUM_TIMEFRAMES MTF_Period   = PERIOD_H1; // Timeframe ที่ใช้กรองเทรนด์หลัก
+
 input group "--- Execution & Gap/Slippage Protection ---"
 input bool   UseGapProtection    = true;   // เปิด/ปิด การเช็ค Gap ราคาโดด (Enable Gap Check)
 input int    MaxAllowedGapPoints = 100;    // Gap ยอมรับได้สูงสุด (Points) ถ้าราคาโดดข้ามจะทำการ Reset
@@ -93,8 +103,10 @@ double   MaxDrawdownUSD     = 0.0;
 string   UI_PREFIX       = "QX_PRO_";
 string   BTN_CLOSE_ALL   = "QX_PRO_BtnCloseAll";
 
-// Handle สำหรับอินดิเคเตอร์ ATR
+// Handle สำหรับอินดิเคเตอร์ ATR / EMA / Multi-Timeframe EMA
 int      atrHandle       = INVALID_HANDLE;
+int      emaHandle       = INVALID_HANDLE;
+int      mtfEmaHandle    = INVALID_HANDLE;
 
 // --- [ UI OPTIMIZATION GLOBAL VARS ] ---
 uint     lastUIUpdateTime = 0;
@@ -102,6 +114,8 @@ uint     lastUIUpdateTime = 0;
 //====================== FUNCTION DECLARE ==========================//
 
 bool IsTradingAllowedByTime();
+bool CheckEMATrend(bool isBuy);
+bool CheckMTFFilter(bool isBuy);
 void ExecuteGridLogic();
 void PlacePendingGridServer();
 void CheckAndExecuteVirtualGrid();
@@ -175,6 +189,49 @@ bool IsTradingAllowedByTime()
 }
 
 //+------------------------------------------------------------------+
+//| Check EMA Trend Filter                                           |
+//+------------------------------------------------------------------+
+bool CheckEMATrend(bool isBuy)
+{
+   if(!UseEMAFilter || emaHandle == INVALID_HANDLE) return true;
+
+   double emaValues[];
+   ArraySetAsSeries(emaValues, true);
+   if(CopyBuffer(emaHandle, 0, 1, 1, emaValues) <= 0) return true;
+
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+
+   if(isBuy)
+   {
+      if(StrictBuyFilter && ask < emaValues[0]) return false;
+      return true;
+   }
+   else
+   {
+      if(StrictSellFilter && bid > emaValues[0]) return false;
+      return true;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Multi Timeframe Filter Check                                     |
+//+------------------------------------------------------------------+
+bool CheckMTFFilter(bool isBuy)
+{
+   if(!UseMTFFilter || mtfEmaHandle == INVALID_HANDLE) return true;
+   double mtfVals[];
+   ArraySetAsSeries(mtfVals, true);
+   if(CopyBuffer(mtfEmaHandle, 0, 1, 1, mtfVals) <= 0) return true;
+
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+
+   if(isBuy) return (ask >= mtfVals[0]);
+   else      return (bid <= mtfVals[0]);
+}
+
+//+------------------------------------------------------------------+
 //| Expert initialization                                            |
 //+------------------------------------------------------------------+
 int OnInit()
@@ -210,6 +267,26 @@ int OnInit()
       }
    }
 
+   if(UseEMAFilter)
+   {
+      emaHandle = iMA(_Symbol, _Period, EMA_Period, 0, MODE_EMA, PRICE_CLOSE);
+      if(emaHandle == INVALID_HANDLE)
+      {
+         Print("Failed to create EMA indicator handle.");
+         return(INIT_FAILED);
+      }
+   }
+
+   if(UseMTFFilter)
+   {
+      mtfEmaHandle = iMA(_Symbol, MTF_Period, EMA_Period, 0, MODE_EMA, PRICE_CLOSE);
+      if(mtfEmaHandle == INVALID_HANDLE)
+      {
+         Print("Failed to create Multi-Timeframe EMA indicator handle.");
+         return(INIT_FAILED);
+      }
+   }
+
    RecalculateBasePrice();
 
    if(GridType == GRID_VIRTUAL)
@@ -228,6 +305,8 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    if(atrHandle != INVALID_HANDLE) IndicatorRelease(atrHandle);
+   if(emaHandle != INVALID_HANDLE) IndicatorRelease(emaHandle);
+   if(mtfEmaHandle != INVALID_HANDLE) IndicatorRelease(mtfEmaHandle);
    DeleteVisualTSLine();
    DeleteDashboard();
 }
@@ -566,40 +645,49 @@ void PlacePendingGridServer()
       double targetBuyPrice  = NormalizeDouble(GridBasePrice + (level * CachedGridDistance * point), _Digits);
       double targetSellPrice = NormalizeDouble(GridBasePrice - (level * CachedGridDistance * point), _Digits);
 
-      // BUY STOP (Async)
-      ZeroMemory(request); ZeroMemory(result);
-      request.action       = TRADE_ACTION_PENDING;
-      request.symbol       = _Symbol;
-      request.volume       = lot;
-      request.type         = ORDER_TYPE_BUY_STOP;
-      request.price        = targetBuyPrice;
-      request.deviation    = MaxSlippagePoints * m_multiplier;
-      request.magic        = MagicNumber;
-      request.comment      = "P-BUY-" + IntegerToString(level);
-      request.type_filling = fillMode;
+      bool canBuyFilter  = CheckEMATrend(true)  && CheckMTFFilter(true);
+      bool canSellFilter = CheckEMATrend(false) && CheckMTFFilter(false);
 
-      bool sentBuy = OrderSendAsync(request, result);
-      if(!sentBuy)
+      // BUY STOP (Async)
+      if(canBuyFilter)
       {
-         Print("OrderSendAsync (Buy Stop) failed with error: ", GetLastError());
+         ZeroMemory(request); ZeroMemory(result);
+         request.action       = TRADE_ACTION_PENDING;
+         request.symbol       = _Symbol;
+         request.volume       = lot;
+         request.type         = ORDER_TYPE_BUY_STOP;
+         request.price        = targetBuyPrice;
+         request.deviation    = MaxSlippagePoints * m_multiplier;
+         request.magic        = MagicNumber;
+         request.comment      = "P-BUY-" + IntegerToString(level);
+         request.type_filling = fillMode;
+
+         bool sentBuy = OrderSendAsync(request, result);
+         if(!sentBuy)
+         {
+            Print("OrderSendAsync (Buy Stop) failed with error: ", GetLastError());
+         }
       }
 
       // SELL STOP (Async)
-      ZeroMemory(request); ZeroMemory(result);
-      request.action       = TRADE_ACTION_PENDING;
-      request.symbol       = _Symbol;
-      request.volume       = lot;
-      request.type         = ORDER_TYPE_SELL_STOP;
-      request.price        = targetSellPrice;
-      request.deviation    = MaxSlippagePoints * m_multiplier;
-      request.magic        = MagicNumber;
-      request.comment      = "P-SELL-" + IntegerToString(level);
-      request.type_filling = fillMode;
-
-      bool sentSell = OrderSendAsync(request, result);
-      if(!sentSell)
+      if(canSellFilter)
       {
-         Print("OrderSendAsync (Sell Stop) failed with error: ", GetLastError());
+         ZeroMemory(request); ZeroMemory(result);
+         request.action       = TRADE_ACTION_PENDING;
+         request.symbol       = _Symbol;
+         request.volume       = lot;
+         request.type         = ORDER_TYPE_SELL_STOP;
+         request.price        = targetSellPrice;
+         request.deviation    = MaxSlippagePoints * m_multiplier;
+         request.magic        = MagicNumber;
+         request.comment      = "P-SELL-" + IntegerToString(level);
+         request.type_filling = fillMode;
+
+         bool sentSell = OrderSendAsync(request, result);
+         if(!sentSell)
+         {
+            Print("OrderSendAsync (Sell Stop) failed with error: ", GetLastError());
+         }
       }
    }
 
@@ -655,8 +743,11 @@ void CheckAndExecuteVirtualGrid()
    int adjGapLimit = MaxAllowedGapPoints * m_multiplier;
    int adjSpread   = MaxSpreadAllowed * m_multiplier;
 
+   bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true);
+   bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false);
+
    // CHECK BUY GRID
-   if(buyCount < TotalLevels)
+   if(buyCount < TotalLevels && canBuyFilters)
    {
       double targetPrice = 0.0;
       if(buyCount == 0)
@@ -710,7 +801,7 @@ void CheckAndExecuteVirtualGrid()
    }
 
    // CHECK SELL GRID
-   if(sellCount < TotalLevels)
+   if(sellCount < TotalLevels && canSellFilters)
    {
       double targetPrice = 0.0;
       if(sellCount == 0)
