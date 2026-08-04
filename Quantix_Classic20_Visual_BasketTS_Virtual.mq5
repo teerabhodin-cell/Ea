@@ -605,10 +605,24 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 //| trailing stop, breakeven/partial-close and the dashboard must     |
 //| keep running so existing exposure is still managed while equity   |
 //| is under the limit.                                                |
+//| FIXED: when IsMarketOpen() is false the dashboard is still         |
+//| refreshed (status/positions reset to 0, LED shows MARKET CLOSED)  |
+//| instead of freezing on InitDashboard()'s placeholder text          |
+//| ("Wait BUY : ---", "$0.00", etc.) forever with no feedback.        |
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   if(!IsMarketOpen()) return;
+   if(!IsMarketOpen())
+   {
+      uint nowClosed = GetTickCount();
+      uint updateIntervalClosed = IsTestingMode ? 5000 : 500;
+      if(nowClosed - lastUIUpdateTime >= updateIntervalClosed)
+      {
+         UpdateDashboard(0.0, MaxBasketProfit, 0.0, 0, 0);
+         lastUIUpdateTime = nowClosed;
+      }
+      return;
+   }
 
    bool equityLocked = (UseEquityLock && AccountInfoDouble(ACCOUNT_EQUITY) < MinEquityLimit);
 
