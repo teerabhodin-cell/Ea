@@ -50,7 +50,6 @@ input ulong  MagicNumber            = 112233;
 input group "===== 3. เป้ากำไร & Trailing Stop ====="
 input double TargetProfit        = 1.0;    // Minimum Profit ($) to activate Trailing
 input double TrailingStopUSD     = 0.5;    // Trailing Distance ($)
-input double ProfitFloorPercent  = 0.30;   // Safety Floor % ล็อกทุนขั้นต่ำ (30%)
 
 input group "===== 4. ตัวกรองเทรนด์ (EMA / MTF) ====="
 input bool   UseEMAFilter           = false;   // เปิดใช้ตัวกรองเทรนด์ EMA
@@ -900,17 +899,13 @@ void OnTick()
 
          double tsTriggerLine = MaxBasketProfit - TrailingStopUSD;
 
-         // Safety Floor
-         double minSafetyFloor = TargetProfit * ProfitFloorPercent;
-         if(tsTriggerLine < minSafetyFloor) tsTriggerLine = minSafetyFloor;
-
          DrawVisualTSLine(tsTriggerLine);
 
          if(currentProfit <= tsTriggerLine)
          {
             IsClosingState = true;
-            PrintFormat("🚨 [BASKET TS TRIGGERED] Peak: $%.2f | Floating: $%.2f | Floor: $%.2f",
-                        MaxBasketProfit, currentProfit, minSafetyFloor);
+            PrintFormat("🚨 [BASKET TS TRIGGERED] Peak: $%.2f | Floating: $%.2f",
+                        MaxBasketProfit, currentProfit);
             ClearEverythingAsync();
             DeleteVisualTSLine();
             RecalculateBasePrice();
