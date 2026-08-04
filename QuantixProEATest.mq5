@@ -131,8 +131,10 @@ int      m_multiplier    = 1; // 10 for 3/5-digit (fractional-pip) symbols, 1 ot
 
 // ตัวแประบบ Grid
 double   GridBasePrice      = 0.0;
-double   GridBasePriceBuy   = 0.0;    // anchor ของฝั่ง Buy แยกต่างหาก กัน gap-skip ของฝั่งหนึ่งไปกระทบอีกฝั่ง
-double   GridBasePriceSell  = 0.0;    // anchor ของฝั่ง Sell แยกต่างหาก
+double   GridBasePriceBuy   = 0.0;    // anchor ของฝั่ง Buy สำหรับ level แรก (buyCount==0) แยกต่างหาก กัน gap-skip ของฝั่งหนึ่งไปกระทบอีกฝั่ง
+double   GridBasePriceSell  = 0.0;    // anchor ของฝั่ง Sell สำหรับ level แรก (sellCount==0) แยกต่างหาก
+double   BuyGapAnchor        = 0.0;   // persistent override สำหรับ level 2+ (lastBuyPrice เป็น local var คำนวณจากไม้จริงทุกครั้ง แก้ไขไม่ติดข้ามทิค ต้องมีตัวนี้แทน)
+double   SellGapAnchor       = 0.0;   // persistent override สำหรับ level 2+ ฝั่ง Sell เช่นกัน
 int      CachedGridDistance = 0;
 
 // ป้องกันการยิงเบิ้ล & คุมสภาวะกำลังปิดพอร์ต (Closing Guard)
@@ -222,6 +224,8 @@ void RecalculateBasePrice()
    GridBasePrice = NormalizeDouble((ask + bid) / 2.0, _Digits);
    GridBasePriceBuy  = GridBasePrice;
    GridBasePriceSell = GridBasePrice;
+   BuyGapAnchor  = 0.0; // every call here means a fresh/flat grid, so any stale gap override is no longer relevant
+   SellGapAnchor = 0.0;
    CachedGridDistance = GetDynamicGridDistance();
    GridCreated = true;
 }
@@ -1095,11 +1099,17 @@ void CheckAndExecuteVirtualGrid()
    // CHECK BUY GRID
    if(buyCount < TotalLevels && canBuyFilters)
    {
+      // lastBuyPrice is a LOCAL variable recomputed every call from real filled
+      // positions - re-anchoring it in the gap branch below does NOT persist to
+      // the next tick. BuyGapAnchor is the persistent override that actually
+      // survives across ticks for the buyCount>0 case.
+      double effectiveLastBuy = MathMax(lastBuyPrice, BuyGapAnchor);
+
       double targetPrice = 0.0;
       if(buyCount == 0)
          targetPrice = NormalizeDouble(GridBasePriceBuy + (stepDistance * point), _Digits);
       else
-         targetPrice = NormalizeDouble(lastBuyPrice + (stepDistance * point), _Digits);
+         targetPrice = NormalizeDouble(effectiveLastBuy + (stepDistance * point), _Digits);
 
       double diffPoints = (ask - targetPrice) / point;
 
@@ -1139,19 +1149,20 @@ void CheckAndExecuteVirtualGrid()
                // grid step behind the price that was just traded, instead of
                // leaving it anchored to wherever the basket started.
                if(sellCount == 0) GridBasePriceSell = ask;
+               BuyGapAnchor = 0.0; // lastBuyPrice now reflects this real fill, override no longer needed
                return;
             }
          }
       }
       else if(UseGapProtection && diffPoints > adjGapLimit)
       {
-         // FIXED: previously this only printed a warning and left targetPrice
-         // frozen, so a gap this large would repeat the exact same skip message
-         // forever with zero chance of ever opening a Buy again. Re-anchor to the
-         // current price so the next check only needs one more grid step, same
-         // as the gap-skip handling already fixed in the sibling EA files.
+         // FIXED (round 2): assigning to lastBuyPrice here was a no-op - it's a
+         // local variable rebuilt from real filled positions on every call, so it
+         // reverted right back on the next tick and repeated the identical stale
+         // target forever. BuyGapAnchor is a persistent global that actually
+         // sticks, and effectiveLastBuy (MathMax above) picks it up next tick.
          if(buyCount == 0) GridBasePriceBuy = ask;
-         else lastBuyPrice = ask;
+         else BuyGapAnchor = ask;
          PrintFormat("⚠️ [BUY GAP EXCEEDED] Re-anchored to Ask %.5f (was Target: %.5f | Diff: %.0f pts > Max: %d).",
                      ask, targetPrice, diffPoints, adjGapLimit);
       }
@@ -1160,11 +1171,17 @@ void CheckAndExecuteVirtualGrid()
    // CHECK SELL GRID
    if(sellCount < TotalLevels && canSellFilters)
    {
+      // Same persistence issue as the Buy side, mirrored: lastSellPrice is local
+      // and rebuilt from real positions every call, so SellGapAnchor is the
+      // persistent override for the sellCount>0 case. Sell targets move DOWN, so
+      // we want the lower of the two (0.0 means "unset").
+      double effectiveLastSell = (SellGapAnchor > 0 && SellGapAnchor < lastSellPrice) ? SellGapAnchor : lastSellPrice;
+
       double targetPrice = 0.0;
       if(sellCount == 0)
          targetPrice = NormalizeDouble(GridBasePriceSell - (stepDistance * point), _Digits);
       else
-         targetPrice = NormalizeDouble(lastSellPrice - (stepDistance * point), _Digits);
+         targetPrice = NormalizeDouble(effectiveLastSell - (stepDistance * point), _Digits);
 
       double diffPoints = (targetPrice - bid) / point;
 
@@ -1203,17 +1220,17 @@ void CheckAndExecuteVirtualGrid()
                // Symmetric fix: keep the still-empty Buy side's level-0 target
                // pinned one grid step ahead of the price that was just traded.
                if(buyCount == 0) GridBasePriceBuy = bid;
+               SellGapAnchor = 0.0; // lastSellPrice now reflects this real fill, override no longer needed
                return;
             }
          }
       }
       else if(UseGapProtection && diffPoints > adjGapLimit)
       {
-         // FIXED: same re-anchor as the Buy side - without this, a gap this large
-         // repeats the identical skip message forever with no path to ever
-         // opening a Sell again.
+         // FIXED (round 2): same persistence bug as the Buy side - assigning to
+         // lastSellPrice here was a no-op. SellGapAnchor actually persists.
          if(sellCount == 0) GridBasePriceSell = bid;
-         else lastSellPrice = bid;
+         else SellGapAnchor = bid;
          PrintFormat("⚠️ [SELL GAP EXCEEDED] Re-anchored to Bid %.5f (was Target: %.5f | Diff: %.0f pts > Max: %d).",
                      bid, targetPrice, diffPoints, adjGapLimit);
       }
@@ -1332,6 +1349,8 @@ void ClearEverythingAsync()
    GridBasePrice         = 0.0;
    GridBasePriceBuy      = 0.0;
    GridBasePriceSell     = 0.0;
+   BuyGapAnchor          = 0.0;
+   SellGapAnchor         = 0.0;
    CachedGridDistance    = 0;
    LastOrderSentTime     = 0;
    PartialCloseExecuted  = false;
