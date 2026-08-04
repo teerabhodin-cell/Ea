@@ -1108,6 +1108,14 @@ void CheckAndExecuteVirtualGrid()
          if(OrderSend(request, result))
          {
             LastOrderSentTime = TimeCurrent();
+            // Keep the still-empty Sell side's first-entry trigger pinned one grid
+            // step behind the price that was just traded, instead of leaving it
+            // anchored to wherever the basket started. Without this, once Buy has
+            // climbed several levels, the Sell side's level-0 target stays frozen at
+            // (original center - step) - so a pullback has to travel all the way
+            // back to that stale, far-away point before the hedge ever arms, even
+            // though the configured grid step is much smaller.
+            if(sellCount == 0) GridBasePriceSell = ask;
             return;
          }
          else
@@ -1154,6 +1162,9 @@ void CheckAndExecuteVirtualGrid()
          if(OrderSend(request, result))
          {
             LastOrderSentTime = TimeCurrent();
+            // Symmetric fix: keep the still-empty Buy side's first-entry trigger
+            // pinned one grid step ahead of the price that was just traded.
+            if(buyCount == 0) GridBasePriceBuy = bid;
             return;
          }
          else
