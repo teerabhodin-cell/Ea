@@ -253,6 +253,7 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
          ClearEverythingAsync();
          DeleteVisualTSLine();
          RecalculateBasePrice();
+         IsClosingState = false;
 
          ObjectSetInteger(0, BTN_CLOSE_ALL, OBJPROP_STATE, false);
          ChartRedraw();
@@ -357,6 +358,7 @@ void OnTick()
             ClearEverythingAsync();
             DeleteVisualTSLine();
             RecalculateBasePrice();
+            IsClosingState = false;
             return;
          }
       }
@@ -390,6 +392,7 @@ void OnTick()
          ClearEverythingAsync();
          DeleteVisualTSLine();
          RecalculateBasePrice();
+         IsClosingState = false;
       }
    }
 
@@ -750,6 +753,18 @@ void CheckAndExecuteVirtualGrid()
 
 //+------------------------------------------------------------------+
 //| Clear Account Function                                           |
+//| FIXED: position closes now go through synchronous OrderSend()    |
+//| with a confirm-and-retry loop instead of fire-and-forget          |
+//| OrderSendAsync(). The async version never verified the close      |
+//| actually happened - if a broker rejected/requoted the close (or   |
+//| just hadn't processed it by the next tick), the position stayed   |
+//| open forever while every caller had already set                   |
+//| IsClosingState = true and never reset it back to false. Since the |
+//| only reset path required openPositions==0 first, the EA would     |
+//| freeze completely (no more Trailing Stop checks, no more grid     |
+//| additions) while the position kept floating unmanaged - this is   |
+//| what was reported: dashboard stuck on "CLOSING ALL..." with       |
+//| positions still open and profit still moving.                    |
 //+------------------------------------------------------------------+
 void ClearEverythingAsync()
 {
@@ -757,7 +772,7 @@ void ClearEverythingAsync()
    MqlTradeResult  result;
    ENUM_ORDER_TYPE_FILLING fillMode = GetBestFillingMode();
 
-   // 1. เคลียร์ Pending Orders
+   // 1. เคลียร์ Pending Orders (ยังใช้ Async ได้ ไม่ใช่ตัวที่ทำให้ IsClosingState ค้าง)
    for(int i = OrdersTotal()-1; i >= 0; i--)
    {
       ulong ticket = OrderGetTicket(i);
@@ -772,62 +787,75 @@ void ClearEverythingAsync()
       if(!sent) Print("Clear Pending OrderAsync failed: ", GetLastError());
    }
 
-   // 2. เคลียร์ Open Positions
-   int totalPos = PositionsTotal();
-   ulong tickets[];
-   double volumes[];
-   ArrayResize(tickets, totalPos);
-   ArrayResize(volumes, totalPos);
-
-   int count = 0;
-   for(int i = 0; i < totalPos; i++)
+   // 2. เคลียร์ Open Positions แบบ Synchronous + ยืนยันว่าปิดจริงก่อนออกจากฟังก์ชัน
+   int retryCount = 0;
+   while(retryCount < 10)
    {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
-      if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+      int totalPos = PositionsTotal();
+      ulong tickets[];
+      double volumes[];
+      ArrayResize(tickets, totalPos);
+      ArrayResize(volumes, totalPos);
 
-      tickets[count] = ticket;
-      volumes[count] = PositionGetDouble(POSITION_VOLUME);
-      count++;
-   }
-
-   // Bubble Sort เรียงลำดับ Volume มากไปน้อย
-   for(int i = 0; i < count - 1; i++)
-   {
-      for(int j = 0; j < count - i - 1; j++)
+      int count = 0;
+      for(int i = 0; i < totalPos; i++)
       {
-         if(volumes[j] < volumes[j+1])
+         ulong ticket = PositionGetTicket(i);
+         if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+         if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+
+         tickets[count] = ticket;
+         volumes[count] = PositionGetDouble(POSITION_VOLUME);
+         count++;
+      }
+
+      if(count == 0) break;
+
+      // Bubble Sort เรียงลำดับ Volume มากไปน้อย
+      for(int i = 0; i < count - 1; i++)
+      {
+         for(int j = 0; j < count - i - 1; j++)
          {
-            double tempVol = volumes[j]; volumes[j] = volumes[j+1]; volumes[j+1] = tempVol;
-            ulong tempTkt = tickets[j]; tickets[j] = tickets[j+1]; tickets[j+1] = tempTkt;
+            if(volumes[j] < volumes[j+1])
+            {
+               double tempVol = volumes[j]; volumes[j] = volumes[j+1]; volumes[j+1] = tempVol;
+               ulong tempTkt = tickets[j]; tickets[j] = tickets[j+1]; tickets[j+1] = tempTkt;
+            }
          }
       }
-   }
 
-   // ส่งคำสั่งปิดออเดอร์
-   for(int i = 0; i < count; i++)
-   {
-      if(!PositionSelectByTicket(tickets[i])) continue;
+      // ส่งคำสั่งปิดออเดอร์
+      for(int i = 0; i < count; i++)
+      {
+         if(!PositionSelectByTicket(tickets[i])) continue;
 
-      double volume = PositionGetDouble(POSITION_VOLUME);
-      ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+         double volume = PositionGetDouble(POSITION_VOLUME);
+         ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
 
-      ENUM_ORDER_TYPE tradeType = (type == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
-      double closePrice = (type == POSITION_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         ENUM_ORDER_TYPE tradeType = (type == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+         double closePrice = (type == POSITION_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
 
-      ZeroMemory(request); ZeroMemory(result);
-      request.action       = TRADE_ACTION_DEAL;
-      request.position     = tickets[i];
-      request.symbol       = _Symbol;
-      request.volume       = volume;
-      request.type         = tradeType;
-      request.price        = closePrice;
-      request.deviation    = MaxSlippagePoints * m_multiplier;
-      request.magic        = MagicNumber;
-      request.type_filling = fillMode;
+         if(closePrice <= 0) continue;
 
-      bool sent = OrderSendAsync(request, result);
-      if(!sent) Print("Clear Position OrderAsync failed: ", GetLastError());
+         ZeroMemory(request); ZeroMemory(result);
+         request.action       = TRADE_ACTION_DEAL;
+         request.position     = tickets[i];
+         request.symbol       = _Symbol;
+         request.volume       = volume;
+         request.type         = tradeType;
+         request.price        = closePrice;
+         request.deviation    = MaxSlippagePoints * m_multiplier;
+         request.magic        = MagicNumber;
+         request.type_filling = fillMode;
+
+         if(!OrderSend(request, result))
+         {
+            Print("Clear Position OrderSend failed: ", GetLastError(), " retcode: ", result.retcode);
+         }
+      }
+
+      retryCount++;
+      if(retryCount < 10) Sleep(50);
    }
 
    GridCreated        = false;
