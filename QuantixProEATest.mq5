@@ -974,7 +974,20 @@ void OnTick()
          ApplyBasketBreakevenAndPartial(currentProfit);
       }
 
-      if(currentProfit >= TargetProfit)
+      // FIXED: previously gated on (currentProfit >= TargetProfit), so once the
+      // basket had climbed above target and MaxBasketProfit recorded a real peak,
+      // a fast enough reversal that jumped straight from above TargetProfit to
+      // BELOW it in a single tick (skipping over the trigger zone entirely, e.g.
+      // a Force Hedge fill landing right before a sharp move) fell into the else
+      // branch below and never got checked against tsTriggerLine again - ever.
+      // MaxBasketProfit stayed frozen at the old peak (blocking ExecuteGridLogic
+      // too, since it's gated on MaxBasketProfit < TargetProfit), and the basket
+      // was stuck open with no exit, bleeding indefinitely. Gating on
+      // (MaxBasketProfit >= TargetProfit) instead means once a real peak has ever
+      // been recorded, every subsequent tick keeps checking the floor regardless
+      // of where currentProfit currently sits, so a crash like that gets caught
+      // and closed on the very next tick instead of being silently abandoned.
+      if(MaxBasketProfit >= TargetProfit || currentProfit >= TargetProfit)
       {
          if(currentProfit > MaxBasketProfit)
          {
