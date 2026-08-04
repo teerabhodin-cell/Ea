@@ -43,7 +43,7 @@ input int    TotalLevels            = 10;      // จำนวนชั้นต
 input bool   UseATRDistance         = false;   // เปิดใช้ระยะ Grid ตามค่า ATR
 input int    ATR_Period             = 14;      // รอบคำนวณ ATR (Period)
 input double ATR_Multiplier         = 1.5;     // ตัวคูณ ATR เช่น 1.5 เท่าของ ATR
-input bool   UseAdaptiveATRGrid     = false;   // เปิดใช้ระบบปรับระยะ Grid ตามความผันผวนอัตโนมัติ (ขยายระยะ Grid เมื่อ Drawdown สูงขึ้น)
+input bool   UseAdaptiveATRGrid     = false;   // แยกระยะ Grid เป็นอิสระต่อฝั่ง (Buy/Sell) คำนวณจาก ATR สดใหม่ทุกครั้งที่ฝั่งนั้น fill ล่าสุด - ฝั่งที่ยังไม่ fill จะไม่ถูกแตะเลย (ต้องเปิด UseATRDistance ด้วยถึงจะมีผล)
 input int    DistancePoints         = 300;     // ระยะห่าง Fixed Points (ใช้กรณีปิด UseATRDistance)
 input ulong  MagicNumber            = 112233;
 
@@ -128,6 +128,10 @@ double   GridBasePriceSell  = 0.0;    // anchor ของฝั่ง Sell ส�
 double   BuyGapAnchor        = 0.0;   // persistent override สำหรับ level 2+ (lastBuyPrice เป็น local var คำนวณจากไม้จริงทุกครั้ง แก้ไขไม่ติดข้ามทิค ต้องมีตัวนี้แทน)
 double   SellGapAnchor       = 0.0;   // persistent override สำหรับ level 2+ ฝั่ง Sell เช่นกัน
 int      CachedGridDistance = 0;
+// UseAdaptiveATRGrid: ระยะ Grid แยกอิสระต่อฝั่ง คำนวณจาก ATR สดใหม่ทุกครั้งที่ฝั่งนั้น fill
+// (ไม่ใช่ค่าเดียวใช้ร่วมกันสองฝั่งเหมือน CachedGridDistance) ฝั่งที่ยังไม่ fill จะไม่ถูกแตะเลย
+int      BuyGridDistance    = 0;
+int      SellGridDistance   = 0;
 
 // ป้องกันการยิงเบิ้ล & คุมสภาวะกำลังปิดพอร์ต (Closing Guard)
 datetime LastOrderSentTime  = 0;
@@ -237,6 +241,8 @@ void RecalculateBasePrice()
    BuyGapAnchor  = 0.0; // every call here means a fresh/flat grid, so any stale gap override is no longer relevant
    SellGapAnchor = 0.0;
    CachedGridDistance = GetDynamicGridDistance();
+   BuyGridDistance    = CachedGridDistance;
+   SellGridDistance   = CachedGridDistance;
    GridCreated = true;
 }
 
@@ -1060,14 +1066,8 @@ int GetDynamicGridDistance()
       return DistancePoints * m_multiplier;
    }
 
-   double mult = ATR_Multiplier;
-   if(UseAdaptiveATRGrid && MaxDrawdownPercent > 3.0)
-   {
-      mult = ATR_Multiplier * 1.3; // ขยายระยะ Grid ออกเมื่อ Drawdown เริ่มสูง กันไม่ให้เพิ่มไม้ถี่เกินไปตอนพอร์ตแย่
-   }
-
    double currentATR = atrValues[0];
-   double calculatedPoints = (currentATR * mult) / _Point;
+   double calculatedPoints = (currentATR * ATR_Multiplier) / _Point;
    int finalPoints = (int)MathMax(10 * m_multiplier, MathRound(calculatedPoints));
 
    return finalPoints;
@@ -1265,6 +1265,12 @@ void CheckAndExecuteVirtualGrid()
    }
 
    int stepDistance = (CachedGridDistance > 0) ? CachedGridDistance : GetDynamicGridDistance();
+
+   // UseAdaptiveATRGrid: แต่ละฝั่งใช้ระยะของตัวเอง (คำนวณสดจาก ATR ตอนฝั่งนั้น fill ล่าสุด)
+   // แทนที่จะใช้ stepDistance ตัวเดียวร่วมกันทั้งสองฝั่ง - ฝั่งที่ยังไม่ fill จะไม่ถูกกระทบเลย
+   int buyStepDistance  = UseAdaptiveATRGrid ? ((BuyGridDistance  > 0) ? BuyGridDistance  : GetDynamicGridDistance()) : stepDistance;
+   int sellStepDistance = UseAdaptiveATRGrid ? ((SellGridDistance > 0) ? SellGridDistance : GetDynamicGridDistance()) : stepDistance;
+
    MqlTradeRequest request;
    MqlTradeResult  result;
    ENUM_ORDER_TYPE_FILLING fillMode = GetBestFillingMode();
@@ -1302,9 +1308,9 @@ void CheckAndExecuteVirtualGrid()
 
       double targetPrice = 0.0;
       if(buyCount == 0)
-         targetPrice = NormalizeDouble(GridBasePriceBuy + (stepDistance * point), _Digits);
+         targetPrice = NormalizeDouble(GridBasePriceBuy + (buyStepDistance * point), _Digits);
       else
-         targetPrice = NormalizeDouble(effectiveLastBuy + (stepDistance * point), _Digits);
+         targetPrice = NormalizeDouble(effectiveLastBuy + (buyStepDistance * point), _Digits);
 
       double diffPoints = (ask - targetPrice) / point;
 
@@ -1344,6 +1350,9 @@ void CheckAndExecuteVirtualGrid()
                // leaving it anchored to wherever the basket started.
                if(sellCount == 0) GridBasePriceSell = ask;
                BuyGapAnchor = 0.0; // lastBuyPrice now reflects this real fill, override no longer needed
+               // ฝั่ง Buy fill แล้ว - คำนวณระยะ Buy รอบถัดไปใหม่จาก ATR สด ณ ตอนนี้
+               // ฝั่ง Sell ที่ยังไม่ fill ไม่ถูกแตะเลย ยังรอที่เป้าเดิมต่อไป
+               if(UseAdaptiveATRGrid) BuyGridDistance = GetDynamicGridDistance();
                return;
             }
          }
@@ -1385,9 +1394,9 @@ void CheckAndExecuteVirtualGrid()
 
       double targetPrice = 0.0;
       if(sellCount == 0)
-         targetPrice = NormalizeDouble(GridBasePriceSell - (stepDistance * point), _Digits);
+         targetPrice = NormalizeDouble(GridBasePriceSell - (sellStepDistance * point), _Digits);
       else
-         targetPrice = NormalizeDouble(effectiveLastSell - (stepDistance * point), _Digits);
+         targetPrice = NormalizeDouble(effectiveLastSell - (sellStepDistance * point), _Digits);
 
       double diffPoints = (targetPrice - bid) / point;
 
@@ -1424,6 +1433,9 @@ void CheckAndExecuteVirtualGrid()
                // pinned one grid step ahead of the price that was just traded.
                if(buyCount == 0) GridBasePriceBuy = bid;
                SellGapAnchor = 0.0; // lastSellPrice now reflects this real fill, override no longer needed
+               // ฝั่ง Sell fill แล้ว - คำนวณระยะ Sell รอบถัดไปใหม่จาก ATR สด ณ ตอนนี้
+               // ฝั่ง Buy ที่ยังไม่ fill ไม่ถูกแตะเลย ยังรอที่เป้าเดิมต่อไป
+               if(UseAdaptiveATRGrid) SellGridDistance = GetDynamicGridDistance();
                return;
             }
          }
@@ -1601,6 +1613,8 @@ void ClearEverythingAsync()
    BuyGapAnchor          = 0.0;
    SellGapAnchor         = 0.0;
    CachedGridDistance    = 0;
+   BuyGridDistance       = 0;
+   SellGridDistance      = 0;
    LastOrderSentTime     = 0;
    PartialCloseExecuted  = false;
    BreakevenActivated    = false;
