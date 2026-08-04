@@ -162,6 +162,7 @@ int      mtfEmaHandle    = INVALID_HANDLE;
 
 uint     lastUIUpdateTime = 0;
 bool     IsTestingMode   = false;
+datetime lastMarketClosedLogTime = 0; // throttles IsMarketOpen() diagnostic prints to once/minute
 
 //====================== FUNCTION DECLARE ==========================//
 
@@ -187,6 +188,8 @@ bool CheckEMATrend(bool isBuy);
 void RecalculateBasePrice();
 ENUM_ORDER_TYPE_FILLING GetBestFillingMode();
 
+void LogMarketClosedReason(string reason);
+
 void InitDashboard();
 void DeleteDashboard();
 void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, int openPos, int pendingOrders);
@@ -208,7 +211,21 @@ ENUM_ORDER_TYPE_FILLING GetBestFillingMode()
 }
 
 //+------------------------------------------------------------------+
-//| Check if Market is genuinely Open                                |
+//| Throttled diagnostic logger for why IsMarketOpen() said "closed" |
+//+------------------------------------------------------------------+
+void LogMarketClosedReason(string reason)
+{
+   if(TimeCurrent() - lastMarketClosedLogTime < 60) return; // once per minute max
+   lastMarketClosedLogTime = TimeCurrent();
+   Print("QuantixEA: IsMarketOpen()=false -> ", reason);
+}
+
+//+------------------------------------------------------------------+
+//| Check if Market is genuinely Open                                 |
+//| Each false-path now prints its exact reason (throttled to once/  |
+//| minute) to the Experts log, since a silent false here stops the  |
+//| EA from ever placing an order or refreshing GridBasePrice with   |
+//| no feedback to the user at all.                                  |
 //+------------------------------------------------------------------+
 bool IsMarketOpen()
 {
@@ -216,14 +233,26 @@ bool IsMarketOpen()
    MqlDateTime dt;
    TimeToStruct(current, dt);
 
-   if(dt.day_of_week == 0 || dt.day_of_week == 6) return false;
+   if(dt.day_of_week == 0 || dt.day_of_week == 6)
+   {
+      LogMarketClosedReason(StringFormat("Weekend (day_of_week=%d, server time %02d:%02d)", dt.day_of_week, dt.hour, dt.min));
+      return false;
+   }
 
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   if(ask <= 0 || bid <= 0) return false;
+   if(ask <= 0 || bid <= 0)
+   {
+      LogMarketClosedReason(StringFormat("No valid quote (Ask=%.5f Bid=%.5f)", ask, bid));
+      return false;
+   }
 
-   bool tradeAllowed = (bool)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_MODE) == SYMBOL_TRADE_MODE_FULL;
-   if(!tradeAllowed) return false;
+   long tradeMode = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_MODE);
+   if(tradeMode != SYMBOL_TRADE_MODE_FULL)
+   {
+      LogMarketClosedReason(StringFormat("SYMBOL_TRADE_MODE is not FULL (mode=%d - see ENUM_SYMBOL_TRADE_MODE)", (int)tradeMode));
+      return false;
+   }
 
    datetime from, to;
    if(SymbolInfoSessionTrade(_Symbol, (ENUM_DAY_OF_WEEK)dt.day_of_week, 0, from, to))
@@ -238,7 +267,12 @@ bool IsMarketOpen()
 
       if(fromMins < toMins)
       {
-         if(currentMins < fromMins || currentMins >= toMins) return false;
+         if(currentMins < fromMins || currentMins >= toMins)
+         {
+            LogMarketClosedReason(StringFormat("Outside broker session 0 (now %02d:%02d, session %02d:%02d-%02d:%02d)",
+                                                dt.hour, dt.min, dtFrom.hour, dtFrom.min, dtTo.hour, dtTo.min));
+            return false;
+         }
       }
    }
 
