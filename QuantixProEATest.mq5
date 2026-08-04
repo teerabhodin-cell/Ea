@@ -164,6 +164,7 @@ int      bbHandle        = INVALID_HANDLE;
 
 // --- [ UI OPTIMIZATION GLOBAL VARS ] ---
 uint     lastUIUpdateTime = 0;
+bool     IsTestingMode    = false; // true in Strategy Tester - skips all dashboard object creation/updates to speed up backtests
 
 datetime lastFilterBlockLogTime = 0; // throttles the "why didn't it open" filter diagnostic to once/minute
 
@@ -509,6 +510,8 @@ void ApplyBasketBreakevenAndPartial(double currentProfit)
 //+------------------------------------------------------------------+
 int OnInit()
 {
+   IsTestingMode = (bool)MQLInfoInteger(MQL_TESTER);
+
    // FIXED: derive m_multiplier from the attached symbol's digit count so every
    // *Points input (DistancePoints, MaxSlippagePoints, MaxAllowedGapPoints,
    // MaxSpreadAllowed) keeps meaning the same real price distance whether the
@@ -1362,6 +1365,8 @@ void ClearEverythingAsync()
 //+------------------------------------------------------------------+
 void DrawVisualTSLine(double tsValue)
 {
+   if(IsTestingMode) return;
+
    string text = "==> BASKET SL: $" + DoubleToString(tsValue, 2) + " (Peak: $" + DoubleToString(MaxBasketProfit, 2) + ")";
 
    if(ObjectFind(0, LineObjectName) < 0)
@@ -1401,6 +1406,7 @@ string GetUIFont()
 }
 
 void CreateLabel(string name, int x, int y, string text, int size = 9, color clr = clrWhite, string font = "") {
+   if(IsTestingMode) return;
    if(font == "") font = GetUIFont();
 
    ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
@@ -1415,6 +1421,7 @@ void CreateLabel(string name, int x, int y, string text, int size = 9, color clr
 }
 
 void CreatePanel(string name, int x, int y, int w, int h, color bgClr, color borderClr) {
+   if(IsTestingMode) return;
    ObjectCreate(0, name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
@@ -1429,6 +1436,7 @@ void CreatePanel(string name, int x, int y, int w, int h, color bgClr, color bor
 }
 
 void CreateButton(string name, int x, int y, int w, int h, string text, color bgClr, color textClr, int fontSize = 9) {
+   if(IsTestingMode) return;
    ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0);
    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
@@ -1445,6 +1453,7 @@ void CreateButton(string name, int x, int y, int w, int h, string text, color bg
 
 void InitDashboard()
 {
+   if(IsTestingMode) return;
    DeleteDashboard();
 
    int X = 15;
@@ -1546,6 +1555,7 @@ void InitDashboard()
 
 void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, int openPos, int pendingOrders)
 {
+   if(IsTestingMode) return;
    if(ObjectFind(0, UI_PREFIX+"MainBG") < 0) InitDashboard();
 
    // 1. LEFT SIDE UPDATES
