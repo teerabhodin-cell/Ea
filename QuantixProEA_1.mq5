@@ -102,6 +102,8 @@ int      m_multiplier    = 1;
 // --- [ UI OPTIMIZATION GLOBAL VARS ] ---
 uint     lastUIUpdateTime = 0;
 
+bool     IsTestingMode    = false; // true in Strategy Tester - skips the close-retry Sleep() since OrderSend() there is already synchronous/deterministic
+
 //====================== FUNCTION DECLARE ==========================//
 
 bool IsTradingAllowedByTime();
@@ -206,6 +208,8 @@ bool IsTradingAllowedByTime()
 //+------------------------------------------------------------------+
 int OnInit()
 {
+   IsTestingMode = (bool)MQLInfoInteger(MQL_TESTER);
+
    if(_Digits == 3 || _Digits == 5) m_multiplier = 10;
    else m_multiplier = 1;
 
@@ -272,11 +276,12 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
    {
       if(sparam == BTN_CLOSE_ALL)
       {
-         IsClosingState = true; 
+         IsClosingState = true;
          ClearEverythingAsync();
          DeleteVisualTSLine();
          RecalculateBasePrice();
-         
+         IsClosingState = false;
+
          ObjectSetInteger(0, BTN_CLOSE_ALL, OBJPROP_STATE, false);
          ChartRedraw();
       }
@@ -354,10 +359,11 @@ void OnTick()
             IsClosingState = true; 
             PrintFormat("🚨 [BASKET TS TRIGGERED] Peak: $%.2f | Floating: $%.2f | Floor: $%.2f", 
                         MaxBasketProfit, currentProfit, minSafetyFloor);
-            ClearEverythingAsync(); 
-            DeleteVisualTSLine(); 
+            ClearEverythingAsync();
+            DeleteVisualTSLine();
             RecalculateBasePrice();
-            return; 
+            IsClosingState = false;
+            return;
          }
       }
       else
@@ -390,6 +396,7 @@ void OnTick()
          ClearEverythingAsync();
          DeleteVisualTSLine();
          RecalculateBasePrice();
+         IsClosingState = false;
       }
    }
 
@@ -748,6 +755,15 @@ void CheckAndExecuteVirtualGrid()
 
 //+------------------------------------------------------------------+
 //| Clear Account Function                                           |
+//| FIXED: position closes now go through synchronous OrderSend()    |
+//| with a confirm-and-retry loop instead of fire-and-forget          |
+//| OrderSendAsync(). The async version never verified the close      |
+//| actually happened - if a broker rejected it (e.g. market closed,  |
+//| as with the [Market closed] / error 4756 case), the position      |
+//| stayed open forever while IsClosingState had already been set to  |
+//| true by the caller, freezing the whole basket (no more Trailing   |
+//| Stop checks, no more grid additions) while the position kept      |
+//| floating unmanaged.                                                |
 //+------------------------------------------------------------------+
 void ClearEverythingAsync()
 {
@@ -755,7 +771,7 @@ void ClearEverythingAsync()
    MqlTradeResult  result;
    ENUM_ORDER_TYPE_FILLING fillMode = GetBestFillingMode();
 
-   // 1. เคลียร์ Pending Orders
+   // 1. เคลียร์ Pending Orders (ยังใช้ Async ได้ ไม่ใช่ตัวที่ทำให้ IsClosingState ค้าง)
    for(int i = OrdersTotal()-1; i >= 0; i--)
    {
       ulong ticket = OrderGetTicket(i);
@@ -765,70 +781,87 @@ void ClearEverythingAsync()
       ZeroMemory(request); ZeroMemory(result);
       request.action = TRADE_ACTION_REMOVE;
       request.order  = ticket;
-      
+
       bool sent = OrderSendAsync(request, result);
       if(!sent) Print("Clear Pending OrderAsync failed: ", GetLastError());
    }
 
-   // 2. เคลียร์ Open Positions
-   int totalPos = PositionsTotal();
-   ulong tickets[];
-   double volumes[];
-   ArrayResize(tickets, totalPos);
-   ArrayResize(volumes, totalPos);
-
-   int count = 0;
-   for(int i = 0; i < totalPos; i++)
+   // 2. เคลียร์ Open Positions แบบ Synchronous + ยืนยันว่าปิดจริงก่อนออกจากฟังก์ชัน
+   int retryCount = 0;
+   while(retryCount < 10)
    {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
-      if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+      int totalPos = PositionsTotal();
+      ulong tickets[];
+      double volumes[];
+      ArrayResize(tickets, totalPos);
+      ArrayResize(volumes, totalPos);
 
-      tickets[count] = ticket;
-      volumes[count] = PositionGetDouble(POSITION_VOLUME);
-      count++;
-   }
-
-   // Bubble Sort เรียงลำดับ Volume มากไปน้อย
-   for(int i = 0; i < count - 1; i++)
-   {
-      for(int j = 0; j < count - i - 1; j++)
+      int count = 0;
+      for(int i = 0; i < totalPos; i++)
       {
-         if(volumes[j] < volumes[j+1])
+         ulong ticket = PositionGetTicket(i);
+         if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+         if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+
+         tickets[count] = ticket;
+         volumes[count] = PositionGetDouble(POSITION_VOLUME);
+         count++;
+      }
+
+      if(count == 0) break;
+
+      // Bubble Sort เรียงลำดับ Volume มากไปน้อย
+      for(int i = 0; i < count - 1; i++)
+      {
+         for(int j = 0; j < count - i - 1; j++)
          {
-            double tempVol = volumes[j]; volumes[j] = volumes[j+1]; volumes[j+1] = tempVol;
-            ulong tempTkt = tickets[j]; tickets[j] = tickets[j+1]; tickets[j+1] = tempTkt;
+            if(volumes[j] < volumes[j+1])
+            {
+               double tempVol = volumes[j]; volumes[j] = volumes[j+1]; volumes[j+1] = tempVol;
+               ulong tempTkt = tickets[j]; tickets[j] = tickets[j+1]; tickets[j+1] = tempTkt;
+            }
          }
       }
+
+      // ส่งคำสั่งปิดออเดอร์
+      for(int i = 0; i < count; i++)
+      {
+         if(!PositionSelectByTicket(tickets[i])) continue;
+
+         double volume = PositionGetDouble(POSITION_VOLUME);
+         ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+
+         ENUM_ORDER_TYPE tradeType = (type == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+         double closePrice = (type == POSITION_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+         if(closePrice <= 0) continue;
+
+         ZeroMemory(request); ZeroMemory(result);
+         request.action       = TRADE_ACTION_DEAL;
+         request.position     = tickets[i];
+         request.symbol       = _Symbol;
+         request.volume       = volume;
+         request.type         = tradeType;
+         request.price        = closePrice;
+         request.deviation    = MaxSlippagePoints * m_multiplier;
+         request.magic        = MagicNumber;
+         request.type_filling = fillMode;
+
+         if(!OrderSend(request, result))
+         {
+            Print("Clear Position OrderSend failed: ", GetLastError(), " retcode: ", result.retcode);
+         }
+      }
+
+      retryCount++;
+      // Sleep() blocks real wall-clock time in the Strategy Tester too, and every
+      // basket close (Trailing Stop/time-filter) pays it at least once even when
+      // OrderSend() already closed everything on the first pass - it's only
+      // needed live, to give the broker time to actually process the close.
+      if(retryCount < 10 && !IsTestingMode) Sleep(50);
    }
 
-   // ส่งคำสั่งปิดออเดอร์
-   for(int i = 0; i < count; i++)
-   {
-      if(!PositionSelectByTicket(tickets[i])) continue;
-
-      double volume = PositionGetDouble(POSITION_VOLUME);
-      ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-      
-      ENUM_ORDER_TYPE tradeType = (type == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
-      double closePrice = (type == POSITION_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-
-      ZeroMemory(request); ZeroMemory(result);
-      request.action       = TRADE_ACTION_DEAL;
-      request.position     = tickets[i];               
-      request.symbol       = _Symbol;
-      request.volume       = volume;
-      request.type         = tradeType;            
-      request.price        = closePrice;
-      request.deviation    = MaxSlippagePoints * m_multiplier;
-      request.magic        = MagicNumber;
-      request.type_filling = fillMode;      
-      
-      bool sent = OrderSendAsync(request, result);
-      if(!sent) Print("Clear Position OrderAsync failed: ", GetLastError());
-   }
-
-   GridCreated        = false; 
+   GridCreated        = false;
    MaxBasketProfit    = 0.0;
    GridBasePrice      = 0.0;
    CachedGridDistance = 0;
