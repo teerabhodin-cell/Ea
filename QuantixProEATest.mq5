@@ -84,6 +84,8 @@ input double MaxAllowedDD_USD       = 50.0;    // ยอมให้ขาดท
 input double MaxAllowedDD_Pct       = 10.0;    // ยอมให้ขาดทุนสูงสุดเป็นเปอร์เซ็นต์ (%) จากยอด Balance สูงสุด (ตั้งเป็น 0 เพื่อปิดการเช็คแบบ %)
 input bool   UseEmergencySL         = false;   // ติด Stop Loss ฉุกเฉินบนทุกไม้ที่เปิด (server-side) เผื่อ EA/เทอร์มินัลหลุดการเชื่อมต่อ - ไม่ใช่ SL ของกลยุทธ์ปกติ ตั้งกว้างมากๆ ไม่ให้ชนตอนเทรดปกติ
 input int    EmergencySL_Points     = 3000;    // ระยะ SL ฉุกเฉินจากราคาเข้า (Points) ปรับตาม m_multiplier ให้อัตโนมัติแล้ว
+input bool   UseTotalDDGuard        = false;   // เบรกฉุกเฉินระดับพอร์ตรวม: คุม DD สะสมจาก Peak Balance สูงสุดตั้งแต่เริ่ม EA (ไม่ reset หลังตัดขาดทุนแต่ละรอบเหมือน MaxDDStop ด้านบน) ป้องกันขาดทุนติดกันหลายรอบสะสมจนพอร์ตพัง แม้แต่ละรอบจะไม่เกิน MaxAllowedDD ก็ตาม
+input double MaxTotalDD_Pct         = 15.0;    // DD สะสมสูงสุด (%) ของพอร์ตทั้งหมดที่ยอมรับได้ ถ้าเกินจะปิดไม้ทั้งหมดและ "หยุดเปิดไม้ใหม่ถาวร" (ต้อง restart EA เองถึงจะกลับมาเทรดได้อีกครั้ง)
 
 input group "===== 7. แก้ไม้: Breakeven / Partial Close / Recovery Mode ====="
 input bool   UseBasketBreakeven     = true;    // เปิดระบบขยับจุดคุ้มทุน (Breakeven / ล็อคกำไรบางส่วน)
@@ -144,6 +146,11 @@ bool     IsClosingState     = false;  // สถานะกำลังปิด
 double   PeakBalanceForDD   = 0.0;
 double   MaxDrawdownPercent = 0.0;
 double   MaxDrawdownUSD     = 0.0;
+
+// Total DD Guard: peak ที่ไม่ reset หลังตัดขาดทุนแต่ละรอบ (ต่างจาก PeakBalanceForDD ด้านบน)
+// ใช้คุม DD สะสมของทั้งพอร์ตตั้งแต่เริ่ม EA
+double   AccountPeakBalanceAllTime = 0.0;
+bool     TradingHalted              = false; // true = ทะลุ MaxTotalDD_Pct แล้ว หยุดเปิดไม้ใหม่ถาวรจนกว่าจะ restart EA
 
 // Basket Management & Recovery
 bool     PartialCloseExecuted = false; // ป้องกันการสั่งปิดบางส่วนซ้ำรอบเดิม
@@ -554,7 +561,7 @@ void ApplyBasketBreakevenAndPartial(double currentProfit)
 //+------------------------------------------------------------------+
 void CheckForceHedgeOnDD()
 {
-   if(!UseForceHedgeOnDD || IsClosingState) return;
+   if(!UseForceHedgeOnDD || IsClosingState || TradingHalted) return;
 
    double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    double liveDDPercent = 0.0;
@@ -688,6 +695,8 @@ int OnInit()
    PeakBalanceForDD   = AccountInfoDouble(ACCOUNT_BALANCE);
    MaxDrawdownPercent = 0.0;
    MaxDrawdownUSD     = 0.0;
+   AccountPeakBalanceAllTime = AccountInfoDouble(ACCOUNT_BALANCE);
+   TradingHalted             = false;
 
    DeleteVisualTSLine();
 
@@ -933,7 +942,7 @@ void OnTick()
 
    if(timeAllowed)
    {
-      if(!IsClosingState && !equityLocked && (MaxBasketProfit < TargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
+      if(!IsClosingState && !equityLocked && !TradingHalted && (MaxBasketProfit < TargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
       {
          ExecuteGridLogic();
       }
@@ -1018,6 +1027,31 @@ void UpdateDrawdownTracker()
             IsClosingState   = false;
             LastCloseAllTime = TimeCurrent();
          }
+      }
+   }
+
+   // Total DD Guard: ใช้ AccountPeakBalanceAllTime ซึ่งไม่ reset หลังตัดขาดทุนแต่ละรอบ
+   // ต่างจาก PeakBalanceForDD ด้านบนที่ reset ทุกครั้งที่ MaxDDStop ยิง - ตัวนี้จับ DD
+   // สะสมจริงของทั้งพอร์ต กันขาดทุนติดกันหลายรอบย่อยๆ (แต่ละรอบไม่เกิน MaxAllowedDD)
+   // รวมกันแล้วกินพอร์ตหนักเกินไป
+   if(currentBalance > AccountPeakBalanceAllTime) AccountPeakBalanceAllTime = currentBalance;
+
+   if(UseTotalDDGuard && !TradingHalted && AccountPeakBalanceAllTime > 0)
+   {
+      double totalDDVal = AccountPeakBalanceAllTime - currentEquity;
+      if(totalDDVal < 0) totalDDVal = 0;
+      double totalDDPercent = (totalDDVal / AccountPeakBalanceAllTime) * 100.0;
+
+      if(totalDDPercent >= MaxTotalDD_Pct)
+      {
+         TradingHalted  = true;
+         IsClosingState = true;
+         PrintFormat("🛑🛑🛑 [TOTAL DD GUARD] Cumulative account DD: $%.2f (%.2f%%) exceeded MaxTotalDD_Pct=%.2f%% -> Closing everything and HALTING new trades permanently. Restart EA to resume.",
+                     totalDDVal, totalDDPercent, MaxTotalDD_Pct);
+         ClearEverythingAsync();
+         DeleteVisualTSLine();
+         DeleteAllPendingOrders();
+         IsClosingState = false;
       }
    }
 }
@@ -1820,7 +1854,10 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
 
    bool timeAllowed = IsTradingAllowedByTime();
 
-   if(IsClosingState) {
+   if(TradingHalted) {
+      ObjectSetInteger(0, UI_PREFIX+"LED_Icon", OBJPROP_COLOR, UI_Loss);
+      ObjectSetString(0, UI_PREFIX+"LED_Text", OBJPROP_TEXT, GetUIString("หยุดถาวร (TOTAL DD GUARD)", "HALTED (TOTAL DD GUARD)"));
+   } else if(IsClosingState) {
       ObjectSetInteger(0, UI_PREFIX+"LED_Icon", OBJPROP_COLOR, clrOrange);
       ObjectSetString(0, UI_PREFIX+"LED_Text", OBJPROP_TEXT, GetUIString("กำลังเคลียร์ไม้ค้าง", "CLOSING ALL..."));
    } else if(!timeAllowed) {
