@@ -1721,104 +1721,128 @@ void InitDashboard()
 
    int X = 15;
    int Y = 15;
+   int W = 800;
+   int H = 510;
 
-   // Main Dashboard Panel
-   CreatePanel(UI_PREFIX+"Shadow", X+4, Y+4, 800, 510, UI_Shadow, UI_Shadow);
-   CreatePanel(UI_PREFIX+"MainBG", X, Y, 800, 510, UI_MainBG, UI_Accent);
+   // Outer shadow + main card, thin accent border for a bit of depth
+   CreatePanel(UI_PREFIX+"Shadow", X+5, Y+5, W, H, UI_Shadow, UI_Shadow);
+   CreatePanel(UI_PREFIX+"MainBG", X, Y, W, H, UI_MainBG, UI_Accent);
 
-   // 1. HEADER
-   CreatePanel(UI_PREFIX+"HeaderBG", X, Y, 800, 42, UI_PanelBG, UI_PanelBG);
-   CreateLabel(UI_PREFIX+"Title", X+14, Y+10, "QUANTIX PRO TERMINAL - MULTI-ANALYTICS DASHBOARD", 11, clrWhite, "Impact");
+   // 1. HEADER (with a thin accent underline to separate it from the body)
+   CreatePanel(UI_PREFIX+"HeaderBG", X, Y, W, 44, UI_PanelBG, UI_PanelBG);
+   CreatePanel(UI_PREFIX+"HeaderLine", X, Y+44, W, 2, UI_Accent, UI_Accent);
+   CreateLabel(UI_PREFIX+"Title", X+16, Y+13, "⚡ QUANTIX PRO TERMINAL", 12, clrWhite, "Impact");
+   CreateLabel(UI_PREFIX+"SubTitle", X+250, Y+16, GetUIString("แดชบอร์ดวิเคราะห์แบบเรียลไทม์", "REAL-TIME ANALYTICS"), 8, UI_TextDim);
 
-   // 2. LED STATUS INDICATOR & TIME INDICATOR
-   CreateLabel(UI_PREFIX+"LED_Icon", X+14, Y+52, "n", 7, UI_Profit, "Wingdings");
-   CreateLabel(UI_PREFIX+"LED_Text", X+28, Y+50, GetUIString("ระบบพร้อมทำงาน", "ONLINE"), 9);
+   // 2. STATUS LED + TIME
+   CreateLabel(UI_PREFIX+"LED_Icon", X+16, Y+58, "n", 8, UI_Profit, "Wingdings");
+   CreateLabel(UI_PREFIX+"LED_Text", X+30, Y+56, GetUIString("ระบบพร้อมทำงาน", "ONLINE"), 9, UI_Profit);
 
    string timeStr = StringFormat("%02d:%02d - %02d:%02d", StartHour, StartMinute, EndHour, EndMinute);
    if(!UseTimer) timeStr = "24/7 ALL DAY";
-   CreateLabel(UI_PREFIX+"Time_Lbl", X+220, Y+50, GetUIString("เวลาเทรด: " + timeStr, "TIME: " + timeStr), 8, UI_TextDim);
+   CreateLabel(UI_PREFIX+"Time_Lbl", X+225, Y+56, "🕐 " + timeStr, 8, UI_TextDim);
 
-   // 3. PROGRESS BAR SECTION
-   CreateLabel(UI_PREFIX+"Prog_Lbl", X+14, Y+78, GetUIString("เป้าหมายกำไร", "TARGET PROGRESS"), 8, UI_TextDim);
-   CreateLabel(UI_PREFIX+"Prog_Pct", X+335, Y+78, "0%", 8, clrWhite);
-   CreatePanel(UI_PREFIX+"Prog_BG", X+14, Y+98, 362, 6, UI_PanelBG, UI_PanelBG);
-   CreatePanel(UI_PREFIX+"Prog_Fill", X+14, Y+98, 0, 6, UI_Accent, UI_Accent);
+   // 3. PROGRESS BAR (rounded-look end caps + 3-tier fill color, driven in UpdateDashboard)
+   CreateLabel(UI_PREFIX+"Prog_Lbl", X+16, Y+86, "🎯 " + GetUIString("เป้าหมายกำไร", "TARGET PROGRESS"), 8, UI_TextDim);
+   CreateLabel(UI_PREFIX+"Prog_Pct", X+335, Y+86, "0%", 8, clrWhite, "Impact");
+   CreatePanel(UI_PREFIX+"Prog_BG", X+16, Y+106, 360, 8, UI_Shadow, UI_Shadow);
+   CreatePanel(UI_PREFIX+"Prog_Fill", X+16, Y+106, 0, 8, UI_Accent, UI_Accent);
+   CreatePanel(UI_PREFIX+"Prog_CapL", X+16, Y+106, 2, 8, UI_Accent, UI_Accent);
+   CreatePanel(UI_PREFIX+"Prog_CapR", X+16, Y+106, 2, 8, UI_Accent, UI_Accent);
 
-   // 4. FLOATING PROFIT SECTION
-   CreateLabel(UI_PREFIX+"NetLbl", X+14, Y+118, GetUIString("กำไรรวมปัจจุบัน (Floating)", "BASKET FLOATING PROFIT"), 8, UI_TextDim);
-   CreateLabel(UI_PREFIX+"Val_Profit", X+14, Y+138, "$0.00", 20, clrWhite, "Impact");
+   // 4. FLOATING PROFIT (hero number)
+   CreateLabel(UI_PREFIX+"NetLbl", X+16, Y+128, GetUIString("กำไรรวมปัจจุบัน (Floating)", "BASKET FLOATING PROFIT"), 8, UI_TextDim);
+   CreateLabel(UI_PREFIX+"Val_Profit", X+16, Y+148, "$0.00", 22, clrWhite, "Impact");
 
    // ==================== LEFT COLUMN: TRADING DATA MATRIX ==================== //
-   int startY = Y + 190;
+   int startY = Y + 198;
+   int boxW = 174, boxH = 60, boxGap = 12;
 
-   // Box 1: PEAK PROFIT
-   CreatePanel(UI_PREFIX+"Box1", X+14, startY, 176, 58, UI_PanelBG, UI_PanelBG);
-   CreateLabel(UI_PREFIX+"Box1L", X+22, startY+6, GetUIString("กำไรสูงสุด ($)", "PEAK PROFIT ($)"), 7, UI_TextDim);
-   CreateLabel(UI_PREFIX+"Val_Peak", X+22, startY+26, "0.00", 11, clrWhite);
+   // Box 1: PEAK PROFIT (green accent)
+   CreatePanel(UI_PREFIX+"Box1Accent", X+16, startY, boxW, 3, UI_Profit, UI_Profit);
+   CreatePanel(UI_PREFIX+"Box1", X+16, startY+3, boxW, boxH-3, UI_PanelBG, UI_PanelBG);
+   CreateLabel(UI_PREFIX+"Box1L", X+24, startY+11, "📈 " + GetUIString("กำไรสูงสุด ($)", "PEAK PROFIT ($)"), 7, UI_TextDim);
+   CreateLabel(UI_PREFIX+"Val_Peak", X+24, startY+31, "0.00", 12, UI_Profit, "Impact");
 
-   // Box 2: TRAILING SL
-   CreatePanel(UI_PREFIX+"Box2", X+200, startY, 176, 58, UI_PanelBG, UI_PanelBG);
-   CreateLabel(UI_PREFIX+"Box2L", X+208, startY+6, GetUIString("จุดล็อกกำไร ($)", "TRAILING SL ($)"), 7, UI_TextDim);
-   CreateLabel(UI_PREFIX+"Val_TS", X+208, startY+26, GetUIString("สแตนด์บาย", "HOLD"), 10, clrOrange);
+   // Box 2: TRAILING SL (orange accent)
+   int box2X = X+16+boxW+boxGap;
+   CreatePanel(UI_PREFIX+"Box2Accent", box2X, startY, boxW, 3, clrOrange, clrOrange);
+   CreatePanel(UI_PREFIX+"Box2", box2X, startY+3, boxW, boxH-3, UI_PanelBG, UI_PanelBG);
+   CreateLabel(UI_PREFIX+"Box2L", box2X+8, startY+11, "🔒 " + GetUIString("จุดล็อกกำไร ($)", "TRAILING SL ($)"), 7, UI_TextDim);
+   CreateLabel(UI_PREFIX+"Val_TS", box2X+8, startY+31, GetUIString("สแตนด์บาย", "HOLD"), 11, clrOrange, "Impact");
 
-   // Box 3: ACTIVE POSITIONS
-   CreatePanel(UI_PREFIX+"Box3", X+14, startY+66, 176, 58, UI_PanelBG, UI_PanelBG);
-   CreateLabel(UI_PREFIX+"Box3L", X+22, startY+72, GetUIString("ไม้ที่เปิดอยู่", "ACTIVE POSITIONS"), 7, UI_TextDim);
-   CreateLabel(UI_PREFIX+"Val_Open", X+22, startY+92, "0 / 20", 11, clrWhite);
+   int row2Y = startY + boxH + boxGap;
 
-   // Box 4: MODE / PENDING
-   CreatePanel(UI_PREFIX+"Box4", X+200, startY+66, 176, 58, UI_PanelBG, UI_PanelBG);
-   CreateLabel(UI_PREFIX+"Box4L", X+208, startY+72, GetUIString("โหมดคำสั่ง", "ORDER MODE"), 7, UI_TextDim);
-   CreateLabel(UI_PREFIX+"Val_Pend", X+208, startY+92, "---", 10, UI_Accent);
+   // Box 3: ACTIVE POSITIONS (accent blue)
+   CreatePanel(UI_PREFIX+"Box3Accent", X+16, row2Y, boxW, 3, UI_Accent, UI_Accent);
+   CreatePanel(UI_PREFIX+"Box3", X+16, row2Y+3, boxW, boxH-3, UI_PanelBG, UI_PanelBG);
+   CreateLabel(UI_PREFIX+"Box3L", X+24, row2Y+11, "📊 " + GetUIString("ไม้ที่เปิดอยู่", "ACTIVE POSITIONS"), 7, UI_TextDim);
+   CreateLabel(UI_PREFIX+"Val_Open", X+24, row2Y+31, "0 / 20", 12, clrWhite, "Impact");
+
+   // Box 4: MODE / PENDING (accent blue)
+   CreatePanel(UI_PREFIX+"Box4Accent", box2X, row2Y, boxW, 3, UI_Accent, UI_Accent);
+   CreatePanel(UI_PREFIX+"Box4", box2X, row2Y+3, boxW, boxH-3, UI_PanelBG, UI_PanelBG);
+   CreateLabel(UI_PREFIX+"Box4L", box2X+8, row2Y+11, "⚙️ " + GetUIString("โหมดคำสั่ง", "ORDER MODE"), 7, UI_TextDim);
+   CreateLabel(UI_PREFIX+"Val_Pend", box2X+8, row2Y+31, "---", 11, UI_Accent, "Impact");
+
+   int virtY = row2Y + boxH + boxGap;
 
    // Box 5: VIRTUAL TARGET MONITOR
-   CreatePanel(UI_PREFIX+"BoxVirt", X+14, startY+132, 362, 75, UI_PanelBG, UI_PanelBG);
-   CreateLabel(UI_PREFIX+"VirtTitle", X+22, startY+137, GetUIString("สถานะ VIRTUAL GRID", "VIRTUAL GRID TARGETS"), 7, UI_TextDim);
-   CreateLabel(UI_PREFIX+"Val_VirtBuy", X+22, startY+155, "Wait BUY : ---", 8, UI_Profit);
-   CreateLabel(UI_PREFIX+"Val_VirtSell", X+22, startY+175, "Wait SELL: ---", 8, UI_Loss);
+   CreatePanel(UI_PREFIX+"BoxVirtAccent", X+16, virtY, 358, 3, UI_Accent, UI_Accent);
+   CreatePanel(UI_PREFIX+"BoxVirt", X+16, virtY+3, 358, 76, UI_PanelBG, UI_PanelBG);
+   CreateLabel(UI_PREFIX+"VirtTitle", X+24, virtY+11, "📡 " + GetUIString("สถานะ VIRTUAL GRID", "VIRTUAL GRID TARGETS"), 7, UI_TextDim);
+   CreateLabel(UI_PREFIX+"Val_VirtBuy", X+24, virtY+30, "Wait BUY : ---", 8, UI_Profit);
+   CreateLabel(UI_PREFIX+"Val_VirtSell", X+24, virtY+50, "Wait SELL: ---", 8, UI_Loss);
 
    // EMERGENCY CLOSE ALL BUTTON
    string btnText = GetUIString("🚨 ปิดรวบทุกไม้ (CLOSE ALL)", "🚨 CLOSE ALL POSITIONS");
-   CreateButton(BTN_CLOSE_ALL, X+14, startY+220, 362, 40, btnText, UI_Loss, clrWhite, 10);
+   CreateButton(BTN_CLOSE_ALL, X+16, virtY+3+76+14, 358, 40, btnText, UI_Loss, clrWhite, 10);
+
+   // ==================== VERTICAL DIVIDER ==================== //
+   CreatePanel(UI_PREFIX+"VDivider", X+392, Y+56, 1, H-70, UI_Shadow, UI_Shadow);
 
    // ==================== RIGHT COLUMN: FINANCIAL INFO ==================== //
-   int X_Right  = X + 395;
-   int PanelW   = 390;
+   int X_Right  = X + 408;
+   int PanelW   = W - (X_Right - X) - 16;
 
-   int ValX_Acc = X_Right + 175;
+   int ValX_Acc = X_Right + 185;
 
    // 1. ACCOUNT OVERVIEW PANEL
-   CreatePanel(UI_PREFIX+"AccBG", X_Right, Y+50, PanelW, 210, UI_PanelBG, UI_PanelBG);
-   CreateLabel(UI_PREFIX+"AccTitle", X_Right+12, Y+56, GetUIString("ข้อมูลบัญชีเทรด (ACCOUNT INFO)", "ACCOUNT INFO"), 8, UI_Accent);
+   CreatePanel(UI_PREFIX+"AccAccent", X_Right, Y+56, PanelW, 3, UI_Accent, UI_Accent);
+   CreatePanel(UI_PREFIX+"AccBG", X_Right, Y+59, PanelW, 205, UI_PanelBG, UI_PanelBG);
+   CreateLabel(UI_PREFIX+"AccTitle", X_Right+12, Y+68, "💰 " + GetUIString("ข้อมูลบัญชีเทรด", "ACCOUNT INFO"), 9, UI_Accent, "Impact");
+   CreatePanel(UI_PREFIX+"AccTitleLine", X_Right+12, Y+88, PanelW-24, 1, UI_Shadow, UI_Shadow);
 
-   int accY = Y + 80;
+   int accY = Y + 100;
    int accGap = 24;
 
    CreateLabel(UI_PREFIX+"Lbl_Bal", X_Right+12, accY, GetUIString("ยอดเงิน (Balance):", "Balance:"), 8, UI_TextDim);
-   CreateLabel(UI_PREFIX+"Val_Bal", ValX_Acc, accY, "$0.00", 8, clrWhite);
+   CreateLabel(UI_PREFIX+"Val_Bal", ValX_Acc, accY, "$0.00", 9, clrWhite);
 
    accY += accGap;
    CreateLabel(UI_PREFIX+"Lbl_Eq", X_Right+12, accY, GetUIString("มูลค่าสุทธิ (Equity):", "Equity:"), 8, UI_TextDim);
-   CreateLabel(UI_PREFIX+"Val_Eq", ValX_Acc, accY, "$0.00", 8, clrWhite);
+   CreateLabel(UI_PREFIX+"Val_Eq", ValX_Acc, accY, "$0.00", 9, clrWhite);
 
    accY += accGap;
    CreateLabel(UI_PREFIX+"Lbl_FreeM", X_Right+12, accY, GetUIString("หลักประกันเหลือ (Margin):", "Free Margin:"), 8, UI_TextDim);
-   CreateLabel(UI_PREFIX+"Val_FreeM", ValX_Acc, accY, "$0.00", 8, clrWhite);
+   CreateLabel(UI_PREFIX+"Val_FreeM", ValX_Acc, accY, "$0.00", 9, clrWhite);
 
    accY += accGap;
    CreateLabel(UI_PREFIX+"Lbl_MLevel", X_Right+12, accY, GetUIString("ระดับหลักประกัน (Level):", "Margin Level:"), 8, UI_TextDim);
-   CreateLabel(UI_PREFIX+"Val_MLevel", ValX_Acc, accY, "0.00%", 8, clrWhite);
+   CreateLabel(UI_PREFIX+"Val_MLevel", ValX_Acc, accY, "0.00%", 9, clrWhite);
 
    accY += accGap;
    CreateLabel(UI_PREFIX+"Lbl_MaxDD", X_Right+12, accY, GetUIString("ย่อตัวสูงสุด (Max DD):", "Max Drawdown:"), 8, UI_TextDim);
-   CreateLabel(UI_PREFIX+"Val_MaxDD", ValX_Acc, accY, "-$0.00 (-0.00%)", 8, UI_Loss);
+   CreateLabel(UI_PREFIX+"Val_MaxDD", ValX_Acc, accY, "-$0.00 (-0.00%)", 9, UI_Loss);
 
    // 2. SYSTEM STATUS PANEL (Force Hedge / Level Unlock / Basket Stats)
-   int SysY = Y + 270;
-   CreatePanel(UI_PREFIX+"SysBG", X_Right, SysY, PanelW, 200, UI_PanelBG, UI_PanelBG);
-   CreateLabel(UI_PREFIX+"SysTitle", X_Right+12, SysY+6, GetUIString("สถานะระบบเสริม (SYSTEM STATUS)", "SYSTEM STATUS"), 8, UI_Accent);
+   int SysY = Y + 278;
+   CreatePanel(UI_PREFIX+"SysAccent", X_Right, SysY, PanelW, 3, UI_Accent, UI_Accent);
+   CreatePanel(UI_PREFIX+"SysBG", X_Right, SysY+3, PanelW, 197, UI_PanelBG, UI_PanelBG);
+   CreateLabel(UI_PREFIX+"SysTitle", X_Right+12, SysY+12, "⚙️ " + GetUIString("สถานะระบบเสริม", "SYSTEM STATUS"), 9, UI_Accent, "Impact");
+   CreatePanel(UI_PREFIX+"SysTitleLine", X_Right+12, SysY+32, PanelW-24, 1, UI_Shadow, UI_Shadow);
 
-   int sysY = SysY + 26;
+   int sysY = SysY + 44;
    CreateLabel(UI_PREFIX+"Lbl_ForceHedge", X_Right+12, sysY, GetUIString("Force Hedge:", "Force Hedge:"), 8, UI_TextDim);
    CreateLabel(UI_PREFIX+"Val_ForceHedge", ValX_Acc, sysY, "OFF", 8, UI_TextDim);
 
@@ -1860,32 +1884,43 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
    if(percent < 0) percent = 0.0;
    if(percent > 1.0) percent = 1.0;
 
-   int barWidth = (int)(362 * percent);
+   int barLeftX = 15 + 16; // matches Prog_BG's X+16 anchor in InitDashboard (X is fixed at 15 there)
+   int barWidth = (int)(360 * percent);
    ObjectSetInteger(0, UI_PREFIX+"Prog_Fill", OBJPROP_XSIZE, barWidth);
 
-   if(percent >= 1.0) ObjectSetInteger(0, UI_PREFIX+"Prog_Fill", OBJPROP_BGCOLOR, clrOrange);
-   else ObjectSetInteger(0, UI_PREFIX+"Prog_Fill", OBJPROP_BGCOLOR, UI_Accent);
+   color progColor = UI_Accent;
+   if(percent >= 1.0) progColor = clrOrange;
+   else if(percent >= 0.7) progColor = UI_Profit;
+
+   ObjectSetInteger(0, UI_PREFIX+"Prog_Fill", OBJPROP_BGCOLOR, progColor);
+   ObjectSetInteger(0, UI_PREFIX+"Prog_CapL", OBJPROP_BGCOLOR, progColor);
+   ObjectSetInteger(0, UI_PREFIX+"Prog_CapR", OBJPROP_BGCOLOR, progColor);
+   ObjectSetInteger(0, UI_PREFIX+"Prog_CapR", OBJPROP_XDISTANCE, barLeftX + barWidth - 2);
 
    ObjectSetString(0, UI_PREFIX+"Prog_Pct", OBJPROP_TEXT, IntegerToString((int)(percent * 100)) + "%");
 
    bool timeAllowed = IsTradingAllowedByTime();
 
+   color ledColor = UI_Profit;
    if(TradingHalted) {
-      ObjectSetInteger(0, UI_PREFIX+"LED_Icon", OBJPROP_COLOR, UI_Loss);
+      ledColor = UI_Loss;
       ObjectSetString(0, UI_PREFIX+"LED_Text", OBJPROP_TEXT, GetUIString("หยุดถาวร (TOTAL DD GUARD)", "HALTED (TOTAL DD GUARD)"));
    } else if(IsClosingState) {
-      ObjectSetInteger(0, UI_PREFIX+"LED_Icon", OBJPROP_COLOR, clrOrange);
+      ledColor = clrOrange;
       ObjectSetString(0, UI_PREFIX+"LED_Text", OBJPROP_TEXT, GetUIString("กำลังเคลียร์ไม้ค้าง", "CLOSING ALL..."));
    } else if(!timeAllowed) {
-      ObjectSetInteger(0, UI_PREFIX+"LED_Icon", OBJPROP_COLOR, clrRed);
+      ledColor = clrRed;
       ObjectSetString(0, UI_PREFIX+"LED_Text", OBJPROP_TEXT, GetUIString("นอกเวลาเทรด", "OFF-TIME"));
    } else if(openPos > 0 || pendingOrders > 0) {
-      ObjectSetInteger(0, UI_PREFIX+"LED_Icon", OBJPROP_COLOR, UI_Profit);
+      ledColor = UI_Profit;
       ObjectSetString(0, UI_PREFIX+"LED_Text", OBJPROP_TEXT, GetUIString("กำลังทำงาน", "ACTIVE"));
    } else {
-      ObjectSetInteger(0, UI_PREFIX+"LED_Icon", OBJPROP_COLOR, C'255,193,7');
+      ledColor = C'255,193,7';
       ObjectSetString(0, UI_PREFIX+"LED_Text", OBJPROP_TEXT, GetUIString("ระบบพร้อมทำงาน", "ONLINE"));
    }
+
+   ObjectSetInteger(0, UI_PREFIX+"LED_Icon", OBJPROP_COLOR, ledColor);
+   ObjectSetInteger(0, UI_PREFIX+"LED_Text", OBJPROP_COLOR, ledColor);
 
    ObjectSetString(0, UI_PREFIX+"Val_Peak", OBJPROP_TEXT, DoubleToString(maxProfit, 2));
 
