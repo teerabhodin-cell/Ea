@@ -97,7 +97,7 @@ input double RecoveryDD_TriggerPercent = 5.0;  // Drawdown (%) ขั้นต�
 input double RecoveryLotBoost          = 1.2;  // ตัวคูณ lot เพิ่มเติมตอน Recovery Mode ทำงาน (คูณทับ lot ที่คำนวณได้ตามปกติ)
 
 input group "===== 8. Overflow: Level Unlock & Force Hedge on High DD ====="
-input bool   UseLevelUnlock      = false;   // เปิดใช้ระบบปลดล็อคชั้นเพิ่ม: เมื่อ Buy และ Sell เปิดเต็ม TotalLevels ทั้ง 2 ฝั่งแล้ว จะอนุญาตให้เปิดไม้เพิ่มต่อได้จนกว่าบาสเก็ตจะกำไรถึง TargetProfit (โค้ดหยุดเปิดไม้เองอัตโนมัติทันทีที่ถึงเป้าอยู่แล้ว) - เสี่ยงสูง lot จะโตต่อเนื่องตาม LotMultiplier ควรเปิด UseMaxDDStop คู่กันเสมอ
+input bool   UseLevelUnlock      = false;   // เปิดใช้ระบบปลดล็อคชั้นเพิ่ม: เมื่อฝั่งใดฝั่งหนึ่ง (Buy หรือ Sell) เปิดเต็ม TotalLevels แล้ว จะอนุญาตให้ฝั่งนั้นเปิดไม้เพิ่มต่อได้จนกว่าบาสเก็ตจะกำไรถึง TargetProfit (โค้ดหยุดเปิดไม้เองอัตโนมัติทันทีที่ถึงเป้าอยู่แล้ว) - เสี่ยงสูง lot จะโตต่อเนื่องตาม LotMultiplier ควรเปิด UseMaxDDStop คู่กันเสมอ
 input int    MaxUnlockedLevels   = 5;       // จำนวนชั้นเพิ่มสูงสุดต่อฝั่งที่ยอมให้เปิดเกิน TotalLevels (ตั้ง 0 = ไม่จำกัดจำนวนชั้น อันตรายมาก)
 input bool   UseForceHedgeOnDD          = false;  // เปิด/ปิดระบบบังคับเปิดไม้ฝั่งตรงข้ามเมื่อ DD สูง (ข้าม EMA/MTF/ADX/RSI/Bollinger filter ทั้งหมด - เพราะจุดประสงค์คือ hedge ฝั่งที่ filter กำลังบล็อกอยู่)
 input double ForceHedgeDD_TriggerPercent = 6.0;   // Drawdown (%) ขั้นต่ำที่จะบังคับเปิดไม้ฝั่งที่มีไม้น้อยกว่า (ฝั่งที่ไม่ได้ hedge อยู่)
@@ -1253,17 +1253,18 @@ void CheckAndExecuteVirtualGrid()
    bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true)  && CheckADXFilter(true)  && CheckRSIFilter(true)  && CheckBollingerFilter(true);
    bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false) && CheckADXFilter(false) && CheckRSIFilter(false) && CheckBollingerFilter(false);
 
-   // Level Unlock: once BOTH sides have filled every configured TotalLevels
-   // (worst-case scenario - fully loaded grid, no more room to hedge), optionally
-   // allow opening further levels past the cap. This does NOT need its own
-   // profit check - ExecuteGridLogic() is already gated by
-   // (MaxBasketProfit < TargetProfit) in OnTick(), so grid execution (and this
-   // unlock) automatically stops the moment the basket reaches TargetProfit.
-   bool bothSidesMaxed = (buyCount >= TotalLevels && sellCount >= TotalLevels);
+   // Level Unlock: once EITHER side has filled every configured TotalLevels
+   // (that side has no more room, and the basket still isn't profitable),
+   // optionally allow opening further levels past the cap on that side. This
+   // does NOT need its own profit check - ExecuteGridLogic() is already gated
+   // by (MaxBasketProfit < TargetProfit) in OnTick(), so grid execution (and
+   // this unlock) automatically stops the moment the basket reaches
+   // TargetProfit.
+   bool eitherSideMaxed = (buyCount >= TotalLevels || sellCount >= TotalLevels);
    bool buyLevelAvailable  = (buyCount  < TotalLevels) ||
-      (UseLevelUnlock && bothSidesMaxed && (MaxUnlockedLevels <= 0 || buyCount  < TotalLevels + MaxUnlockedLevels));
+      (UseLevelUnlock && eitherSideMaxed && (MaxUnlockedLevels <= 0 || buyCount  < TotalLevels + MaxUnlockedLevels));
    bool sellLevelAvailable = (sellCount < TotalLevels) ||
-      (UseLevelUnlock && bothSidesMaxed && (MaxUnlockedLevels <= 0 || sellCount < TotalLevels + MaxUnlockedLevels));
+      (UseLevelUnlock && eitherSideMaxed && (MaxUnlockedLevels <= 0 || sellCount < TotalLevels + MaxUnlockedLevels));
 
    if(buyLevelAvailable  && !canBuyFilters)  LogFilterBlockReason(true);
    if(sellLevelAvailable && !canSellFilters) LogFilterBlockReason(false);
