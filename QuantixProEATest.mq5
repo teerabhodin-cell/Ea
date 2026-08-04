@@ -52,23 +52,13 @@ input double TargetProfit        = 1.0;    // Minimum Profit ($) to activate Tra
 input double TrailingStopUSD     = 0.5;    // Trailing Distance ($)
 input double ProfitFloorPercent  = 0.30;   // Safety Floor % ล็อกทุนขั้นต่ำ (30%)
 
-input group "===== 4. ตัวกรองเทรนด์ (EMA / MTF / ADX / RSI / Bollinger) ====="
+input group "===== 4. ตัวกรองเทรนด์ (EMA / MTF) ====="
 input bool   UseEMAFilter           = false;   // เปิดใช้ตัวกรองเทรนด์ EMA
 input int    EMA_Period             = 200;     // Period ของเส้น EMA
 input bool   StrictBuyFilter        = false;   // ล็อคฝั่ง Buy: ห้ามเปิด Buy หากราคาอยู่ต่ำกว่า EMA
 input bool   StrictSellFilter       = false;   // ล็อคฝั่ง Sell: ห้ามเปิด Sell หากราคาอยู่เหนือ EMA
 input bool   UseMTFFilter          = false;   // เปิดใช้ตัวกรองเทรนด์จาก Timeframe สูงกว่า (ตั้ง MTF_Period ให้สูงกว่า Timeframe ของกราฟที่แปะ EA จริงๆ ไม่งั้นจะซ้ำกับ EMA filter หลัก)
 input ENUM_TIMEFRAMES MTF_Period   = PERIOD_H1; // Timeframe ที่ใช้กรองเทรนด์หลัก
-input bool   UseADXFilter           = false;   // เปิดใช้ตัวกรองความแรงเทรนด์ ADX
-input int    ADX_Period             = 14;      // Period ของ ADX
-input double ADX_MinLevel           = 25.0;    // ค่า ADX ขั้นต่ำเพื่อยืนยันว่ามีเทรนด์
-input bool   UseRSIFilter           = false;   // เปิดใช้ตัวกรอง RSI
-input int    RSI_Period             = 14;      // Period ของ RSI
-input double RSI_BuyMax             = 70.0;    // ค่า RSI สูงสุดที่จะอนุญาตให้เปิด Buy (ป้องกันซื้อตอน Overbought เกินไป)
-input double RSI_SellMin            = 30.0;    // ค่า RSI ต่ำสุดที่จะอนุญาตให้เปิด Sell (ป้องกันขายตอน Oversold เกินไป)
-input bool   UseBollingerFilter     = false;   // เปิดใช้ตัวกรองกรอบราคา Bollinger Bands
-input int    BB_Period              = 20;      // Period ของ Bollinger Bands
-input double BB_Deviation           = 2.0;     // ค่า Standard Deviation
 
 input group "===== 5. ขนาด Lot & ป้องกันทุน ====="
 input bool   UseDynamicLot          = false;   // เปิดใช้งานการคำนวณ Lot อัตโนมัติตามขนาด Equity
@@ -101,7 +91,7 @@ input double RecoveryLotBoost          = 1.2;  // ตัวคูณ lot เพ�
 input group "===== 8. Overflow: Level Unlock & Force Hedge (DD สูง / ติดลบนาน) ====="
 input bool   UseLevelUnlock      = false;   // เปิดใช้ระบบปลดล็อคชั้นเพิ่ม: เมื่อฝั่งใดฝั่งหนึ่ง (Buy หรือ Sell) เปิดเต็ม TotalLevels แล้ว จะอนุญาตให้ฝั่งนั้นเปิดไม้เพิ่มต่อได้จนกว่าบาสเก็ตจะกำไรถึง TargetProfit (โค้ดหยุดเปิดไม้เองอัตโนมัติทันทีที่ถึงเป้าอยู่แล้ว) - เสี่ยงสูง lot จะโตต่อเนื่องตาม LotMultiplier ควรเปิด UseMaxDDStop คู่กันเสมอ
 input int    MaxUnlockedLevels   = 5;       // จำนวนชั้นเพิ่มสูงสุดต่อฝั่งที่ยอมให้เปิดเกิน TotalLevels (ตั้ง 0 = ไม่จำกัดจำนวนชั้น อันตรายมาก)
-input bool   UseForceHedgeOnDD          = false;  // เปิด/ปิดระบบบังคับเปิดไม้ฝั่งตรงข้ามเมื่อ DD สูง (ข้าม EMA/MTF/ADX/RSI/Bollinger filter ทั้งหมด - เพราะจุดประสงค์คือ hedge ฝั่งที่ filter กำลังบล็อกอยู่)
+input bool   UseForceHedgeOnDD          = false;  // เปิด/ปิดระบบบังคับเปิดไม้ฝั่งตรงข้ามเมื่อ DD สูง (ข้าม EMA/MTF filter ทั้งหมด - เพราะจุดประสงค์คือ hedge ฝั่งที่ filter กำลังบล็อกอยู่)
 input double ForceHedgeDD_TriggerPercent = 6.0;   // Drawdown (%) ขั้นต่ำที่จะบังคับเปิดไม้ฝั่งที่มีไม้น้อยกว่า (ฝั่งที่ไม่ได้ hedge อยู่)
 input double ForceHedgeResetPercent      = 3.0;   // DD ต้องลดต่ำกว่าค่านี้ก่อน ถึงจะบังคับเปิดซ้ำได้อีกครั้ง (กัน spam เปิดรัวๆ ตอน DD ค้างสูง)
 input double ForceHedgeLotMultiplier     = 1.0;   // ตัวคูณ lot ของไม้ที่ถูกบังคับเปิด (คูณทับ lot ปกติของระดับถัดไปฝั่งนั้น)
@@ -172,13 +162,10 @@ double   StatsSumLossAmount  = 0.0; // เก็บเป็นค่าบว�
 string   UI_PREFIX       = "QX_PRO_";
 string   BTN_CLOSE_ALL   = "QX_PRO_BtnCloseAll";
 
-// Handle สำหรับอินดิเคเตอร์ ATR / EMA / Multi-Timeframe EMA / ADX / RSI / Bollinger Bands
+// Handle สำหรับอินดิเคเตอร์ ATR / EMA / Multi-Timeframe EMA
 int      atrHandle       = INVALID_HANDLE;
 int      emaHandle       = INVALID_HANDLE;
 int      mtfEmaHandle    = INVALID_HANDLE;
-int      adxHandle       = INVALID_HANDLE;
-int      rsiHandle       = INVALID_HANDLE;
-int      bbHandle        = INVALID_HANDLE;
 
 // --- [ UI OPTIMIZATION GLOBAL VARS ] ---
 uint     lastUIUpdateTime = 0;
@@ -195,9 +182,6 @@ int      SecondsSinceLastTick   = 0; // อัปเดตครั้งเด�
 bool IsTradingAllowedByTime();
 bool CheckEMATrend(bool isBuy);
 bool CheckMTFFilter(bool isBuy);
-bool CheckADXFilter(bool isBuy);
-bool CheckRSIFilter(bool isBuy);
-bool CheckBollingerFilter(bool isBuy);
 double GetCalculatedLotSize(int nextLevel);
 double CalcEmergencySL(bool isBuy, double entryPrice, double point);
 void ApplyBasketBreakevenAndPartial(double currentProfit);
@@ -325,55 +309,10 @@ bool CheckMTFFilter(bool isBuy)
 }
 
 //+------------------------------------------------------------------+
-//| ADX Filter Check                                                 |
-//+------------------------------------------------------------------+
-bool CheckADXFilter(bool isBuy)
-{
-   if(!UseADXFilter || adxHandle == INVALID_HANDLE) return true;
-   double adxVals[];
-   ArraySetAsSeries(adxVals, true);
-   if(CopyBuffer(adxHandle, 0, 1, 1, adxVals) <= 0) return true;
-   return (adxVals[0] >= ADX_MinLevel);
-}
-
-//+------------------------------------------------------------------+
-//| RSI Filter Check                                                 |
-//+------------------------------------------------------------------+
-bool CheckRSIFilter(bool isBuy)
-{
-   if(!UseRSIFilter || rsiHandle == INVALID_HANDLE) return true;
-   double rsiVals[];
-   ArraySetAsSeries(rsiVals, true);
-   if(CopyBuffer(rsiHandle, 0, 1, 1, rsiVals) <= 0) return true;
-
-   if(isBuy) return (rsiVals[0] <= RSI_BuyMax);
-   else      return (rsiVals[0] >= RSI_SellMin);
-}
-
-//+------------------------------------------------------------------+
-//| Bollinger Bands Filter Check                                     |
-//+------------------------------------------------------------------+
-bool CheckBollingerFilter(bool isBuy)
-{
-   if(!UseBollingerFilter || bbHandle == INVALID_HANDLE) return true;
-   double upperVals[], lowerVals[];
-   ArraySetAsSeries(upperVals, true);
-   ArraySetAsSeries(lowerVals, true);
-   if(CopyBuffer(bbHandle, 1, 1, 1, upperVals) <= 0) return true;
-   if(CopyBuffer(bbHandle, 2, 1, 1, lowerVals) <= 0) return true;
-
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-
-   if(isBuy) return (ask >= lowerVals[0]);
-   else      return (bid <= upperVals[0]);
-}
-
-//+------------------------------------------------------------------+
 //| Diagnostic: which filter(s) are blocking Buy/Sell right now      |
 //| Without this, "why doesn't it open a position" is unanswerable   |
 //| from the dashboard alone - the entry gate is a silent AND of up  |
-//| to 5 filters, and the wait target line looks the same whether    |
+//| to 2 filters, and the wait target line looks the same whether    |
 //| price hasn't reached it yet or a filter is vetoing it forever.   |
 //| Throttled to once/minute per direction so it doesn't spam.       |
 //+------------------------------------------------------------------+
@@ -398,9 +337,6 @@ void LogFilterBlockReason(bool isBuy)
       }
    }
    if(UseMTFFilter && !CheckMTFFilter(isBuy)) blockers += "MTF ";
-   if(UseADXFilter && !CheckADXFilter(isBuy)) blockers += "ADX ";
-   if(UseRSIFilter && !CheckRSIFilter(isBuy)) blockers += "RSI ";
-   if(UseBollingerFilter && !CheckBollingerFilter(isBuy)) blockers += "Bollinger ";
 
    if(blockers == "") return; // nothing actually blocked it - price just hasn't reached the target yet
 
@@ -555,7 +491,7 @@ void ApplyBasketBreakevenAndPartial(double currentProfit)
 //| When (live, current) drawdown crosses ForceHedgeDD_TriggerPercent, |
 //| immediately market-opens one order on whichever side has FEWER    |
 //| positions (the side that isn't currently hedging), bypassing      |
-//| every directional filter (EMA/MTF/ADX/RSI/Bollinger) and the      |
+//| every directional filter (EMA/MTF) and the                        |
 //| normal grid price-target wait entirely - those filters are        |
 //| exactly what can leave one side unhedged during a strong trend,   |
 //| which is the scenario this is meant to rescue.                   |
@@ -790,36 +726,6 @@ int OnInit()
       }
    }
 
-   if(UseADXFilter)
-   {
-      adxHandle = iADX(_Symbol, _Period, ADX_Period);
-      if(adxHandle == INVALID_HANDLE)
-      {
-         Print("Failed to create ADX indicator handle.");
-         return(INIT_FAILED);
-      }
-   }
-
-   if(UseRSIFilter)
-   {
-      rsiHandle = iRSI(_Symbol, _Period, RSI_Period, PRICE_CLOSE);
-      if(rsiHandle == INVALID_HANDLE)
-      {
-         Print("Failed to create RSI indicator handle.");
-         return(INIT_FAILED);
-      }
-   }
-
-   if(UseBollingerFilter)
-   {
-      bbHandle = iBands(_Symbol, _Period, BB_Period, 0, BB_Deviation, PRICE_CLOSE);
-      if(bbHandle == INVALID_HANDLE)
-      {
-         Print("Failed to create Bollinger Bands indicator handle.");
-         return(INIT_FAILED);
-      }
-   }
-
    RecalculateBasePrice();
 
    if(GridType == GRID_VIRTUAL)
@@ -840,9 +746,6 @@ void OnDeinit(const int reason)
    if(atrHandle != INVALID_HANDLE) IndicatorRelease(atrHandle);
    if(emaHandle != INVALID_HANDLE) IndicatorRelease(emaHandle);
    if(mtfEmaHandle != INVALID_HANDLE) IndicatorRelease(mtfEmaHandle);
-   if(adxHandle != INVALID_HANDLE) IndicatorRelease(adxHandle);
-   if(rsiHandle != INVALID_HANDLE) IndicatorRelease(rsiHandle);
-   if(bbHandle != INVALID_HANDLE) IndicatorRelease(bbHandle);
    DeleteVisualTSLine();
    DeleteDashboard();
 }
@@ -1276,8 +1179,8 @@ void PlacePendingGridServer()
       double targetBuyPrice  = NormalizeDouble(GridBasePrice + (level * CachedGridDistance * point), _Digits);
       double targetSellPrice = NormalizeDouble(GridBasePrice - (level * CachedGridDistance * point), _Digits);
 
-      bool canBuyFilter  = CheckEMATrend(true)  && CheckMTFFilter(true)  && CheckADXFilter(true)  && CheckRSIFilter(true)  && CheckBollingerFilter(true);
-      bool canSellFilter = CheckEMATrend(false) && CheckMTFFilter(false) && CheckADXFilter(false) && CheckRSIFilter(false) && CheckBollingerFilter(false);
+      bool canBuyFilter  = CheckEMATrend(true)  && CheckMTFFilter(true);
+      bool canSellFilter = CheckEMATrend(false) && CheckMTFFilter(false);
 
       // BUY STOP (Async)
       if(canBuyFilter)
@@ -1374,8 +1277,8 @@ void CheckAndExecuteVirtualGrid()
    int adjGapLimit = MaxAllowedGapPoints * m_multiplier;
    int adjSpread   = MaxSpreadAllowed * m_multiplier;
 
-   bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true)  && CheckADXFilter(true)  && CheckRSIFilter(true)  && CheckBollingerFilter(true);
-   bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false) && CheckADXFilter(false) && CheckRSIFilter(false) && CheckBollingerFilter(false);
+   bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true);
+   bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false);
 
    // Level Unlock: once EITHER side has filled every configured TotalLevels
    // (that side has no more room, and the basket still isn't profitable),
