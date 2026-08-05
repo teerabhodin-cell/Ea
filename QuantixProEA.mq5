@@ -55,7 +55,7 @@ input bool   UseEMAFilter           = false;   // Use EMA Filter (ใช้ EMA)
 input int    EMA_Period             = 200;     // EMA Period
 input bool   StrictBuyFilter        = false;   // Block Buy < EMA (ล็อค Buy)
 input bool   StrictSellFilter       = false;   // Block Sell > EMA (ล็อค Sell)
-input bool   UseMTFFilter          = true;    // Use MTF Filter (ใช้ MTF)
+input bool   UseMTFFilter          = false;   // Use MTF Filter (ใช้ MTF)
 input ENUM_TIMEFRAMES MTF_Period   = PERIOD_H1; // MTF Timeframe
 
 input group "===== 5. Lot & Capital ====="
