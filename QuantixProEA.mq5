@@ -348,10 +348,12 @@ void ReconcileGridStateOnInit()
    GridBasePrice = estimatedBase;
 
    // ฝั่งที่มีไม้อยู่แล้ว (count>0) ไม่ได้ใช้ GridBasePriceBuy/Sell อีกต่อไปอยู่แล้ว
-   // (ExecuteGridLogic ใช้ราคาไม้จริงคำนวณแทน) แต่ฝั่งที่ยังว่าง (count==0) ยังต้องพึ่ง
-   // ค่านี้อยู่ - ผูกกับราคาไม้ล่าสุดของอีกฝั่งแทนที่จะรีเซ็ตไปที่ราคาตลาดปัจจุบันตรงๆ
-   GridBasePriceBuy  = (buyCount  > 0) ? lastBuyPrice  : ((sellCount > 0) ? lastSellPrice : GridBasePrice);
-   GridBasePriceSell = (sellCount > 0) ? lastSellPrice : ((buyCount  > 0) ? lastBuyPrice  : GridBasePrice);
+   // (ExecuteGridLogic ใช้ราคาไม้จริงคำนวณแทน) แต่ฝั่งที่ยังว่าง (count==0) ยังต้องพึ่งค่านี้อยู่ -
+   // เหมือนกับ live pin ใน CheckAndExecuteVirtualGrid ที่แก้ไปแล้ว ผูกกับราคาไม้ล่าสุดของอีกฝั่ง
+   // ได้เฉพาะ Per-Side ATR เท่านั้น โหมด Fixed/ATR ปกติต้องกลับไปที่ GridBasePrice (ฐานจริงที่เพิ่ง
+   // ประมาณย้อนกลับไว้ด้านบน) ไม่งั้นฝั่งที่ยังว่างจะเปิดไม้ก่อนถึงเส้นฐานเหมือนบั๊กที่เพิ่งแก้ไปแทน
+   GridBasePriceBuy  = (buyCount  > 0) ? lastBuyPrice  : ((IsPerSideATRActive() && sellCount > 0) ? lastSellPrice : GridBasePrice);
+   GridBasePriceSell = (sellCount > 0) ? lastSellPrice : ((IsPerSideATRActive() && buyCount  > 0) ? lastBuyPrice  : GridBasePrice);
 
    BuyGapAnchor  = 0.0;
    SellGapAnchor = 0.0;
@@ -1884,7 +1886,7 @@ string GetUIFont()
 
 // ตัวห่อ DashCanvas.FontSet() รวมศูนย์: โหมดภาษาอังกฤษให้ตัวหนาทั้ง UI เสมอ (ฟอนต์ปกติบางเกินไป
 // อ่านยาก) ส่วนภาษาไทยยังคงพฤติกรรมเดิม (bold เฉพาะจุดที่ระบุไว้)
-void UIFontSet(int fontSize, uint style = FW_NORMAL)
+void UIFontSet(int fontSize, uint style = 0) // 0 = CCanvas::FontSet's own default weight (FW_NORMAL isn't a confirmed constant here, unlike FW_BOLD which the file already used)
 {
    if(Language != LNG_TH) style = FW_BOLD;
    DashCanvas.FontSet(GetUIFont(), fontSize, style);
@@ -2121,22 +2123,26 @@ double GetNextGridTargetPrice(bool isBuy)
    // Fixed Distance ให้ยึดฐานเดิมที่ level 1 ตายตัวเสมอ
    bool dynamicTarget = IsPerSideATRActive();
 
+   // ระดับ 2+ ของทั้ง 2 ฝั่ง เคาะสูตร "ไม้ล่าสุดจริง +/- ระยะ" ในเอนจิ้นจริงเสมอ ไม่ว่าโหมดไหน -
+   // ความแตกต่างของ dynamicTarget มีผลแค่ระดับ 1 เท่านั้น (ฐานคงที่ vs ไล่ตามราคาที่อีกฝั่งเพิ่ง fill)
+   // ระดับ 2+ ต้องเลื่อนตามไม้ล่าสุดเสมอ เหมือนเอนจิ้นจริง ไม่งั้นค่าที่โชว์จะค้างอยู่ที่ระดับ 1 ตลอด
+   // ทั้งที่ราคาที่จะ trigger จริงเปลี่ยนไปไกลแล้ว
    if(isBuy)
    {
+      double effectiveLastBuy = MathMax(lastBuyPrice, BuyGapAnchor);
+      if(buyCount > 0) return NormalizeDouble(effectiveLastBuy + (buyStepDistance * point), _Digits);
       // Fixed/non-per-side โหมด: อ้างอิงจาก GridBasePrice (ราคาศูนย์กลางจริง) ตรงๆ เท่านั้น -
       // ห้ามใช้ GridBasePriceBuy เพราะตัวแปรนั้นอาจถูก "pin" ไปที่ราคาตอนอีกฝั่ง fill ครั้งแรก
       // (คนละกลไกกับที่นี่ ใช้กันไม้ครั้งแรกหลัง gap) ทำให้ค่าที่โชว์เพี้ยนไปจากฐานจริง
       if(!dynamicTarget) return NormalizeDouble(GridBasePrice + (buyStepDistance * point), _Digits);
-      double effectiveLastBuy = MathMax(lastBuyPrice, BuyGapAnchor);
-      if(buyCount == 0) return NormalizeDouble(GridBasePriceBuy + (buyStepDistance * point), _Digits);
-      return NormalizeDouble(effectiveLastBuy + (buyStepDistance * point), _Digits);
+      return NormalizeDouble(GridBasePriceBuy + (buyStepDistance * point), _Digits);
    }
    else
    {
-      if(!dynamicTarget) return NormalizeDouble(GridBasePrice - (sellStepDistance * point), _Digits);
       double effectiveLastSell = (SellGapAnchor > 0 && SellGapAnchor < lastSellPrice) ? SellGapAnchor : lastSellPrice;
-      if(sellCount == 0) return NormalizeDouble(GridBasePriceSell - (sellStepDistance * point), _Digits);
-      return NormalizeDouble(effectiveLastSell - (sellStepDistance * point), _Digits);
+      if(sellCount > 0) return NormalizeDouble(effectiveLastSell - (sellStepDistance * point), _Digits);
+      if(!dynamicTarget) return NormalizeDouble(GridBasePrice - (sellStepDistance * point), _Digits);
+      return NormalizeDouble(GridBasePriceSell - (sellStepDistance * point), _Digits);
    }
 }
 
