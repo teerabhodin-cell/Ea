@@ -2003,10 +2003,10 @@ double GetNextGridTargetPrice(bool isBuy)
    int buyStepDistance  = UseAdaptiveATRGrid ? ((BuyGridDistance  > 0) ? BuyGridDistance  : GetDynamicGridDistance()) : stepDistance;
    int sellStepDistance = UseAdaptiveATRGrid ? ((SellGridDistance > 0) ? SellGridDistance : GetDynamicGridDistance()) : stepDistance;
 
-   // Fixed Distance (ไม่ได้เปิด ATR Distance หรือ Per-Side ATR Distance): ฐานคงที่ตายตัวที่
-   // ระดับ 1 เสมอ ไม่เลื่อนตามไม้ที่ fill เพิ่ม - ต่างจากโหมด ATR ที่ระยะเปลี่ยนแปลงตามตลาดสด
-   // เลยให้เป้าเลื่อนตามไม้ล่าสุดจริงเพื่อสะท้อนระยะปัจจุบัน
-   bool dynamicTarget = UseATRDistance || UseAdaptiveATRGrid;
+   // เฉพาะ Per-Side ATR Distance (UseAdaptiveATRGrid) เท่านั้นที่ทำให้ระยะแต่ละฝั่งไม่เท่ากัน
+   // และเปลี่ยนสดทุกครั้งที่ฝั่งนั้น fill - เลยให้ฐานเลื่อนตามไม้ล่าสุดจริงเฉพาะโหมดนี้ ส่วน
+   // ATR Distance ปกติ (ไม่ per-side) หรือ Fixed Distance ให้ยึดฐานเดิมที่ level 1 ตายตัวเสมอ
+   bool dynamicTarget = UseAdaptiveATRGrid;
 
    if(isBuy)
    {
