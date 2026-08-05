@@ -295,6 +295,9 @@ void ReconcileGridStateOnInit()
 {
    int    buyCount = 0, sellCount = 0;
    double lastBuyPrice = 0.0, lastSellPrice = 0.0;
+   // ราคาไม้ "level 1" ของแต่ละฝั่ง (สุดขั้วตรงข้ามกับ lastBuyPrice/lastSellPrice ด้านบน ซึ่งคือ
+   // ไม้ล่าสุด/ชั้นสูงสุด) ใช้ย้อนกลับไปหาว่าฐานเดิม (GridBasePrice) ตอนบาสเก็ตนี้เริ่มคือราคาไหน
+   double firstBuyPrice = 0.0, firstSellPrice = 0.0;
 
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
@@ -306,12 +309,14 @@ void ReconcileGridStateOnInit()
       if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
       {
          buyCount++;
-         if(openPrice > lastBuyPrice || lastBuyPrice == 0.0) lastBuyPrice = openPrice;
+         if(openPrice > lastBuyPrice  || lastBuyPrice  == 0.0) lastBuyPrice  = openPrice;
+         if(openPrice < firstBuyPrice || firstBuyPrice == 0.0) firstBuyPrice = openPrice;
       }
       else
       {
          sellCount++;
-         if(openPrice < lastSellPrice || lastSellPrice == 0.0) lastSellPrice = openPrice;
+         if(openPrice < lastSellPrice  || lastSellPrice  == 0.0) lastSellPrice  = openPrice;
+         if(openPrice > firstSellPrice || firstSellPrice == 0.0) firstSellPrice = openPrice;
       }
    }
 
@@ -322,9 +327,25 @@ void ReconcileGridStateOnInit()
       return;
    }
 
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   GridBasePrice = NormalizeDouble((ask + bid) / 2.0, _Digits);
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   int    distNow  = (CachedGridDistance > 0) ? CachedGridDistance : GetDynamicGridDistance();
+   double distPrice = distNow * point;
+
+   // FIXED: เดิม GridBasePrice ถูกรีเซ็ตไปที่ราคาตลาด ณ ตอน restart ตรงๆ ทุกครั้ง ทั้งที่มีไม้
+   // เปิดค้างอยู่แล้ว ทำให้ "ราคาฐาน" ที่โชว์บน dashboard (และสูตรคำนวณเป้า level 1 ของฝั่งที่ยัง
+   // ว่างในโหมด Fixed/ATR ปกติ) กลายเป็นค่าที่ไม่เกี่ยวข้องกับฐานจริงตอนบาสเก็ตเริ่มเลย - หลังรีสตาร์ท
+   // ราคาที่โชว์เป็น "ฐาน" กับราคาที่ไม้จริงเปิดไปแล้วเลยไม่ตรงกัน ("buy sell ไม่ตรงจุด" ที่รายงานมา)
+   // ย้อนกลับไปประมาณฐานเดิมจากไม้ level 1 จริงแทน (level 1 = base +/- ระยะ เป๊ะ ตราบใดที่ไม่มี
+   // การ pin ระหว่างทาง ซึ่งตอนนี้ปิดไปแล้วในโหมด Fixed/ATR ปกติ)
+   double estimatedBase;
+   if(buyCount > 0 && sellCount > 0)
+      estimatedBase = NormalizeDouble(((firstBuyPrice - distPrice) + (firstSellPrice + distPrice)) / 2.0, _Digits);
+   else if(buyCount > 0)
+      estimatedBase = NormalizeDouble(firstBuyPrice - distPrice, _Digits);
+   else
+      estimatedBase = NormalizeDouble(firstSellPrice + distPrice, _Digits);
+
+   GridBasePrice = estimatedBase;
 
    // ฝั่งที่มีไม้อยู่แล้ว (count>0) ไม่ได้ใช้ GridBasePriceBuy/Sell อีกต่อไปอยู่แล้ว
    // (ExecuteGridLogic ใช้ราคาไม้จริงคำนวณแทน) แต่ฝั่งที่ยังว่าง (count==0) ยังต้องพึ่ง
@@ -334,13 +355,13 @@ void ReconcileGridStateOnInit()
 
    BuyGapAnchor  = 0.0;
    SellGapAnchor = 0.0;
-   CachedGridDistance = GetDynamicGridDistance();
+   CachedGridDistance = distNow;
    BuyGridDistance    = CachedGridDistance;
    SellGridDistance   = CachedGridDistance;
    GridCreated = true;
 
-   PrintFormat("🔄 [RECONCILE] EA (re)started with existing positions (Buy:%d Sell:%d) - anchors reconstructed instead of reset (Buy anchor=%.5f, Sell anchor=%.5f).",
-               buyCount, sellCount, GridBasePriceBuy, GridBasePriceSell);
+   PrintFormat("🔄 [RECONCILE] EA (re)started with existing positions (Buy:%d Sell:%d) - anchors reconstructed instead of reset (Base=%.5f, Buy anchor=%.5f, Sell anchor=%.5f).",
+               buyCount, sellCount, GridBasePrice, GridBasePriceBuy, GridBasePriceSell);
 }
 
 //+------------------------------------------------------------------+
