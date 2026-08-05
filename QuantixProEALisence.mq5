@@ -862,7 +862,9 @@ int OnInit()
 
    if(!IsLicensed)
    {
-      string licMsg = StringFormat("QuantixPro EA: Account #%d is NOT LICENSED to run this EA. Contact the developer to register this account.", currentAccount);
+      // %d ตัดทอนเป็น 32-bit เสมอใน MQL5 ต่อให้ argument เป็น long ก็ตาม - เลขบัญชีใหญ่ๆ (เกิน
+      // INT_MAX ~2.1 พันล้าน) จะ overflow ได้ค่าผิดเพี้ยนไปคนละเลขเลย ต้องใช้ %I64d กับ long เท่านั้น
+      string licMsg = StringFormat("QuantixPro EA: Account #%I64d is NOT LICENSED to run this EA. Contact the developer to register this account.", currentAccount);
       Print("🔒 [LICENSE] ", licMsg);
       Alert(licMsg);
       // Deliberately still returns INIT_SUCCEEDED below so the chart keeps the EA
@@ -2569,7 +2571,7 @@ void ShowUnlicensedWarning()
    DashCanvas.TextOut(S(18), S(16), "🔒 " + GetUIString("EA ยังไม่ได้ลงทะเบียน", "EA NOT LICENSED"), ColorToARGB(C'239,68,68'));
 
    UIFontSet(SF(16), FW_BOLD);
-   string accLine = StringFormat("Account #%d", AccountInfoInteger(ACCOUNT_LOGIN));
+   string accLine = StringFormat("Account #%I64d", AccountInfoInteger(ACCOUNT_LOGIN)); // %I64d ไม่ใช่ %d - กัน overflow บัญชีเลขใหญ่ (ดูเหตุผลเดียวกันใน OnInit())
    DashCanvas.TextOut(S(18), S(58), accLine, ColorToARGB(clrWhite));
 
    UIFontSet(SF(14));
