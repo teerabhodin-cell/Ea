@@ -1822,10 +1822,10 @@ int EstimateTextWidth(string text, int fontSize)
 void DrawKV(int x, int y, int w, string label, string value, color labelColor, color valueColor, int fontSize = 18)
 {
    int fs = SF(fontSize);
-   DashCanvas.FontSet("Arial", fs);
+   DashCanvas.FontSet(GetUIFont(), fs);
    DashCanvas.TextOut(x, y, label, ColorToARGB(labelColor));
    // ค่า (value) ใช้ bold เสมอ - ตัวบางที่ anti-alias บนพื้นเข้มดูจางง่าย ทำให้ตัวเลขที่สำคัญอ่านชัดกว่า label
-   DashCanvas.FontSet("Arial", fs, FW_BOLD);
+   DashCanvas.FontSet(GetUIFont(), fs, FW_BOLD);
    int vw = EstimateTextWidth(value, fs);
    DashCanvas.TextOut(x + w - vw, y, value, ColorToARGB(valueColor));
 }
@@ -1834,7 +1834,7 @@ void DrawCardBG(int x, int y, int w, int h, string title)
 {
    DashCanvas.FillRectangle(x, y, x + w, y + h, ColorToARGB(C'20,20,34'));
    DashCanvas.Rectangle(x, y, x + w, y + h, ColorToARGB(C'45,45,65'));
-   DashCanvas.FontSet("Arial", SF(17), FW_BOLD);
+   DashCanvas.FontSet(GetUIFont(), SF(17), FW_BOLD);
    DashCanvas.TextOut(x + S(12), y + S(10), title, ColorToARGB(C'160,160,190'));
 }
 
@@ -1879,7 +1879,7 @@ void DrawEquityCurveChart(int x, int y, int w, int h)
 
    if(EquityHistoryCount < 2)
    {
-      DashCanvas.FontSet("Arial", SF(14));
+      DashCanvas.FontSet(GetUIFont(), SF(14));
       DashCanvas.TextOut(x + S(10), y + h / 2 - S(7), GetUIString("กำลังเก็บข้อมูล...", "Collecting data..."), ColorToARGB(C'100,100,120'));
       return;
    }
@@ -1912,17 +1912,17 @@ void DrawFeatureIcon(int x, int cellW, int y, string emoji, string labelTh, stri
    color bgColor = isOn ? C'34,197,94' : C'50,50,65';
    DashCanvas.FillCircle(cx, circleCY, circleR, ColorToARGB(bgColor));
 
-   DashCanvas.FontSet("Arial", SF(24));
+   DashCanvas.FontSet(GetUIFont(), SF(24));
    int ew = EstimateTextWidth(emoji, SF(24));
    DashCanvas.TextOut(cx - ew / 2, circleCY - S(12), emoji, ColorToARGB(clrWhite));
 
-   DashCanvas.FontSet("Arial", SF(14));
+   DashCanvas.FontSet(GetUIFont(), SF(14));
    string label = GetUIString(labelTh, labelEn);
    int lw = EstimateTextWidth(label, SF(14));
    DashCanvas.TextOut(cx - lw / 2, y + S(66), label, ColorToARGB(C'200,200,215'));
 
    string statusTxt = isOn ? GetUIString("เปิด", "ON") : GetUIString("ปิด", "OFF");
-   DashCanvas.FontSet("Arial", SF(14), FW_BOLD);
+   DashCanvas.FontSet(GetUIFont(), SF(14), FW_BOLD);
    int sw = EstimateTextWidth(statusTxt, SF(14));
    DashCanvas.TextOut(cx - sw / 2, y + S(86), statusTxt, ColorToARGB(isOn ? C'34,197,94' : C'120,120,135'));
 }
@@ -1989,18 +1989,18 @@ int EstimateNumericTextWidth(string text, int fontSize)
 //+------------------------------------------------------------------+
 int DrawHeader(int y)
 {
-   DashCanvas.FontSet("Arial", SF(34), FW_BOLD);
+   DashCanvas.FontSet(GetUIFont(), SF(34), FW_BOLD);
    DashCanvas.TextOut(S(14), y, "QUANTIX PRO", ColorToARGB(clrWhite));
    DashCanvas.TextOut(S(14), y + S(31), "TERMINAL", ColorToARGB(C'168,85,247'));
 
-   DashCanvas.FontSet("Arial", SF(15));
+   DashCanvas.FontSet(GetUIFont(), SF(15));
    DashCanvas.TextOut(S(14), y + S(66), GetUIString("แดชบอร์ดวิเคราะห์แบบเรียลไทม์", "MULTI-ANALYTICS DASHBOARD"), ColorToARGB(C'150,120,200'));
 
    int badgeW = S(145), badgeH = S(30);
    int bx = DASH_W - S(14) - badgeW;
    DashCanvas.FillRectangle(bx, y, bx + badgeW, y + badgeH, ColorToARGB(C'30,30,48'));
    DashCanvas.Rectangle(bx, y, bx + badgeW, y + badgeH, ColorToARGB(C'80,80,110'));
-   DashCanvas.FontSet("Arial", SF(15), FW_BOLD);
+   DashCanvas.FontSet(GetUIFont(), SF(15), FW_BOLD);
    DashCanvas.TextOut(bx + S(12), y + S(6), GetUIString("เรียลไทม์", "UI REAL-TIME"), ColorToARGB(clrWhite));
 
    return y + S(90);
@@ -2009,7 +2009,7 @@ int DrawHeader(int y)
 int DrawInfoBar(int y)
 {
    DashCanvas.FillRectangle(S(14), y, DASH_W - S(14), y + S(36), ColorToARGB(C'16,16,28'));
-   DashCanvas.FontSet("Arial", SF(14), FW_BOLD);
+   DashCanvas.FontSet(GetUIFont(), SF(14), FW_BOLD);
    string txt = StringFormat("%s: %s   |   TIMEFRAME: %s   |   BROKER: %s",
                               GetUIString("สัญลักษณ์", "SYMBOL"), _Symbol, GetTimeframeString(),
                               AccountInfoString(ACCOUNT_COMPANY));
@@ -2019,7 +2019,7 @@ int DrawInfoBar(int y)
 
 int DrawServerTimeRow(int y, int openPos, int pendingOrders)
 {
-   DashCanvas.FontSet("Arial", SF(15), FW_BOLD);
+   DashCanvas.FontSet(GetUIFont(), SF(15), FW_BOLD);
    string timeTxt = StringFormat("%s: %s", GetUIString("เวลาเซิร์ฟเวอร์", "SERVER TIME"), TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS));
    DashCanvas.TextOut(S(14), y, timeTxt, ColorToARGB(C'150,150,170'));
 
@@ -2083,7 +2083,7 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    DrawArcGauge(gcx, gcy, S(48), S(11), dailyPct);
    string pctTxt = StringFormat("%+.1f%%", dailyPct * 100.0);
    int pctFs = SF(23);
-   DashCanvas.FontSet("Arial", pctFs, FW_BOLD);
+   DashCanvas.FontSet(GetUIFont(), pctFs, FW_BOLD);
    int pw = EstimateNumericTextWidth(pctTxt, pctFs);
    DashCanvas.TextOut(gcx - pw / 2, gcy - (int)(pctFs * 0.42), pctTxt, ColorToARGB(dailyProfit >= 0 ? C'34,197,94' : C'239,68,68'));
    int py2 = y + S(44) + S(128);
@@ -2158,7 +2158,7 @@ int DrawEquityFeatureRow(int y)
    int chartY = y + S(44);
    int chartH = rowH - S(44) - S(32);
    DrawEquityCurveChart(S(14) + S(10), chartY, eqW - S(20), chartH);
-   DashCanvas.FontSet("Arial", SF(14), FW_BOLD);
+   DashCanvas.FontSet(GetUIFont(), SF(14), FW_BOLD);
    string ddTxt = GetUIString("ย่อตัวสูงสุด: ", "MAX DRAWDOWN: ") + DoubleToString(MaxDrawdownPercent, 2) + "%";
    int tw = EstimateTextWidth(ddTxt, SF(14));
    DashCanvas.TextOut(S(14) + eqW - S(14) - tw, y + rowH - S(27), ddTxt, ColorToARGB(C'239,68,68'));
@@ -2218,11 +2218,11 @@ int DrawStatsRow(int y)
    for(int i = 0; i < 6; i++)
    {
       int cx = S(14) + colW * i + colW / 2;
-      DashCanvas.FontSet("Arial", SF(20), FW_BOLD);
+      DashCanvas.FontSet(GetUIFont(), SF(20), FW_BOLD);
       int vw = EstimateTextWidth(values[i], SF(20));
       DashCanvas.TextOut(cx - vw / 2, y + S(15), values[i], ColorToARGB(valColors[i]));
 
-      DashCanvas.FontSet("Arial", SF(14));
+      DashCanvas.FontSet(GetUIFont(), SF(14));
       int lw = EstimateTextWidth(labels[i], SF(14));
       DashCanvas.TextOut(cx - lw / 2, y + S(47), labels[i], ColorToARGB(C'140,140,160'));
    }
@@ -2245,14 +2245,14 @@ int DrawNewsCard(int y)
       MqlDateTime dt;
       TimeToStruct(EventLogTimeVal[i], dt);
       string line = StringFormat("%02d:%02d  %s", dt.hour, dt.min, EventLogText[i]);
-      DashCanvas.FontSet("Arial", SF(15), FW_BOLD);
+      DashCanvas.FontSet(GetUIFont(), SF(15), FW_BOLD);
       DashCanvas.TextOut(S(14) + S(14), ry, "✓", ColorToARGB(C'34,197,94'));
       DashCanvas.TextOut(S(14) + S(34), ry, line, ColorToARGB(C'190,190,205'));
       ry += S(23);
    }
    if(!any)
    {
-      DashCanvas.FontSet("Arial", SF(15));
+      DashCanvas.FontSet(GetUIFont(), SF(15));
       DashCanvas.TextOut(S(14) + S(14), ry, GetUIString("ยังไม่มีเหตุการณ์", "No events yet"), ColorToARGB(C'110,110,130'));
    }
 
