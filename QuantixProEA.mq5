@@ -1855,11 +1855,14 @@ string GetUIString(string thText, string enText)
 
 string GetUIFont()
 {
-   return (Language == LNG_TH) ? "Tahoma" : "Trebuchet MS";
+   // Trebuchet MS แทบไม่มีน้ำหนักตัวหนาแยกจริงในหลายเครื่อง/VPS ทำให้ FW_BOLD ได้แค่ fake-bold
+   // อ่อนๆ เกือบไม่ต่างจากปกติ - Arial มี Bold face จริงแยกต่างหาก (arialbd) ติดตั้งมากับ Windows
+   // แทบทุกเครื่องเสมอ ทำให้ FW_BOLD เห็นผลชัดกว่ามาก
+   return (Language == LNG_TH) ? "Tahoma" : "Arial";
 }
 
-// ตัวห่อ DashCanvas.FontSet() รวมศูนย์: โหมดภาษาอังกฤษให้ตัวหนาทั้ง UI เสมอ (ฟอนต์ Trebuchet MS
-// แบบปกติบางเกินไป อ่านยาก) ส่วนภาษาไทยยังคงพฤติกรรมเดิม (bold เฉพาะจุดที่ระบุไว้)
+// ตัวห่อ DashCanvas.FontSet() รวมศูนย์: โหมดภาษาอังกฤษให้ตัวหนาทั้ง UI เสมอ (ฟอนต์ปกติบางเกินไป
+// อ่านยาก) ส่วนภาษาไทยยังคงพฤติกรรมเดิม (bold เฉพาะจุดที่ระบุไว้)
 void UIFontSet(int fontSize, uint style = FW_NORMAL)
 {
    if(Language != LNG_TH) style = FW_BOLD;
