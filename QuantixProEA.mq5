@@ -2264,7 +2264,8 @@ double ComputeUIScale()
    double scaleH = (chartH - 40.0) / (double)DASH_H_BASE;
    double scaleW = (chartW - 60.0) / (double)DASH_W_BASE; // แนวนอนกว้างขึ้น ต้องเช็คความกว้างชาร์ตด้วย ไม่งั้นล้นด้านข้าง
    double scale  = MathMin(scaleH, scaleW);
-   if(scale > 1.0) scale = 1.0;   // ไม่ขยายเกินความละเอียดที่ออกแบบไว้ กันภาพเบลอ
+   // วาดใหม่ทุกครั้งที่ resolution เปลี่ยน (ไม่ใช่ stretch บิตแมปเดิม) ขยายเกิน 1.0 ได้โดยไม่เบลอ
+   if(scale > 1.8) scale = 1.8;   // กันขยายจนใหญ่เกินจอ
    if(scale < 0.4) scale = 0.4;   // กันหดจนเล็กเกินไป (SF() มีพื้นฟอนต์กันไว้อีกชั้น)
    return scale;
 }
