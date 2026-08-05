@@ -2253,7 +2253,10 @@ int    DASH_W_BASE   = 1360;
 int    DASH_H_BASE   = 1050;
 
 int S(double v)  { return (int)MathRound(v * UIScale); }
-int SF(double v) { int f = (int)MathRound(v * UIScale); return (f < 13) ? 13 : f; } // พื้นฟอนต์ 13px กันอ่านไม่ออกแม้ scale ลงต่ำสุด
+// พื้นฟอนต์ต่ำมาก (8px) แค่กันกรณีสุดขั้ว - ถ้าตั้งพื้นสูงกว่านี้ ฟอนต์จะไม่ย่อตามการ์ดที่หดลงจริง
+// ทำให้ label/value ยาวเกินกรอบการ์ดจนทับกัน (ตามที่เจอในหน้าจอแคบ) การ์ดถูกออกแบบให้พอดีกับฟอนต์ที่ scale
+// ตามสัดส่วนเดียวกันเป๊ะ ไม่ใช่ฟอนต์คงที่ขณะการ์ดหด
+int SF(double v) { int f = (int)MathRound(v * UIScale); return (f < 8) ? 8 : f; }
 
 double ComputeUIScale()
 {
