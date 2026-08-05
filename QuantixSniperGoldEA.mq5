@@ -87,6 +87,7 @@ input int    RecoveryCooldownTrades = 3;       // Trades before Auto-Restore (if
 
 input group "===== 9. Dashboard ====="
 input bool   ShowDashboard          = true;
+input bool   ShowDashboardInTester  = false;   // Show Dashboard during Strategy Tester (ปิดค่าเริ่มต้นเพื่อความเร็วตอน Backtest)
 input int    Dashboard_X            = 15;
 input int    Dashboard_Y            = 20;
 input color  Dashboard_BG           = C'20,20,20';
@@ -145,7 +146,7 @@ int OnInit()
    dayStartEquity = equityPeak;
    currentDay     = DayStart(TimeCurrent());
 
-   if(ShowDashboard) CreateDashboard();
+   if(EffectiveShowDashboard()) CreateDashboard();
 
    return INIT_SUCCEEDED;
 }
@@ -168,7 +169,7 @@ void OnTick()
    CheckDrawdownGuards();
    ManageOpenPosition();
 
-   if(ShowDashboard) UpdateDashboard();
+   if(EffectiveShowDashboard()) UpdateDashboard();
 
    if(!IsNewBar()) return;
    if(tradingHalted) return;
@@ -232,6 +233,13 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
 }
 
 //=========================== HELPERS ================================//
+bool EffectiveShowDashboard()
+{
+   if(!ShowDashboard) return false;
+   if(MQLInfoInteger(MQL_TESTER) && !ShowDashboardInTester) return false;
+   return true;
+}
+
 datetime DayStart(datetime t)
 {
    MqlDateTime tm;
