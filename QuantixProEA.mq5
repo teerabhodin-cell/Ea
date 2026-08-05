@@ -1378,18 +1378,18 @@ void CheckAndExecuteVirtualGrid()
    bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true);
    bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false);
 
-   // Level Unlock: once EITHER side has filled every configured TotalLevels
-   // (that side has no more room, and the basket still isn't profitable),
-   // optionally allow opening further levels past the cap on that side. This
-   // does NOT need its own profit check - ExecuteGridLogic() is already gated
-   // by (MaxBasketProfit < TargetProfit) in OnTick(), so grid execution (and
+   // Level Unlock: once BOTH sides have filled every configured TotalLevels
+   // (neither side has any more room, and the basket still isn't profitable),
+   // optionally allow opening further levels past the cap. This does NOT need
+   // its own profit check - ExecuteGridLogic() is already gated by
+   // (MaxBasketProfit < TargetProfit) in OnTick(), so grid execution (and
    // this unlock) automatically stops the moment the basket reaches
    // TargetProfit.
-   bool eitherSideMaxed = (buyCount >= TotalLevels || sellCount >= TotalLevels);
+   bool bothSidesMaxed = (buyCount >= TotalLevels && sellCount >= TotalLevels);
    bool buyLevelAvailable  = (buyCount  < TotalLevels) ||
-      (UseLevelUnlock && eitherSideMaxed && (MaxUnlockedLevels <= 0 || buyCount  < TotalLevels + MaxUnlockedLevels));
+      (UseLevelUnlock && bothSidesMaxed && (MaxUnlockedLevels <= 0 || buyCount  < TotalLevels + MaxUnlockedLevels));
    bool sellLevelAvailable = (sellCount < TotalLevels) ||
-      (UseLevelUnlock && eitherSideMaxed && (MaxUnlockedLevels <= 0 || sellCount < TotalLevels + MaxUnlockedLevels));
+      (UseLevelUnlock && bothSidesMaxed && (MaxUnlockedLevels <= 0 || sellCount < TotalLevels + MaxUnlockedLevels));
 
    if(buyLevelAvailable  && !canBuyFilters)  LogFilterBlockReason(true);
    if(sellLevelAvailable && !canSellFilters) LogFilterBlockReason(false);
