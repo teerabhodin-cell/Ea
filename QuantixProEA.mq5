@@ -2003,14 +2003,21 @@ double GetNextGridTargetPrice(bool isBuy)
    int buyStepDistance  = UseAdaptiveATRGrid ? ((BuyGridDistance  > 0) ? BuyGridDistance  : GetDynamicGridDistance()) : stepDistance;
    int sellStepDistance = UseAdaptiveATRGrid ? ((SellGridDistance > 0) ? SellGridDistance : GetDynamicGridDistance()) : stepDistance;
 
+   // Fixed Distance (ไม่ได้เปิด ATR Distance หรือ Per-Side ATR Distance): ฐานคงที่ตายตัวที่
+   // ระดับ 1 เสมอ ไม่เลื่อนตามไม้ที่ fill เพิ่ม - ต่างจากโหมด ATR ที่ระยะเปลี่ยนแปลงตามตลาดสด
+   // เลยให้เป้าเลื่อนตามไม้ล่าสุดจริงเพื่อสะท้อนระยะปัจจุบัน
+   bool dynamicTarget = UseATRDistance || UseAdaptiveATRGrid;
+
    if(isBuy)
    {
+      if(!dynamicTarget) return NormalizeDouble(GridBasePriceBuy + (buyStepDistance * point), _Digits);
       double effectiveLastBuy = MathMax(lastBuyPrice, BuyGapAnchor);
       if(buyCount == 0) return NormalizeDouble(GridBasePriceBuy + (buyStepDistance * point), _Digits);
       return NormalizeDouble(effectiveLastBuy + (buyStepDistance * point), _Digits);
    }
    else
    {
+      if(!dynamicTarget) return NormalizeDouble(GridBasePriceSell - (sellStepDistance * point), _Digits);
       double effectiveLastSell = (SellGapAnchor > 0 && SellGapAnchor < lastSellPrice) ? SellGapAnchor : lastSellPrice;
       if(sellCount == 0) return NormalizeDouble(GridBasePriceSell - (sellStepDistance * point), _Digits);
       return NormalizeDouble(effectiveLastSell - (sellStepDistance * point), _Digits);
