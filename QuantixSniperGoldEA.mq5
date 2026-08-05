@@ -54,6 +54,13 @@ input double ATR_MinPoints          = 250;     // Min ATR, pts (กันตล�
 input double ATR_MaxPoints          = 3000;    // Max ATR, pts (กันช่วงข่าวแรง)
 input int    MaxSpreadPoints        = 250;     // Max Allowed Spread, pts
 
+input group "===== 5b. Regime Filter (Trend vs Range) ====="
+input bool   UseRegimeFilter        = true;    // Require Trending Market via ADX (กันเทรดตอนตลาด Sideway)
+input ENUM_TIMEFRAMES RegimeTimeframe = PERIOD_H1; // Regime Timeframe (ภาพรวมตลาด)
+input int    ADX_Period             = 14;      // ADX Period
+input double ADX_MinTrendStrength   = 22.0;    // Min ADX to Allow Entries (ต่ำกว่านี้ถือว่า Sideway)
+input bool   RequireADXDirectionAgreement = true; // Require +DI/-DI to Match Structure Bias
+
 input group "===== 6. Risk & Money Management ====="
 input double RiskPercent            = 0.5;     // Risk % of Equity per Trade
 input double RR_Ratio               = 2.5;     // Take Profit = SL Distance x RR
@@ -99,6 +106,7 @@ input color  Dashboard_Yellow       = clrGold;
 
 //=========================== GLOBALS ================================//
 int      hATR     = INVALID_HANDLE;
+int      hADX     = INVALID_HANDLE;
 
 datetime lastBarTime   = 0;
 datetime currentDay    = 0;
@@ -152,8 +160,9 @@ int OnInit()
    trade.SetTypeFillingBySymbol(_Symbol);
 
    hATR = iATR(_Symbol, PERIOD_CURRENT, ATR_Period);
+   hADX = iADX(_Symbol, RegimeTimeframe, ADX_Period);
 
-   if(hATR==INVALID_HANDLE)
+   if(hATR==INVALID_HANDLE || hADX==INVALID_HANDLE)
    {
       Print("QuantixSniperGoldEA: indicator handle creation failed");
       return INIT_FAILED;
@@ -172,6 +181,7 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    if(hATR!=INVALID_HANDLE) IndicatorRelease(hATR);
+   if(hADX!=INVALID_HANDLE) IndicatorRelease(hADX);
    ObjectsDeleteAll(0, DashPrefix);
 }
 
@@ -317,6 +327,29 @@ bool PassVolatilityFilter()
    if(CopyBuffer(hATR, 0, 1, 1, atr) < 1) return false;
    double atrPts = atr[0] / _Point;
    return (atrPts >= ATR_MinPoints && atrPts <= ATR_MaxPoints);
+}
+
+// Blocks entries when the higher-timeframe market isn't actually trending
+// (low ADX = range/chop), and optionally requires +DI/-DI to agree with the
+// SMC structure bias so we're not fighting the broader directional flow.
+bool PassRegimeFilter(int bias)
+{
+   if(!UseRegimeFilter) return true;
+
+   double adxMain[];
+   if(CopyBuffer(hADX, 0, 1, 1, adxMain) < 1) return false;
+   if(adxMain[0] < ADX_MinTrendStrength) return false;
+
+   if(RequireADXDirectionAgreement)
+   {
+      double plusDI[], minusDI[];
+      if(CopyBuffer(hADX, 1, 1, 1, plusDI) < 1) return false;
+      if(CopyBuffer(hADX, 2, 1, 1, minusDI) < 1) return false;
+      if(bias==1  && plusDI[0] <= minusDI[0]) return false;
+      if(bias==-1 && minusDI[0] <= plusDI[0]) return false;
+   }
+
+   return true;
 }
 
 bool PositionSelectForMagic()
@@ -580,6 +613,7 @@ void CheckZoneRetestAndEnter()
    if(PositionSelectForMagic()) return;
    if(!PassSpreadFilter()) return;
    if(!PassVolatilityFilter()) return;
+   if(!PassRegimeFilter(g_SetupBias)) return;
 
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
@@ -795,7 +829,7 @@ void CreateDashboard()
       ObjectSetInteger(0, bg, OBJPROP_XDISTANCE, Dashboard_X-10);
       ObjectSetInteger(0, bg, OBJPROP_YDISTANCE, Dashboard_Y-10);
       ObjectSetInteger(0, bg, OBJPROP_XSIZE, 340);
-      ObjectSetInteger(0, bg, OBJPROP_YSIZE, 280);
+      ObjectSetInteger(0, bg, OBJPROP_YSIZE, 300);
       ObjectSetInteger(0, bg, OBJPROP_BGCOLOR, Dashboard_BG);
       ObjectSetInteger(0, bg, OBJPROP_BORDER_TYPE, BORDER_FLAT);
       ObjectSetInteger(0, bg, OBJPROP_COLOR, clrDimGray);
@@ -846,6 +880,16 @@ void UpdateDashboard()
    color biasClr = g_StructureBias==1?Dashboard_Green:(g_StructureBias==-1?Dashboard_Red:Dashboard_Text);
    DashLabel("bias", StringFormat("%s: %s", (Language==LNG_TH?"โครงสร้าง":"Structure"), biasTxt),
              x, y, biasClr); y+=rh;
+
+   if(UseRegimeFilter)
+   {
+      double adxVal[];
+      double adxNow = (CopyBuffer(hADX, 0, 1, 1, adxVal) >= 1) ? adxVal[0] : 0;
+      bool trending = adxNow >= ADX_MinTrendStrength;
+      string regimeTxt = StringFormat("ADX(%s): %.1f %s", EnumToString(RegimeTimeframe), adxNow,
+                          trending ? (Language==LNG_TH?"(เทรนด์)":"(Trending)") : (Language==LNG_TH?"(Sideway)":"(Ranging)"));
+      DashLabel("regime", regimeTxt, x, y, trending?Dashboard_Green:Dashboard_Red); y+=rh;
+   }
 
    string setupTxt;
    color setupClr = Dashboard_Text;
