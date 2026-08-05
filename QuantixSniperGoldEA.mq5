@@ -67,8 +67,8 @@ input bool   UseBreakeven           = true;    // Move SL to Breakeven (คุ�
 input double BreakevenTriggerRR     = 1.0;     // Trigger at Profit = N x Risk (R-Multiple)
 input double BreakevenLockPoints    = 20;      // Lock Points Beyond Entry
 input bool   UseTrailingStop        = true;    // ATR Trailing Stop (เทรลตาม ATR)
-input double TrailingStartRR        = 1.5;     // Start Trailing at Profit = N x Risk
-input double TrailingATRMultiplier  = 1.2;     // Trailing Distance = ATR x Multiplier
+input double TrailingStartRR        = 2.0;     // Start Trailing at Profit = N x Risk
+input double TrailingATRMultiplier  = 2.5;     // Trailing Distance = ATR x Multiplier
 
 input group "===== 8. Drawdown Protection ====="
 input bool   UseDailyLossLimit      = true;    // Daily Loss Limit (จำกัดขาดทุนรายวัน)
