@@ -66,9 +66,11 @@ input group "===== 7. Trade Management ====="
 input bool   UseBreakeven           = true;    // Move SL to Breakeven (คุ้มทุน)
 input double BreakevenTriggerRR     = 1.0;     // Trigger at Profit = N x Risk (R-Multiple)
 input double BreakevenLockPoints    = 20;      // Lock Points Beyond Entry
-input bool   UseTrailingStop        = true;    // ATR Trailing Stop (เทรลตาม ATR)
+input bool   UseTrailingStop        = true;    // ATR Trailing Stop (เทรลตาม ATR, ใช้เมื่อ UseStructureTrailing=false)
 input double TrailingStartRR        = 2.0;     // Start Trailing at Profit = N x Risk
 input double TrailingATRMultiplier  = 2.5;     // Trailing Distance = ATR x Multiplier
+input bool   UseStructureTrailing   = false;   // Let Winners Run: Trail by Swing Structure Instead of Fixed TP (ปล่อยกำไรวิ่งตามโครงสร้าง)
+input bool   CloseOnOppositeCHoCH   = true;    // Close Immediately if Structure Reverses (ปิดทันทีถ้าโครงสร้างพลิกสวนทาง)
 
 input group "===== 8. Drawdown Protection ====="
 input bool   UseDailyLossLimit      = true;    // Daily Loss Limit (จำกัดขาดทุนรายวัน)
@@ -628,14 +630,14 @@ void OpenSMCTrade(int bias)
    if(bias==1)
    {
       sl  = NormalizeDouble(price - slDistance, _Digits);
-      tp  = NormalizeDouble(price + slDistance*RR_Ratio, _Digits);
+      tp  = UseStructureTrailing ? 0 : NormalizeDouble(price + slDistance*RR_Ratio, _Digits);
       cmt = (Language==LNG_TH) ? "SMC ซื้อ (CHoCH+OB)" : "SMC BUY (CHoCH+OB)";
       ok  = trade.Buy(lot, _Symbol, price, sl, tp, cmt);
    }
    else
    {
       sl  = NormalizeDouble(price + slDistance, _Digits);
-      tp  = NormalizeDouble(price - slDistance*RR_Ratio, _Digits);
+      tp  = UseStructureTrailing ? 0 : NormalizeDouble(price - slDistance*RR_Ratio, _Digits);
       cmt = (Language==LNG_TH) ? "SMC ขาย (CHoCH+OB)" : "SMC SELL (CHoCH+OB)";
       ok  = trade.Sell(lot, _Symbol, price, sl, tp, cmt);
    }
@@ -660,6 +662,12 @@ void ManageOpenPosition()
    double curTP     = PositionGetDouble(POSITION_TP);
    long   type      = PositionGetInteger(POSITION_TYPE);
 
+   if(UseStructureTrailing && CloseOnOppositeCHoCH)
+   {
+      if(type==POSITION_TYPE_BUY  && g_StructureBias==-1) { trade.PositionClose(_Symbol); return; }
+      if(type==POSITION_TYPE_SELL && g_StructureBias==1)  { trade.PositionClose(_Symbol); return; }
+   }
+
    double refDist = (g_EntrySLDistance>0) ? g_EntrySLDistance
                      : (curSL!=0 ? MathAbs(openPrice-curSL) : 0);
    if(refDist<=0) return;
@@ -680,7 +688,29 @@ void ManageOpenPosition()
       }
    }
 
-   if(UseTrailingStop && rr >= refDist*TrailingStartRR)
+   if(UseStructureTrailing)
+   {
+      // Let winners run: ratchet the SL to the latest confirmed swing instead
+      // of a fixed ATR distance, so the trade stays in as long as price keeps
+      // printing higher lows (BUY) / lower highs (SELL). Never loosens the SL.
+      long stopsLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+      double minGap = stopsLevel * _Point * 1.1;
+      double slBuf  = SL_BufferPoints * _Point;
+
+      if(type==POSITION_TYPE_BUY && g_HaveSwingLow)
+      {
+         double candidateSL = g_SwingLow[0] - slBuf;
+         if(candidateSL > curSL && (bid-candidateSL) > minGap)
+            trade.PositionModify(_Symbol, NormalizeDouble(candidateSL,_Digits), curTP);
+      }
+      else if(type==POSITION_TYPE_SELL && g_HaveSwingHigh)
+      {
+         double candidateSL = g_SwingHigh[0] + slBuf;
+         if((curSL==0 || candidateSL < curSL) && (candidateSL-ask) > minGap)
+            trade.PositionModify(_Symbol, NormalizeDouble(candidateSL,_Digits), curTP);
+      }
+   }
+   else if(UseTrailingStop && rr >= refDist*TrailingStartRR)
    {
       double atr[];
       if(CopyBuffer(hATR, 0, 0, 1, atr) >= 1)
