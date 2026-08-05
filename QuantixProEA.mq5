@@ -222,6 +222,12 @@ void RecalculateBasePrice();
 void ReconcileGridStateOnInit();
 ENUM_ORDER_TYPE_FILLING GetBestFillingMode();
 
+// State persistence (Global Variables ของเทอร์มินัล - อยู่ข้าม EA restart/ปิดเปิดเทอร์มินัล)
+string PersistKey(string key);
+void   PersistSet(string key, double value);
+double PersistGet(string key, double defaultValue);
+void   PersistAllStats();
+
 // UI Engine Functions
 void InitDashboard();
 void DeleteDashboard();
@@ -757,6 +763,48 @@ void CheckForceHedgeOnTime()
 }
 
 //+------------------------------------------------------------------+
+//| State persistence                                                 |
+//| ผู้ใช้รายงานว่าปิดเปิด EA แล้วสถิติ/กำไรวันนี้/พีคยอดเงินรีเป็น 0 ทุกครั้ง เพราะตัวแปรพวกนี้ |
+//| เป็นแค่ตัวแปรในหน่วยความจำของ EA เท่านั้น หายทันทีที่ EA ถูกถอด/รีสตาร์ท ใช้ Global      |
+//| Variable ของเทอร์มินัล (คนละอย่างกับตัวแปร global ของ EA เอง) เก็บแทน เพราะอยู่ข้าม        |
+//| EA restart ได้จริงจนกว่าจะลบเองหรือไม่ได้แตะ 4 สัปดาห์ - ข้ามตอน backtest/optimize เสมอ    |
+//| เพราะแต่ละรอบทดสอบควรเริ่มนับใหม่จากศูนย์ ไม่งั้นรอบทดสอบถัดไปจะเห็นสถิติรอบก่อนติดมาด้วย |
+//+------------------------------------------------------------------+
+string PersistKey(string key)
+{
+   return "QPEA_" + IntegerToString(MagicNumber) + "_" + _Symbol + "_" + key;
+}
+
+void PersistSet(string key, double value)
+{
+   if(IsTestingMode) return;
+   GlobalVariableSet(PersistKey(key), value);
+}
+
+double PersistGet(string key, double defaultValue)
+{
+   if(IsTestingMode) return defaultValue;
+   if(GlobalVariableCheck(PersistKey(key)))
+      return GlobalVariableGet(PersistKey(key));
+   return defaultValue;
+}
+
+void PersistAllStats()
+{
+   PersistSet("DayStartDay",         DayStartDay);
+   PersistSet("DailyRealizedProfit", DailyRealizedProfit);
+   PersistSet("StatsTotalBaskets",   StatsTotalBaskets);
+   PersistSet("StatsWinCount",       StatsWinCount);
+   PersistSet("StatsLossCount",      StatsLossCount);
+   PersistSet("StatsSumWinProfit",   StatsSumWinProfit);
+   PersistSet("StatsSumLossAmount",  StatsSumLossAmount);
+   PersistSet("PeakBalanceForDD",          PeakBalanceForDD);
+   PersistSet("MaxDrawdownPercent",        MaxDrawdownPercent);
+   PersistSet("MaxDrawdownUSD",            MaxDrawdownUSD);
+   PersistSet("AccountPeakBalanceAllTime", AccountPeakBalanceAllTime);
+}
+
+//+------------------------------------------------------------------+
 //| Expert initialization                                            |
 //+------------------------------------------------------------------+
 int OnInit()
@@ -783,15 +831,21 @@ int OnInit()
    ForceHedgeArmed      = false;
    BasketNegativeSinceTime = 0;
    LastForceHedgeTimeFire  = 0;
-   StatsTotalBaskets    = 0;
-   StatsWinCount        = 0;
-   StatsLossCount       = 0;
-   StatsSumWinProfit    = 0.0;
-   StatsSumLossAmount   = 0.0;
-   PeakBalanceForDD   = AccountInfoDouble(ACCOUNT_BALANCE);
-   MaxDrawdownPercent = 0.0;
-   MaxDrawdownUSD     = 0.0;
-   AccountPeakBalanceAllTime = AccountInfoDouble(ACCOUNT_BALANCE);
+   // กู้สถิติ/พีคที่เคยเซฟไว้กลับมา (เดโม/ไลฟ์เท่านั้น - PersistGet คืนค่า default ตรงๆ ตอน
+   // backtest) แทนที่จะรีเป็น 0/ยอดเงินปัจจุบันทุกครั้งที่ปิดเปิด EA เหมือนเดิม ถ้าไม่เคยเซฟไว้
+   // เลย (รันครั้งแรกจริงๆ) PersistGet จะคืนค่า default เดิมที่เคยใช้อยู่แล้วทุกตัว
+   double currentBalanceNow = AccountInfoDouble(ACCOUNT_BALANCE);
+   DayStartDay          = (int)PersistGet("DayStartDay", -1);
+   DailyRealizedProfit  = PersistGet("DailyRealizedProfit", 0.0);
+   StatsTotalBaskets    = (int)PersistGet("StatsTotalBaskets", 0);
+   StatsWinCount        = (int)PersistGet("StatsWinCount", 0);
+   StatsLossCount       = (int)PersistGet("StatsLossCount", 0);
+   StatsSumWinProfit    = PersistGet("StatsSumWinProfit", 0.0);
+   StatsSumLossAmount   = PersistGet("StatsSumLossAmount", 0.0);
+   PeakBalanceForDD   = PersistGet("PeakBalanceForDD", currentBalanceNow);
+   MaxDrawdownPercent = PersistGet("MaxDrawdownPercent", 0.0);
+   MaxDrawdownUSD     = PersistGet("MaxDrawdownUSD", 0.0);
+   AccountPeakBalanceAllTime = PersistGet("AccountPeakBalanceAllTime", currentBalanceNow);
    TradingHalted             = false;
 
    DeleteVisualTSLine();
@@ -844,6 +898,7 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+   PersistAllStats(); // เซฟรอบสุดท้ายตอนถอด/รีสตาร์ท EA กันพลาดช่วงระหว่างรอบ periodic save
    if(atrHandle != INVALID_HANDLE) IndicatorRelease(atrHandle);
    if(emaHandle != INVALID_HANDLE) IndicatorRelease(emaHandle);
    if(mtfEmaHandle != INVALID_HANDLE) IndicatorRelease(mtfEmaHandle);
@@ -1721,6 +1776,8 @@ void ClearEverythingAsync()
          StatsLossCount++;
          StatsSumLossAmount += MathAbs(statsSnapshotProfit);
       }
+
+      PersistAllStats(); // เซฟทันทีตอนบาสเก็ตปิดจริง ไม่ต้องรอรอบเซฟ periodic ใน UpdateDashboard
    }
 
    GridCreated           = false;
@@ -2442,6 +2499,11 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
    }
    // การ์ด Today อัปเดตเฉพาะตอนบาสเก็ตปิดจริง (ดู ClearEverythingAsync) ไม่ใช่ floating P/L เรียลไทม์
    double dailyProfit = DailyRealizedProfit;
+
+   // เซฟ PeakBalanceForDD/MaxDrawdown/AccountPeakBalanceAllTime เป็นระยะ (UpdateDashboard ถูก
+   // throttle ไว้ที่ทุก 500ms อยู่แล้ว) เพราะค่าพวกนี้อัปเดตทุกทิคใน UpdateDrawdownTracker() ไม่ได้
+   // ผูกกับ event ปิดบาสเก็ตเหมือน Stats* ด้านบน เลยต้องมีจุดเซฟ periodic แยกต่างหาก
+   PersistAllStats();
 
    DashCanvas.Erase(ColorToARGB(C'8,8,16'));
 
