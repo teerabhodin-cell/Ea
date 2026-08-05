@@ -177,8 +177,8 @@ datetime LastEquitySampleTime  = 0;
 string   EventLogText[EVENT_LOG_MAX];
 datetime EventLogTimeVal[EVENT_LOG_MAX];
 
-double   DayStartBalance = 0.0;
-int      DayStartDay     = -1; // dt.day_of_year ของวันที่บันทึก DayStartBalance ไว้ล่าสุด
+int      DayStartDay          = -1; // dt.day_of_year ของวันที่รีเซ็ต DailyRealizedProfit ไว้ล่าสุด
+double   DailyRealizedProfit  = 0.0; // กำไรวันนี้แบบ "ปิดรอบแล้ว" เท่านั้น - บวกเพิ่มตอนบาสเก็ตปิดจริง ไม่ใช่ floating P/L สด
 
 // Handle สำหรับอินดิเคเตอร์ ATR / EMA / Multi-Timeframe EMA
 int      atrHandle       = INVALID_HANDLE;
@@ -1691,6 +1691,17 @@ void ClearEverythingAsync()
    // (กันนับซ้ำตอนกดปุ่ม Close All ทั้งที่พอร์ตว่างอยู่แล้ว)
    if(statsPosCount > 0)
    {
+      // กำไรวันนี้ (การ์ด Today) นับเฉพาะตอนบาสเก็ตปิดจริงเท่านั้น ไม่ใช่ floating P/L เรียลไทม์ -
+      // เช็ค day rollover ตรงนี้ด้วยเพราะ dashboard (ที่เช็คปกติ) ไม่ทำงานตอน backtest
+      MqlDateTime statsDt;
+      TimeToStruct(TimeCurrent(), statsDt);
+      if(statsDt.day_of_year != DayStartDay)
+      {
+         DayStartDay          = statsDt.day_of_year;
+         DailyRealizedProfit  = 0.0;
+      }
+      DailyRealizedProfit += statsSnapshotProfit;
+
       StatsTotalBaskets++;
       if(statsSnapshotProfit > 0)
       {
@@ -2352,10 +2363,11 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
    TimeToStruct(TimeCurrent(), nowDt);
    if(nowDt.day_of_year != DayStartDay)
    {
-      DayStartDay     = nowDt.day_of_year;
-      DayStartBalance = balance;
+      DayStartDay          = nowDt.day_of_year;
+      DailyRealizedProfit  = 0.0; // ขึ้นวันใหม่ - ล้างยอดกำไรวันนี้ แม้จะยังไม่มีบาสเก็ตปิดเลยก็ตาม
    }
-   double dailyProfit = equity - DayStartBalance;
+   // การ์ด Today อัปเดตเฉพาะตอนบาสเก็ตปิดจริง (ดู ClearEverythingAsync) ไม่ใช่ floating P/L เรียลไทม์
+   double dailyProfit = DailyRealizedProfit;
 
    DashCanvas.Erase(ColorToARGB(C'8,8,16'));
 
