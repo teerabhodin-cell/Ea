@@ -216,6 +216,7 @@ void UpdateDrawdownTracker();
 
 int GetDynamicGridDistance();
 void RecalculateBasePrice();
+void ReconcileGridStateOnInit();
 ENUM_ORDER_TYPE_FILLING GetBestFillingMode();
 
 // UI Engine Functions
@@ -257,6 +258,78 @@ void RecalculateBasePrice()
    BuyGridDistance    = CachedGridDistance;
    SellGridDistance   = CachedGridDistance;
    GridCreated = true;
+}
+
+//+------------------------------------------------------------------+
+//| Called once from OnInit() instead of blindly calling              |
+//| RecalculateBasePrice(). If the EA restarts/recompiles while a     |
+//| basket is still open (very common - changing an input forces MT5  |
+//| to re-run OnInit but real positions stay open), the old code reset|
+//| GridBasePriceBuy/Sell straight to the CURRENT market price no     |
+//| matter what, ignoring any position that already exists. For the   |
+//| side that's still empty (count==0), that produces a target        |
+//| completely disconnected from where the other side's most recent   |
+//| fill actually was - e.g. Sell fills, EA restarts before Buy ever   |
+//| opens, Buy's anchor resets to "whatever price is right now"       |
+//| instead of staying pinned above the Sell fill like it would if    |
+//| the EA had kept running - so Buy can end up opening BELOW where   |
+//| Sell just filled, which looks like nonsense from the trade list.  |
+//| Reconstructing the anchor from the actual last fill on the        |
+//| opposite side reproduces the same pin the live "keep the          |
+//| still-empty side's target pinned" logic already does everywhere   |
+//| else, so a restart mid-basket behaves the same as if it had never |
+//| restarted at all.                                                 |
+//+------------------------------------------------------------------+
+void ReconcileGridStateOnInit()
+{
+   int    buyCount = 0, sellCount = 0;
+   double lastBuyPrice = 0.0, lastSellPrice = 0.0;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+      {
+         buyCount++;
+         if(openPrice > lastBuyPrice || lastBuyPrice == 0.0) lastBuyPrice = openPrice;
+      }
+      else
+      {
+         sellCount++;
+         if(openPrice < lastSellPrice || lastSellPrice == 0.0) lastSellPrice = openPrice;
+      }
+   }
+
+   if(buyCount == 0 && sellCount == 0)
+   {
+      // ไม่มีไม้เก่าค้างเลย - พอร์ตว่างจริงๆ ใช้ RecalculateBasePrice() ปกติได้เลย
+      RecalculateBasePrice();
+      return;
+   }
+
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   GridBasePrice = NormalizeDouble((ask + bid) / 2.0, _Digits);
+
+   // ฝั่งที่มีไม้อยู่แล้ว (count>0) ไม่ได้ใช้ GridBasePriceBuy/Sell อีกต่อไปอยู่แล้ว
+   // (ExecuteGridLogic ใช้ราคาไม้จริงคำนวณแทน) แต่ฝั่งที่ยังว่าง (count==0) ยังต้องพึ่ง
+   // ค่านี้อยู่ - ผูกกับราคาไม้ล่าสุดของอีกฝั่งแทนที่จะรีเซ็ตไปที่ราคาตลาดปัจจุบันตรงๆ
+   GridBasePriceBuy  = (buyCount  > 0) ? lastBuyPrice  : ((sellCount > 0) ? lastSellPrice : GridBasePrice);
+   GridBasePriceSell = (sellCount > 0) ? lastSellPrice : ((buyCount  > 0) ? lastBuyPrice  : GridBasePrice);
+
+   BuyGapAnchor  = 0.0;
+   SellGapAnchor = 0.0;
+   CachedGridDistance = GetDynamicGridDistance();
+   BuyGridDistance    = CachedGridDistance;
+   SellGridDistance   = CachedGridDistance;
+   GridCreated = true;
+
+   PrintFormat("🔄 [RECONCILE] EA (re)started with existing positions (Buy:%d Sell:%d) - anchors reconstructed instead of reset (Buy anchor=%.5f, Sell anchor=%.5f).",
+               buyCount, sellCount, GridBasePriceBuy, GridBasePriceSell);
 }
 
 //+------------------------------------------------------------------+
@@ -769,7 +842,8 @@ int OnInit()
       }
    }
 
-   RecalculateBasePrice();
+   if(GridType == GRID_VIRTUAL) ReconcileGridStateOnInit();
+   else RecalculateBasePrice();
 
    if(GridType == GRID_VIRTUAL)
    {
