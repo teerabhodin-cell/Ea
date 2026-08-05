@@ -35,27 +35,28 @@ input int    NYStartHour            = 13;      // New York Start (GMT/UTC)
 input int    NYEndHour              = 22;      // New York End
 
 input group "===== 2. SMC/ICT - Market Structure ====="
-input int    SwingStrength          = 3;       // Swing Fractal Strength, bars each side (ความไวจุด Swing)
+input int    SwingStrength          = 5;       // Swing Fractal Strength, bars each side (ความไวจุด Swing)
+input double MinDisplacementATRMult = 0.6;     // Min Breakout Candle Body vs ATR (0=off) - กรอง BOS/CHoCH ปลอม
 
 input group "===== 3. SMC/ICT - Liquidity Sweep ====="
 input bool   RequireLiquiditySweep  = true;    // Require Stop Hunt Before CHoCH (ต้องมีการล่าสภาพคล่องก่อน)
-input int    SweepExpiryBars        = 15;      // Sweep Validity, bars (อายุของการล่าสภาพคล่อง)
+input int    SweepExpiryBars        = 10;      // Sweep Validity, bars (อายุของการล่าสภาพคล่อง)
 
 input group "===== 4. SMC/ICT - Order Block / FVG Zone ====="
-input int    OB_MaxLookbackBars     = 12;      // Max Bars Back to Find Order Block
-input int    SetupExpiryBars        = 20;      // Armed Zone Validity, bars (ก่อนสัญญาณหมดอายุ)
+input int    OB_MaxLookbackBars     = 8;       // Max Bars Back to Find Order Block
+input int    SetupExpiryBars        = 12;      // Armed Zone Validity, bars (ก่อนสัญญาณหมดอายุ)
 input double ZoneBufferPoints       = 0;       // Extra Buffer around Entry Zone, pts
 input double SL_BufferPoints        = 50;      // Extra Buffer beyond Invalidation, pts
 
 input group "===== 5. Filters ====="
 input int    ATR_Period             = 14;      // ATR Period
-input double ATR_MinPoints          = 150;     // Min ATR, pts (กันตลาดนิ่ง)
-input double ATR_MaxPoints          = 4000;    // Max ATR, pts (กันช่วงข่าวแรง)
-input int    MaxSpreadPoints        = 350;     // Max Allowed Spread, pts
+input double ATR_MinPoints          = 250;     // Min ATR, pts (กันตลาดนิ่ง)
+input double ATR_MaxPoints          = 3000;    // Max ATR, pts (กันช่วงข่าวแรง)
+input int    MaxSpreadPoints        = 250;     // Max Allowed Spread, pts
 
 input group "===== 6. Risk & Money Management ====="
 input double RiskPercent            = 0.5;     // Risk % of Equity per Trade
-input double RR_Ratio               = 2.0;     // Take Profit = SL Distance x RR
+input double RR_Ratio               = 2.5;     // Take Profit = SL Distance x RR
 input double MinLot                 = 0.01;    // Min Lot Cap
 input double MaxLot                 = 5.0;     // Max Lot Cap
 input int    Slippage               = 20;      // Max Slippage, pts
@@ -439,12 +440,24 @@ void UpdateStructureAndSweeps()
 
    if(!g_HaveSwingHigh || !g_HaveSwingLow) return;
 
+   double openBar1  = iOpen(_Symbol, PERIOD_CURRENT, 1);
    double closeBar1 = iClose(_Symbol, PERIOD_CURRENT, 1);
    double lowBar1   = iLow(_Symbol, PERIOD_CURRENT, 1);
    double highBar1  = iHigh(_Symbol, PERIOD_CURRENT, 1);
 
    double refLow  = g_SwingLow[0];
    double refHigh = g_SwingHigh[0];
+
+   // Only a strong, impulsive (displacement) candle is allowed to count as a
+   // genuine BOS/CHoCH - a close that merely creeps past the swing level by a
+   // hair is treated as noise, not a real structural break.
+   bool strongDisplacement = true;
+   if(MinDisplacementATRMult > 0)
+   {
+      double atrRef[];
+      if(CopyBuffer(hATR, 0, 1, 1, atrRef) < 1) strongDisplacement = false;
+      else strongDisplacement = (MathAbs(closeBar1-openBar1) >= atrRef[0]*MinDisplacementATRMult);
+   }
 
    if(lowBar1 < refLow && closeBar1 > refLow)
    {
@@ -459,8 +472,8 @@ void UpdateStructureAndSweeps()
       g_SweepHighBarsAgo = 0;
    }
 
-   bool brokeUp   = (closeBar1 > refHigh);
-   bool brokeDown = (closeBar1 < refLow);
+   bool brokeUp   = (closeBar1 > refHigh) && strongDisplacement;
+   bool brokeDown = (closeBar1 < refLow)  && strongDisplacement;
 
    if(brokeUp)
    {
