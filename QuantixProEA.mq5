@@ -157,9 +157,15 @@ string   BTN_CLOSE_ALL   = "QX_PRO_BtnCloseAll";
 string   CANVAS_NAME     = "QX_PRO_Canvas";
 
 // --- Canvas Dashboard (pixel-drawn: gauge, equity curve chart, icon grid) ---
+// DASH_W/DASH_H = native resolution the canvas is DRAWN at (all coordinates in
+// every Draw* function below are relative to this fixed size - never changes).
+// The DISPLAYED size on the chart is scaled separately via ApplyDashboardScale()
+// setting OBJPROP_XSIZE/YSIZE, which MT5 stretches the bitmap to fit - that's
+// what makes the panel shrink to fit shorter chart windows instead of overflowing.
 CCanvas  DashCanvas;
 int      DASH_W = 460;
 int      DASH_H = 1580;
+double   LastAppliedUIScale = 0.0; // กันเรียก ApplyDashboardScale ถี่เกินไปตอนขนาดใกล้เคียงเดิม
 
 #define EQUITY_HISTORY_MAX 120
 double   EquityHistoryBuf[EQUITY_HISTORY_MAX];
@@ -1809,7 +1815,7 @@ int EstimateTextWidth(string text, int fontSize)
    return (int)(StringLen(text) * fontSize * 0.58);
 }
 
-void DrawKV(int x, int y, int w, string label, string value, color labelColor, color valueColor, int fontSize = 11)
+void DrawKV(int x, int y, int w, string label, string value, color labelColor, color valueColor, int fontSize = 12)
 {
    DashCanvas.FontSet("Arial", fontSize);
    DashCanvas.TextOut(x, y, label, ColorToARGB(labelColor));
@@ -1821,7 +1827,7 @@ void DrawCardBG(int x, int y, int w, int h, string title)
 {
    DashCanvas.FillRectangle(x, y, x + w, y + h, ColorToARGB(C'20,20,34'));
    DashCanvas.Rectangle(x, y, x + w, y + h, ColorToARGB(C'45,45,65'));
-   DashCanvas.FontSet("Arial", 12, FW_BOLD);
+   DashCanvas.FontSet("Arial", 13, FW_BOLD);
    DashCanvas.TextOut(x + 14, y + 10, title, ColorToARGB(C'160,160,190'));
 }
 
@@ -1896,8 +1902,8 @@ void DrawFeatureIcon(int x, int cellW, int y, string emoji, string labelTh, stri
    color bgColor = isOn ? C'34,197,94' : C'50,50,65';
    DashCanvas.FillCircle(cx, y + 26, 24, ColorToARGB(bgColor));
 
-   DashCanvas.FontSet("Arial", 16);
-   int ew = EstimateTextWidth(emoji, 16);
+   DashCanvas.FontSet("Arial", 18);
+   int ew = EstimateTextWidth(emoji, 18);
    DashCanvas.TextOut(cx - ew / 2, y + 26 - 9, emoji, ColorToARGB(clrWhite));
 
    DashCanvas.FontSet("Arial", 9);
@@ -1949,7 +1955,7 @@ string GetTimeframeString()
 //+------------------------------------------------------------------+
 int DrawHeader(int y)
 {
-   DashCanvas.FontSet("Arial", 20, FW_BOLD);
+   DashCanvas.FontSet("Arial", 23, FW_BOLD);
    DashCanvas.TextOut(14, y, "QUANTIX PRO", ColorToARGB(clrWhite));
    DashCanvas.TextOut(14, y + 24, "TERMINAL", ColorToARGB(C'168,85,247'));
 
@@ -1960,7 +1966,7 @@ int DrawHeader(int y)
    int bx = DASH_W - 14 - badgeW;
    DashCanvas.FillRectangle(bx, y, bx + badgeW, y + badgeH, ColorToARGB(C'30,30,48'));
    DashCanvas.Rectangle(bx, y, bx + badgeW, y + badgeH, ColorToARGB(C'80,80,110'));
-   DashCanvas.FontSet("Arial", 9, FW_BOLD);
+   DashCanvas.FontSet("Arial", 10, FW_BOLD);
    DashCanvas.TextOut(bx + 10, y + 6, GetUIString("เรียลไทม์", "UI REAL-TIME"), ColorToARGB(clrWhite));
 
    return y + 76;
@@ -2023,8 +2029,8 @@ int DrawAccountPerformanceRow(int y, double balance, double equity, double daily
    double dailyPct = (DailyProfitGoal > 0) ? (dailyProfit / DailyProfitGoal) : 0.0;
    DrawArcGauge(gcx, gcy, 50, 10, dailyPct);
    string pctTxt = StringFormat("%+.1f%%", dailyPct * 100.0);
-   DashCanvas.FontSet("Arial", 15, FW_BOLD);
-   int pw = EstimateTextWidth(pctTxt, 15);
+   DashCanvas.FontSet("Arial", 17, FW_BOLD);
+   int pw = EstimateTextWidth(pctTxt, 17);
    DashCanvas.TextOut(gcx - pw / 2, gcy - 8, pctTxt, ColorToARGB(dailyProfit >= 0 ? C'34,197,94' : C'239,68,68'));
 
    int py2 = y + 36 + 118;
@@ -2187,12 +2193,12 @@ int DrawStatsRow(int y)
    for(int i = 0; i < 6; i++)
    {
       int cx = 14 + colW * i + colW / 2;
-      DashCanvas.FontSet("Arial", 13, FW_BOLD);
-      int vw = EstimateTextWidth(values[i], 13);
+      DashCanvas.FontSet("Arial", 14, FW_BOLD);
+      int vw = EstimateTextWidth(values[i], 14);
       DashCanvas.TextOut(cx - vw / 2, y + 14, values[i], ColorToARGB(valColors[i]));
 
-      DashCanvas.FontSet("Arial", 8);
-      int lw = EstimateTextWidth(labels[i], 8);
+      DashCanvas.FontSet("Arial", 9);
+      int lw = EstimateTextWidth(labels[i], 9);
       DashCanvas.TextOut(cx - lw / 2, y + 40, labels[i], ColorToARGB(C'140,140,160'));
    }
 
@@ -2229,6 +2235,48 @@ int DrawNewsCard(int y)
 }
 
 //+------------------------------------------------------------------+
+//| Responsive display scaling - shrinks the panel (never enlarges   |
+//| past native resolution, to avoid blur) so it fits inside the     |
+//| current chart window height instead of overflowing below it.     |
+//+------------------------------------------------------------------+
+double ComputeDisplayScale()
+{
+   long chartH = ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS);
+   if(chartH <= 0) return 1.0;
+
+   double scale = (chartH - 40.0) / (double)DASH_H;
+   if(scale > 1.0) scale = 1.0;   // ไม่ขยายเกินขนาดจริงที่วาดไว้ กันภาพเบลอ
+   if(scale < 0.5) scale = 0.5;   // กันหดจนอ่านไม่ออกเลย
+   return scale;
+}
+
+void ApplyDashboardScale()
+{
+   double scale = ComputeDisplayScale();
+   if(MathAbs(scale - LastAppliedUIScale) < 0.02) return;
+   LastAppliedUIScale = scale;
+
+   int dispW = (int)MathRound(DASH_W * scale);
+   int dispH = (int)MathRound(DASH_H * scale);
+   ObjectSetInteger(0, CANVAS_NAME, OBJPROP_XSIZE, dispW);
+   ObjectSetInteger(0, CANVAS_NAME, OBJPROP_YSIZE, dispH);
+
+   // ปุ่ม Close All เป็น object จริงแยกต่างหาก (bitmap คลิกไม่ได้) ต้องขยับ/ย่อขนาด
+   // ตามอัตราส่วนเดียวกัน ไม่งั้นจะเลื่อนหลุดตำแหน่งเมื่อ canvas ถูกย่อ
+   int btnW = (int)MathRound((DASH_W - 28) * scale);
+   int btnH = (int)MathRound(40 * scale);
+   int btnX = (int)MathRound((15 + 14) * scale);
+   int btnY = (int)MathRound((15 + DASH_H - 54) * scale);
+   ObjectSetInteger(0, BTN_CLOSE_ALL, OBJPROP_XDISTANCE, btnX);
+   ObjectSetInteger(0, BTN_CLOSE_ALL, OBJPROP_YDISTANCE, btnY);
+   ObjectSetInteger(0, BTN_CLOSE_ALL, OBJPROP_XSIZE, btnW);
+   ObjectSetInteger(0, BTN_CLOSE_ALL, OBJPROP_YSIZE, btnH);
+   ObjectSetInteger(0, BTN_CLOSE_ALL, OBJPROP_FONTSIZE, (int)MathMax(7, MathRound(10 * scale)));
+
+   ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
 //| Dashboard lifecycle                                              |
 //+------------------------------------------------------------------+
 void InitDashboard()
@@ -2247,12 +2295,16 @@ void InitDashboard()
 
    DashCanvas.Erase(ColorToARGB(C'8,8,16'));
    DashCanvas.Update();
+
+   LastAppliedUIScale = 0.0; // บังคับให้ ApplyDashboardScale() คำนวณ/ใช้ค่าใหม่ทันทีหลัง (re)create
+   ApplyDashboardScale();
 }
 
 void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, int openPos, int pendingOrders)
 {
    if(IsTestingMode) return;
    if(ObjectFind(0, CANVAS_NAME) < 0) InitDashboard();
+   ApplyDashboardScale(); // เช็คทุกรอบ - เผื่อผู้ใช้ปรับขนาดหน้าต่างชาร์ตระหว่างรัน
 
    double equity  = AccountInfoDouble(ACCOUNT_EQUITY);
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
