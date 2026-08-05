@@ -352,9 +352,16 @@ double CalcLotSize(double slDistance)
    double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
    double volMin  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double volMax  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double minLotAllowed = MathMax(MinLot, volMin);
 
    if(lotStep>0) lot = MathFloor(lot/lotStep) * lotStep;
-   lot = MathMax(lot, MathMax(MinLot, volMin));
+
+   // If the structural SL is so wide that even the smallest tradable lot would
+   // risk more than RiskPercent, skip the setup instead of forcing an oversized
+   // position - flooring up to minLotAllowed here would silently blow past the
+   // configured risk cap on wide-stop setups.
+   if(lot < minLotAllowed) return 0;
+
    lot = MathMin(lot, MathMin(MaxLot, volMax));
 
    return NormalizeDouble(lot, 2);
