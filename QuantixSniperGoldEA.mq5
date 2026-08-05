@@ -42,10 +42,10 @@ input int    MTF_EMA_Period         = 50;      // MTF EMA Period
 
 input group "===== 3. Sniper Entry - Momentum Pullback ====="
 input int    RSI_Period             = 14;      // RSI Period
-input double RSI_Oversold           = 35.0;    // RSI Oversold Level (โซนขาย)
-input double RSI_Overbought         = 65.0;    // RSI Overbought Level (โซนซื้อ)
+input double RSI_Oversold           = 40.0;    // RSI Oversold Level (โซนขาย)
+input double RSI_Overbought         = 60.0;    // RSI Overbought Level (โซนซื้อ)
 input double RSI_CenterLine         = 50.0;    // RSI Center Line (เส้นกลาง)
-input int    RSI_PullbackLookback   = 5;       // Bars to Look Back for Pullback Touch
+input int    RSI_PullbackLookback   = 8;       // Bars to Look Back for Pullback Touch
 
 input group "===== 4. Sniper Entry - Price Action & Volatility ====="
 input bool   UseCandleConfirmation  = true;    // Require Confirming Candle Close (ยืนยันด้วยแท่งเทียน)
@@ -337,19 +337,21 @@ int GetTrendBias()
 
 bool CheckMomentumPullback(int bias)
 {
-   int need = RSI_PullbackLookback + 3;
+   // Sniper pullback: RSI must have dipped into oversold/overbought within the
+   // lookback window, and now be back on the trend side of the center line.
+   // The recovery can unfold over several bars - it does not need to land on
+   // the exact bar the center line is crossed (that was too strict and made
+   // the setup fire almost never).
+   int need = RSI_PullbackLookback + 2;
    double rsi[];
    ArraySetAsSeries(rsi, true);
    if(CopyBuffer(hRSI, 0, 0, need, rsi) < need) return false;
 
-   bool crossUp   = (rsi[2] <= RSI_CenterLine && rsi[1] > RSI_CenterLine);
-   bool crossDown = (rsi[2] >= RSI_CenterLine && rsi[1] < RSI_CenterLine);
-
-   if(bias==1  && !crossUp)   return false;
-   if(bias==-1 && !crossDown) return false;
+   if(bias==1  && rsi[1] <= RSI_CenterLine) return false;
+   if(bias==-1 && rsi[1] >= RSI_CenterLine) return false;
 
    bool touched = false;
-   for(int i=2; i<2+RSI_PullbackLookback && i<need; i++)
+   for(int i=1; i<1+RSI_PullbackLookback && i<need; i++)
    {
       if(bias==1  && rsi[i] <= RSI_Oversold)   { touched = true; break; }
       if(bias==-1 && rsi[i] >= RSI_Overbought) { touched = true; break; }
