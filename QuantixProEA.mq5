@@ -835,6 +835,15 @@ int OnInit()
 {
    IsTestingMode = (bool)MQLInfoInteger(MQL_TESTER);
 
+   // เวอร์ชันทดลอง: รันได้เฉพาะบัญชีเดโมเท่านั้น (และ Strategy Tester ซึ่งไม่ใช่บัญชีจริงอยู่แล้ว) -
+   // เช็คแค่ตอน OnInit() ก็พอ เพราะสลับบัญชีในเทอร์มินัลจะทำให้ MT5 เรียก OnInit() ใหม่เสมอ
+   if(!IsTestingMode && AccountInfoInteger(ACCOUNT_TRADE_MODE) != ACCOUNT_TRADE_MODE_DEMO)
+   {
+      Alert("QuantixPro EA (Trial): DEMO accounts only. This EA will not run on a live account.");
+      Print("❌ [TRIAL LOCK] Account trade mode is not DEMO - EA init blocked.");
+      return(INIT_FAILED);
+   }
+
    // FIXED: derive m_multiplier from the attached symbol's digit count so every
    // *Points input (DistancePoints, MaxSlippagePoints, MaxAllowedGapPoints,
    // MaxSpreadAllowed) keeps meaning the same real price distance whether the
