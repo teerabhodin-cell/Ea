@@ -1785,7 +1785,10 @@ void ClearEverythingAsync()
       // even when OrderSend() already closed everything on the first pass - it's
       // only needed live, to give the broker time to actually process the close.
       // In the tester OrderSend() is synchronous/deterministic, so skip it.
-      if(retryCount < 10 && !IsTestingMode) Sleep(50);
+      // Lowered from 50ms - just needs to be long enough for the async sends above to
+      // land before the next re-scan; real close speed is now dominated by actual
+      // network round-trip to the broker (ping), which this can't shrink any further.
+      if(retryCount < 10 && !IsTestingMode) Sleep(20);
    }
 
    // บันทึกสถิติจาก snapshot ที่เก็บไว้ตอนต้นฟังก์ชัน - นับเป็น "บาสเก็ตที่ปิดแล้ว" เฉพาะตอนที่มีไม้จริงๆ ให้ปิด
