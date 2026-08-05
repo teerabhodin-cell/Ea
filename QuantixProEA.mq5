@@ -2010,14 +2010,17 @@ double GetNextGridTargetPrice(bool isBuy)
 
    if(isBuy)
    {
-      if(!dynamicTarget) return NormalizeDouble(GridBasePriceBuy + (buyStepDistance * point), _Digits);
+      // Fixed/non-per-side โหมด: อ้างอิงจาก GridBasePrice (ราคาศูนย์กลางจริง) ตรงๆ เท่านั้น -
+      // ห้ามใช้ GridBasePriceBuy เพราะตัวแปรนั้นอาจถูก "pin" ไปที่ราคาตอนอีกฝั่ง fill ครั้งแรก
+      // (คนละกลไกกับที่นี่ ใช้กันไม้ครั้งแรกหลัง gap) ทำให้ค่าที่โชว์เพี้ยนไปจากฐานจริง
+      if(!dynamicTarget) return NormalizeDouble(GridBasePrice + (buyStepDistance * point), _Digits);
       double effectiveLastBuy = MathMax(lastBuyPrice, BuyGapAnchor);
       if(buyCount == 0) return NormalizeDouble(GridBasePriceBuy + (buyStepDistance * point), _Digits);
       return NormalizeDouble(effectiveLastBuy + (buyStepDistance * point), _Digits);
    }
    else
    {
-      if(!dynamicTarget) return NormalizeDouble(GridBasePriceSell - (sellStepDistance * point), _Digits);
+      if(!dynamicTarget) return NormalizeDouble(GridBasePrice - (sellStepDistance * point), _Digits);
       double effectiveLastSell = (SellGapAnchor > 0 && SellGapAnchor < lastSellPrice) ? SellGapAnchor : lastSellPrice;
       if(sellCount == 0) return NormalizeDouble(GridBasePriceSell - (sellStepDistance * point), _Digits);
       return NormalizeDouble(effectiveLastSell - (sellStepDistance * point), _Digits);
