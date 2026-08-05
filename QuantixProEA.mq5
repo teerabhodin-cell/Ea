@@ -1497,10 +1497,16 @@ void CheckAndExecuteVirtualGrid()
             if(OrderSend(request, result))
             {
                LastOrderSentTime = TimeCurrent();
-               // FIXED: keep the still-empty Sell side's level-0 target pinned one
-               // grid step behind the price that was just traded, instead of
-               // leaving it anchored to wherever the basket started.
-               if(sellCount == 0) GridBasePriceSell = ask;
+               // Pin the still-empty Sell side's level-0 target to the price that was
+               // just traded, instead of leaving it anchored to wherever the basket
+               // started - but ONLY in Per-Side ATR mode, where each side's distance
+               // already moves live so re-anchoring to the latest price is expected.
+               // In Fixed/plain-ATR mode the user wants the base to stay pinned at the
+               // original level-1 anchor for the life of the basket - re-anchoring it
+               // here made Sell's real trigger silently drift off of GridBasePrice
+               // (which the dashboard shows as the fixed base), so the still-empty
+               // side ended up opening before/past what the UI displayed as its base.
+               if(UseAdaptiveATRGrid && sellCount == 0) GridBasePriceSell = ask;
                BuyGapAnchor = 0.0; // lastBuyPrice now reflects this real fill, override no longer needed
                // ฝั่ง Buy fill แล้ว - คำนวณระยะ Buy รอบถัดไปใหม่จาก ATR สด ณ ตอนนี้
                // ฝั่ง Sell ที่ยังไม่ fill ไม่ถูกแตะเลย ยังรอที่เป้าเดิมต่อไป
@@ -1582,9 +1588,9 @@ void CheckAndExecuteVirtualGrid()
             if(OrderSend(request, result))
             {
                LastOrderSentTime = TimeCurrent();
-               // Symmetric fix: keep the still-empty Buy side's level-0 target
-               // pinned one grid step ahead of the price that was just traded.
-               if(buyCount == 0) GridBasePriceBuy = bid;
+               // Symmetric to the Buy-fills-first case above - same Per-Side ATR gate,
+               // same reasoning: outside that mode the base must stay put.
+               if(UseAdaptiveATRGrid && buyCount == 0) GridBasePriceBuy = bid;
                SellGapAnchor = 0.0; // lastSellPrice now reflects this real fill, override no longer needed
                // ฝั่ง Sell fill แล้ว - คำนวณระยะ Sell รอบถัดไปใหม่จาก ATR สด ณ ตอนนี้
                // ฝั่ง Buy ที่ยังไม่ fill ไม่ถูกแตะเลย ยังรอที่เป้าเดิมต่อไป
