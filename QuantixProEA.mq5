@@ -1901,112 +1901,17 @@ void DrawEquityCurveChart(int x, int y, int w, int h)
    }
 }
 
-// ไอคอนฟีเจอร์วาดด้วยเส้น/รูปทรงเรขาคณิตล้วน (ไม่พึ่ง glyph emoji ของฟอนต์ Arial
-// ที่บางเครื่องไม่มี glyph จริงให้ ทำให้ก่อนหน้านี้ขึ้นเป็นสัญลักษณ์มั่วไม่ตรงความหมาย)
-// iconType: 0=Grid 1=Basket 2=TrailingStop 3=Lock 4=Scissors 5=Plus(Recovery) 6=CrossedSwords 7=Shield
-void DrawFeatureGlyph(int cx, int cy, int r, int iconType, color clr)
-{
-   uint col = ColorToARGB(clr);
-   switch(iconType)
-   {
-      case 0: // VIRTUAL GRID - ตาราง 3x3
-      {
-         int half = (int)(r * 0.68);
-         DashCanvas.Rectangle(cx - half, cy - half, cx + half, cy + half, col);
-         int third = (half * 2) / 3;
-         DashCanvas.Line(cx - half + third, cy - half, cx - half + third, cy + half, col);
-         DashCanvas.Line(cx - half + third * 2, cy - half, cx - half + third * 2, cy + half, col);
-         DashCanvas.Line(cx - half, cy - half + third, cx + half, cy - half + third, col);
-         DashCanvas.Line(cx - half, cy - half + third * 2, cx + half, cy - half + third * 2, col);
-         break;
-      }
-      case 1: // BASKET ENGINE - ตะกร้า (สี่เหลี่ยมคางหมู)
-      {
-         int top = cy - (int)(r * 0.45), bot = cy + (int)(r * 0.55);
-         int topHalf = (int)(r * 0.72), botHalf = (int)(r * 0.42);
-         DashCanvas.LineAA(cx - topHalf, top, cx + topHalf, top, col);
-         DashCanvas.LineAA(cx - topHalf, top, cx - botHalf, bot, col);
-         DashCanvas.LineAA(cx + topHalf, top, cx + botHalf, bot, col);
-         DashCanvas.LineAA(cx - botHalf, bot, cx + botHalf, bot, col);
-         DashCanvas.Line(cx - (int)(botHalf * 0.35), top, cx - (int)(botHalf * 0.2), bot, col);
-         DashCanvas.Line(cx + (int)(botHalf * 0.35), top, cx + (int)(botHalf * 0.2), bot, col);
-         break;
-      }
-      case 2: // TRAILING STOP - บันไดขาลง
-      {
-         int s = (int)(r * 0.5);
-         DashCanvas.LineAA(cx - s * 2, cy - s, cx - s, cy - s, col);
-         DashCanvas.LineAA(cx - s, cy - s, cx - s, cy, col);
-         DashCanvas.LineAA(cx - s, cy, cx, cy, col);
-         DashCanvas.LineAA(cx, cy, cx, cy + s, col);
-         DashCanvas.LineAA(cx, cy + s, cx + s * 2, cy + s, col);
-         DashCanvas.LineAA(cx + s * 2, cy + s, cx + s * 2 - S(5), cy + s - S(5), col);
-         DashCanvas.LineAA(cx + s * 2, cy + s, cx + s * 2 - S(5), cy + s + S(5), col);
-         break;
-      }
-      case 3: // BREAKEVEN LOCK - แม่กุญแจ
-      {
-         int bodyW = (int)(r * 1.05), bodyH = (int)(r * 0.75);
-         int bx = cx - bodyW / 2, by = cy - (int)(r * 0.05);
-         DashCanvas.FillRectangle(bx, by, bx + bodyW, by + bodyH, col);
-         int shW = (int)(r * 0.55);
-         DashCanvas.LineAA(cx - shW / 2, by, cx - shW / 2, by - (int)(r * 0.5), col);
-         DashCanvas.LineAA(cx + shW / 2, by, cx + shW / 2, by - (int)(r * 0.5), col);
-         DashCanvas.LineAA(cx - shW / 2, by - (int)(r * 0.5), cx + shW / 2, by - (int)(r * 0.5), col);
-         break;
-      }
-      case 4: // PARTIAL CLOSE - กรรไกร
-      {
-         int s = (int)(r * 0.55);
-         DashCanvas.LineAA(cx - s, cy - s, cx + s, cy + s, col);
-         DashCanvas.LineAA(cx + s, cy - s, cx - s, cy + s, col);
-         DashCanvas.FillCircle(cx - s, cy + s, (int)(r * 0.16), col);
-         DashCanvas.FillCircle(cx + s, cy + s, (int)(r * 0.16), col);
-         break;
-      }
-      case 5: // RECOVERY MODE - เครื่องหมายบวก
-      {
-         int s = (int)(r * 0.65);
-         for(int o = -1; o <= 1; o++)
-         {
-            DashCanvas.Line(cx - s, cy + o, cx + s, cy + o, col);
-            DashCanvas.Line(cx + o, cy - s, cx + o, cy + s, col);
-         }
-         break;
-      }
-      case 6: // FORCE HEDGE - ดาบไขว้
-      {
-         int s = (int)(r * 0.6);
-         DashCanvas.LineAA(cx - s, cy - s, cx + s, cy + s, col);
-         DashCanvas.LineAA(cx + s, cy - s, cx - s, cy + s, col);
-         DashCanvas.LineAA(cx - s, cy - s, cx - s + S(6), cy - s + S(1), col);
-         DashCanvas.LineAA(cx + s, cy - s, cx + s - S(6), cy - s + S(1), col);
-         break;
-      }
-      case 7: // GAP PROTECTION - โล่ป้องกัน
-      default:
-      {
-         int hw = (int)(r * 0.55), top = cy - (int)(r * 0.6), mid = cy, bot = cy + (int)(r * 0.65);
-         DashCanvas.LineAA(cx - hw, top, cx + hw, top, col);
-         DashCanvas.LineAA(cx - hw, top, cx - hw, mid, col);
-         DashCanvas.LineAA(cx + hw, top, cx + hw, mid, col);
-         DashCanvas.LineAA(cx - hw, mid, cx, bot, col);
-         DashCanvas.LineAA(cx + hw, mid, cx, bot, col);
-         DashCanvas.LineAA(cx - (int)(hw * 0.4), cy, cx - (int)(hw * 0.1), cy + (int)(hw * 0.35), col);
-         DashCanvas.LineAA(cx - (int)(hw * 0.1), cy + (int)(hw * 0.35), cx + (int)(hw * 0.45), cy - (int)(hw * 0.3), col);
-         break;
-      }
-   }
-}
-
-void DrawFeatureIcon(int x, int cellW, int y, int iconType, string labelTh, string labelEn, bool isOn)
+void DrawFeatureIcon(int x, int cellW, int y, string emoji, string labelTh, string labelEn, bool isOn)
 {
    int cx       = x + cellW / 2;
    int circleR  = S(30);
    int circleCY = y + S(32);
    color bgColor = isOn ? C'34,197,94' : C'50,50,65';
    DashCanvas.FillCircle(cx, circleCY, circleR, ColorToARGB(bgColor));
-   DrawFeatureGlyph(cx, circleCY, circleR, iconType, clrWhite);
+
+   DashCanvas.FontSet("Arial", SF(24));
+   int ew = EstimateTextWidth(emoji, SF(24));
+   DashCanvas.TextOut(cx - ew / 2, circleCY - S(12), emoji, ColorToARGB(clrWhite));
 
    DashCanvas.FontSet("Arial", SF(14));
    string label = GetUIString(labelTh, labelEn);
@@ -2101,7 +2006,7 @@ int DrawHeader(int y)
 int DrawInfoBar(int y)
 {
    DashCanvas.FillRectangle(S(14), y, DASH_W - S(14), y + S(36), ColorToARGB(C'16,16,28'));
-   DashCanvas.FontSet("Arial", SF(14));
+   DashCanvas.FontSet("Arial", SF(14), FW_BOLD);
    string txt = StringFormat("%s: %s   |   TIMEFRAME: %s   |   BROKER: %s",
                               GetUIString("สัญลักษณ์", "SYMBOL"), _Symbol, GetTimeframeString(),
                               AccountInfoString(ACCOUNT_COMPANY));
@@ -2111,7 +2016,7 @@ int DrawInfoBar(int y)
 
 int DrawServerTimeRow(int y, int openPos, int pendingOrders)
 {
-   DashCanvas.FontSet("Arial", SF(15));
+   DashCanvas.FontSet("Arial", SF(15), FW_BOLD);
    string timeTxt = StringFormat("%s: %s", GetUIString("เวลาเซิร์ฟเวอร์", "SERVER TIME"), TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS));
    DashCanvas.TextOut(S(14), y, timeTxt, ColorToARGB(C'150,150,170'));
 
@@ -2262,15 +2167,15 @@ int DrawEquityFeatureRow(int y)
    int row1Y = y + S(46);
    int row2Y = row1Y + S(104);
 
-   DrawFeatureIcon(fx + S(10) + cellW * 0, cellW, row1Y, 0, "GRID เสมือน", "VIRTUAL GRID", GridType == GRID_VIRTUAL);
-   DrawFeatureIcon(fx + S(10) + cellW * 1, cellW, row1Y, 1, "เครื่องยนต์", "BASKET ENGINE", true);
-   DrawFeatureIcon(fx + S(10) + cellW * 2, cellW, row1Y, 2, "เทรลลิ่งสต็อป", "TRAILING STOP", true);
-   DrawFeatureIcon(fx + S(10) + cellW * 3, cellW, row1Y, 3, "ล็อกคุ้มทุน", "BREAKEVEN LOCK", UseBasketBreakeven);
+   DrawFeatureIcon(fx + S(10) + cellW * 0, cellW, row1Y, "🕸️", "GRID เสมือน", "VIRTUAL GRID", GridType == GRID_VIRTUAL);
+   DrawFeatureIcon(fx + S(10) + cellW * 1, cellW, row1Y, "🧺", "เครื่องยนต์", "BASKET ENGINE", true);
+   DrawFeatureIcon(fx + S(10) + cellW * 2, cellW, row1Y, "📉", "เทรลลิ่งสต็อป", "TRAILING STOP", true);
+   DrawFeatureIcon(fx + S(10) + cellW * 3, cellW, row1Y, "🔒", "ล็อกคุ้มทุน", "BREAKEVEN LOCK", UseBasketBreakeven);
 
-   DrawFeatureIcon(fx + S(10) + cellW * 0, cellW, row2Y, 4, "ปิดบางส่วน", "PARTIAL CLOSE", UsePartialClose);
-   DrawFeatureIcon(fx + S(10) + cellW * 1, cellW, row2Y, 5, "โหมดแก้ไม้", "RECOVERY MODE", UseRecoveryMode);
-   DrawFeatureIcon(fx + S(10) + cellW * 2, cellW, row2Y, 6, "ฟอร์ซเฮดจ์", "FORCE HEDGE", UseForceHedgeOnDD || UseForceHedgeOnTime);
-   DrawFeatureIcon(fx + S(10) + cellW * 3, cellW, row2Y, 7, "กัน Gap", "GAP PROTECTION", UseGapProtection);
+   DrawFeatureIcon(fx + S(10) + cellW * 0, cellW, row2Y, "✂️", "ปิดบางส่วน", "PARTIAL CLOSE", UsePartialClose);
+   DrawFeatureIcon(fx + S(10) + cellW * 1, cellW, row2Y, "🩹", "โหมดแก้ไม้", "RECOVERY MODE", UseRecoveryMode);
+   DrawFeatureIcon(fx + S(10) + cellW * 2, cellW, row2Y, "⚔️", "ฟอร์ซเฮดจ์", "FORCE HEDGE", UseForceHedgeOnDD || UseForceHedgeOnTime);
+   DrawFeatureIcon(fx + S(10) + cellW * 3, cellW, row2Y, "🛡️", "กัน Gap", "GAP PROTECTION", UseGapProtection);
 
    return y + rowH + S(12);
 }
@@ -2337,7 +2242,7 @@ int DrawNewsCard(int y)
       MqlDateTime dt;
       TimeToStruct(EventLogTimeVal[i], dt);
       string line = StringFormat("%02d:%02d  %s", dt.hour, dt.min, EventLogText[i]);
-      DashCanvas.FontSet("Arial", SF(15));
+      DashCanvas.FontSet("Arial", SF(15), FW_BOLD);
       DashCanvas.TextOut(S(14) + S(14), ry, "✓", ColorToARGB(C'34,197,94'));
       DashCanvas.TextOut(S(14) + S(34), ry, line, ColorToARGB(C'190,190,205'));
       ry += S(23);
