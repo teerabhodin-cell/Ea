@@ -1563,18 +1563,23 @@ void CheckAndExecuteVirtualGrid()
 
 //+------------------------------------------------------------------+
 //| Clear Account Function                                           |
-//| FIXED: position closes now go through synchronous OrderSend()    |
-//| with a confirm-and-retry loop instead of fire-and-forget          |
-//| OrderSendAsync(). The async version never verified the close      |
-//| actually happened - if a broker rejected/requoted the close (or   |
-//| just hadn't processed it by the next tick), the position stayed   |
-//| open forever while every caller had already set                   |
-//| IsClosingState = true and never reset it back to false. Since the |
-//| only reset path required openPositions==0 first, the EA would     |
-//| freeze completely (no more Trailing Stop checks, no more grid     |
-//| additions) while the position kept floating unmanaged - this is   |
-//| what was reported: dashboard stuck on "CLOSING ALL..." with       |
-//| positions still open and profit still moving.                    |
+//| FIXED: position closes go through a confirm-and-retry loop that   |
+//| re-scans real PositionsTotal() every pass instead of trusting a   |
+//| single fire-and-forget send. Plain fire-and-forget OrderSendAsync |
+//| with no follow-up check never verified the close actually         |
+//| happened - if a broker rejected/requoted it (or just hadn't       |
+//| processed it by the next tick), the position stayed open forever  |
+//| while every caller had already set IsClosingState = true and      |
+//| never reset it back to false. Since the only reset path required  |
+//| openPositions==0 first, the EA would freeze completely (no more   |
+//| Trailing Stop checks, no more grid additions) while the position  |
+//| kept floating unmanaged - dashboard stuck on "CLOSING ALL..."     |
+//| with positions still open and profit still moving. The individual |
+//| close requests below use OrderSendAsync() (fast - no per-position |
+//| round-trip wait), but the safety net is the outer while loop      |
+//| re-checking real positions and retrying, NOT the send call's      |
+//| return value - so this keeps the same actually-verified-closed    |
+//| guarantee while closing multi-position baskets much faster.       |
 //+------------------------------------------------------------------+
 void ClearEverythingAsync()
 {
@@ -1672,9 +1677,12 @@ void ClearEverythingAsync()
          request.magic        = MagicNumber;
          request.type_filling = fillMode;
 
-         if(!OrderSend(request, result))
+         // Async แทน sync ตรงนี้เพื่อยิงปิดทุกไม้พร้อมกันโดยไม่ต้องรอ round-trip ทีละไม้ (ไม้เยอะ
+         // จะได้ปิดไวขึ้นมาก) - ความปลอดภัย "ยืนยันว่าปิดจริง" ยังอยู่ครบเหมือนเดิม เพราะ retry loop
+         // ด้านนอกยัง re-scan PositionsTotal() จริงทุกรอบอยู่ดี ไม่ได้อิงผลจาก OrderSend ตรงนี้เลย
+         if(!OrderSendAsync(request, result))
          {
-            Print("Clear Position OrderSend failed: ", GetLastError(), " retcode: ", result.retcode);
+            Print("Clear Position OrderSendAsync failed: ", GetLastError(), " retcode: ", result.retcode);
          }
       }
 
