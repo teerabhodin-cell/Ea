@@ -103,6 +103,9 @@ input int    GapDetectionSeconds = 60;     // Gap Detection, Sec
 input int    MaxSlippagePoints   = 20;     // Max Slippage, pts
 input int    MaxSpreadAllowed    = 40;     // Max Spread Allowed, pts
 
+input group "===== 10. Dashboard ====="
+input double UIScaleMultiplier   = 1.3;    // Dashboard Size Multiplier (ตัวคูณขนาดแดชบอร์ด)
+
 //=========================== GLOBAL ===============================//
 
 bool     GridCreated     = false;
@@ -2287,8 +2290,11 @@ double ComputeUIScale()
    double scaleH = (chartH - 40.0) / (double)DASH_H_BASE;
    double scaleW = (chartW - 60.0) / (double)DASH_W_BASE; // แนวนอนกว้างขึ้น ต้องเช็คความกว้างชาร์ตด้วย ไม่งั้นล้นด้านข้าง
    double scale  = MathMin(scaleH, scaleW);
+   // UIScaleMultiplier: ตัวคูณเพิ่มเติมที่ผู้ใช้ปรับเองได้ (default 1.3) เผื่อ auto-fit ตามขนาดจอแล้วยังเล็กไป
+   // ถ้าปรับเพิ่มมากไป panel อาจใหญ่กว่าที่จอมองเห็นได้พอดี - ลดค่านี้ลงได้จาก Inputs
+   scale *= UIScaleMultiplier;
    // วาดใหม่ทุกครั้งที่ resolution เปลี่ยน (ไม่ใช่ stretch บิตแมปเดิม) ขยายเกิน 1.0 ได้โดยไม่เบลอ
-   if(scale > 1.8) scale = 1.8;   // กันขยายจนใหญ่เกินจอ
+   if(scale > 2.4) scale = 2.4;   // กันขยายจนใหญ่เกินจอ
    if(scale < 0.4) scale = 0.4;   // กันหดจนเล็กเกินไป (SF() มีพื้นฟอนต์กันไว้อีกชั้น)
    return scale;
 }
