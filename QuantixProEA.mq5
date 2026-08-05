@@ -1971,6 +1971,52 @@ string GetTimeframeString()
    return s;
 }
 
+// สำหรับแสดงผลบน dashboard เท่านั้น (ไม่แตะ trading logic จริงเลย) - คำนวณ "ราคาที่จะเปิดไม้ชั้นถัดไป"
+// ของฝั่งที่ระบุ ด้วยสูตรเดียวกับที่ CheckAndExecuteVirtualGrid() ใช้จริงเป๊ะ: level แรก (count==0)
+// คือ GridBasePriceBuy/Sell +/- ระยะ, level ถัดไปคือ ราคาไม้ล่าสุดจริง (หรือ gap anchor) +/- ระยะ
+double GetNextGridTargetPrice(bool isBuy)
+{
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   int    buyCount = 0, sellCount = 0;
+   double lastBuyPrice = 0.0, lastSellPrice = 0.0;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+      {
+         buyCount++;
+         if(openPrice > lastBuyPrice || lastBuyPrice == 0.0) lastBuyPrice = openPrice;
+      }
+      else
+      {
+         sellCount++;
+         if(openPrice < lastSellPrice || lastSellPrice == 0.0) lastSellPrice = openPrice;
+      }
+   }
+
+   int stepDistance     = (CachedGridDistance > 0) ? CachedGridDistance : GetDynamicGridDistance();
+   int buyStepDistance  = UseAdaptiveATRGrid ? ((BuyGridDistance  > 0) ? BuyGridDistance  : GetDynamicGridDistance()) : stepDistance;
+   int sellStepDistance = UseAdaptiveATRGrid ? ((SellGridDistance > 0) ? SellGridDistance : GetDynamicGridDistance()) : stepDistance;
+
+   if(isBuy)
+   {
+      double effectiveLastBuy = MathMax(lastBuyPrice, BuyGapAnchor);
+      if(buyCount == 0) return NormalizeDouble(GridBasePriceBuy + (buyStepDistance * point), _Digits);
+      return NormalizeDouble(effectiveLastBuy + (buyStepDistance * point), _Digits);
+   }
+   else
+   {
+      double effectiveLastSell = (SellGapAnchor > 0 && SellGapAnchor < lastSellPrice) ? SellGapAnchor : lastSellPrice;
+      if(sellCount == 0) return NormalizeDouble(GridBasePriceSell - (sellStepDistance * point), _Digits);
+      return NormalizeDouble(effectiveLastSell - (sellStepDistance * point), _Digits);
+   }
+}
+
 // ประมาณความกว้างของสตริงตัวเลข/สัญลักษณ์ (เช่น "-13.4%") ได้แม่นกว่า EstimateTextWidth
 // ทั่วไป เพราะตัวเลข/จุด/เปอร์เซ็นต์มีความกว้างต่างจากตัวอักษรค่าเฉลี่ยพอสมควร ใช้จัดกึ่งกลางเกจ %
 int EstimateNumericTextWidth(string text, int fontSize)
@@ -2135,8 +2181,10 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    DrawKV(cx + S(12), ry, innerW, GetUIString("โหมด", "Mode"), (GridType == GRID_VIRTUAL ? "VIRTUAL" : "PENDING"), C'160,160,180', C'251,193,7'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ชั้น", "Levels"), IntegerToString(curLevel) + " / " + IntegerToString(TotalLevels), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ระยะถัดไป", "Next Dist"), IntegerToString(nextDist) + " P", C'160,160,180', clrWhite); ry += rowStep;
-   DrawKV(cx + S(12), ry, innerW, GetUIString("ฐาน Buy", "Base Buy"), DoubleToString(GridBasePriceBuy, _Digits), C'160,160,180', C'34,197,94'); ry += rowStep;
-   DrawKV(cx + S(12), ry, innerW, GetUIString("ฐาน Sell", "Base Sell"), DoubleToString(GridBasePriceSell, _Digits), C'160,160,180', C'239,68,68'); ry += rowStep;
+   DrawKV(cx + S(12), ry, innerW, GetUIString("ราคาฐาน", "Base Price"), DoubleToString(GridBasePrice, _Digits), C'160,160,180', clrWhite); ry += rowStep;
+   // ฐาน Buy/Sell = ราคาที่จะเปิดไม้ชั้นถัดไปจริง (base +/- ระยะ) ไม่ใช่ราคาศูนย์กลางดิบๆ
+   DrawKV(cx + S(12), ry, innerW, GetUIString("ฐาน Buy", "Base Buy"), DoubleToString(GetNextGridTargetPrice(true), _Digits), C'160,160,180', C'34,197,94'); ry += rowStep;
+   DrawKV(cx + S(12), ry, innerW, GetUIString("ฐาน Sell", "Base Sell"), DoubleToString(GetNextGridTargetPrice(false), _Digits), C'160,160,180', C'239,68,68'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ราคาตลาด", "Price"), DoubleToString(bidNow, _Digits), C'160,160,180', clrWhite);
 
    // คอลัมน์ 6: บริหารความเสี่ยง
