@@ -19,6 +19,12 @@ enum ENUM_LANGUAGE
    LNG_EN  // English
 };
 
+enum ENUM_LOT_MODE
+{
+   LOT_RISK_PERCENT, // Risk % of Equity (คำนวณตาม SL อัตโนมัติ)
+   LOT_FIXED         // Fixed Lot (ล็อตคงที่)
+};
+
 //=========================== INPUT ================================//
 input group "===== 1. Language & Time ====="
 input ENUM_LANGUAGE Language        = LNG_TH;  // Select Language (default: Thai)
@@ -64,7 +70,9 @@ input double ADX_MinTrendStrength   = 22.0;    // Min ADX to Allow Entries (ต�
 input bool   RequireADXDirectionAgreement = true; // Require +DI/-DI to Match Structure Bias
 
 input group "===== 6. Risk & Money Management ====="
-input double RiskPercent            = 0.5;     // Risk % of Equity per Trade
+input ENUM_LOT_MODE LotMode         = LOT_RISK_PERCENT; // Lot Sizing Mode (โหมดคำนวณล็อต)
+input double RiskPercent            = 0.5;     // Risk % of Equity per Trade (ใช้เมื่อ LotMode=Risk %)
+input double FixedLotSize           = 0.01;    // Fixed Lot Size (ใช้เมื่อ LotMode=Fixed Lot)
 input double RR_Ratio               = 2.5;     // Take Profit = SL Distance x RR
 input double MinLot                 = 0.01;    // Min Lot Cap
 input double MaxLot                 = 5.0;     // Max Lot Cap
@@ -373,6 +381,21 @@ double CalcLotSize(double slDistance)
 {
    if(slDistance<=0) return 0;
 
+   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double volMin  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double volMax  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double minLotAllowed = MathMax(MinLot, volMin);
+
+   if(LotMode == LOT_FIXED)
+   {
+      double fixedLot = FixedLotSize;
+      if(UseRecoveryMode && inRecoveryMode) fixedLot *= RecoveryRiskReduceFactor;
+      if(lotStep>0) fixedLot = MathFloor(fixedLot/lotStep) * lotStep;
+      if(fixedLot < minLotAllowed) return 0;
+      fixedLot = MathMin(fixedLot, MathMin(MaxLot, volMax));
+      return NormalizeDouble(fixedLot, 2);
+   }
+
    double riskPct = RiskPercent;
    if(UseRecoveryMode && inRecoveryMode) riskPct *= RecoveryRiskReduceFactor;
 
@@ -387,11 +410,6 @@ double CalcLotSize(double slDistance)
    if(lossPerLot<=0) return 0;
 
    double lot = riskMoney / lossPerLot;
-
-   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-   double volMin  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-   double volMax  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
-   double minLotAllowed = MathMax(MinLot, volMin);
 
    if(lotStep>0) lot = MathFloor(lot/lotStep) * lotStep;
 
