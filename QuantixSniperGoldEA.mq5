@@ -36,10 +36,12 @@ input int    NYEndHour              = 22;      // New York End
 
 input group "===== 2. SMC/ICT - Market Structure ====="
 input int    SwingStrength          = 5;       // Swing Fractal Strength, bars each side (ความไวจุด Swing)
-input double MinDisplacementATRMult = 0.6;     // Min Breakout Candle Body vs ATR (0=off) - กรอง BOS/CHoCH ปลอม
+input double MinDisplacementATRMult = 0.6;     // Min Breakout Candle Body vs ATR (0=off) - กรอง MSS/BOS ปลอม
+input bool   TradeMSS               = true;    // Trade Market Structure Shift (การกลับตัวของเทรนด์)
+input bool   TradeBOS               = true;    // Trade Break of Structure (การไปต่อของเทรนด์)
 
 input group "===== 3. SMC/ICT - Liquidity Sweep ====="
-input bool   RequireLiquiditySweep  = true;    // Require Stop Hunt Before CHoCH (ต้องมีการล่าสภาพคล่องก่อน)
+input bool   RequireLiquiditySweep  = true;    // Require Stop Hunt Before MSS/BOS (ต้องมีการล่าสภาพคล่องก่อน)
 input int    SweepExpiryBars        = 10;      // Sweep Validity, bars (อายุของการล่าสภาพคล่อง)
 
 input group "===== 4. SMC/ICT - Order Block / FVG Zone ====="
@@ -145,6 +147,7 @@ int      g_SweepHighBarsAgo  = 0;
 
 bool     g_SetupArmed        = false;
 int      g_SetupBias         = 0;       // 1 bullish, -1 bearish
+string   g_SetupType         = "";      // "MSS" (reversal) or "BOS" (continuation)
 double   g_ZoneTop           = 0;
 double   g_ZoneBottom        = 0;
 double   g_InvalidationPrice = 0;
@@ -512,23 +515,32 @@ void UpdateStructureAndSweeps()
 
    if(brokeUp)
    {
-      bool wasNotBullish = (g_StructureBias <= 0);
+      // MSS (Market Structure Shift): bias was bearish/unknown and just flipped
+      // bullish - a reversal signal. BOS (Break of Structure): bias was already
+      // bullish and just made a fresh higher high - a continuation signal.
+      bool isMSS = (g_StructureBias <= 0);
+      bool isBOS = (g_StructureBias == 1);
       g_StructureBias = 1;
-      if(wasNotBullish && (!RequireLiquiditySweep || g_SweepLowActive))
+
+      bool sweepOK = (!RequireLiquiditySweep || g_SweepLowActive);
+      if(((isMSS && TradeMSS) || (isBOS && TradeBOS)) && sweepOK)
       {
          double invalidation = (RequireLiquiditySweep && g_SweepLowActive) ? g_SweepLowPrice : refLow;
-         ArmSetup(1, invalidation);
+         ArmSetup(1, invalidation, isMSS ? "MSS" : "BOS");
          g_SweepLowActive = false;
       }
    }
    else if(brokeDown)
    {
-      bool wasNotBearish = (g_StructureBias >= 0);
+      bool isMSS = (g_StructureBias >= 0);
+      bool isBOS = (g_StructureBias == -1);
       g_StructureBias = -1;
-      if(wasNotBearish && (!RequireLiquiditySweep || g_SweepHighActive))
+
+      bool sweepOK = (!RequireLiquiditySweep || g_SweepHighActive);
+      if(((isMSS && TradeMSS) || (isBOS && TradeBOS)) && sweepOK)
       {
          double invalidation = (RequireLiquiditySweep && g_SweepHighActive) ? g_SweepHighPrice : refHigh;
-         ArmSetup(-1, invalidation);
+         ArmSetup(-1, invalidation, isMSS ? "MSS" : "BOS");
          g_SweepHighActive = false;
       }
    }
@@ -574,7 +586,7 @@ bool FindDisplacementFVG(int bias, double &top, double &bottom)
    return false;
 }
 
-void ArmSetup(int bias, double invalidation)
+void ArmSetup(int bias, double invalidation, string setupType)
 {
    double obTop=0, obBottom=0;
    if(!FindOrderBlock(bias, obTop, obBottom)) return;
@@ -594,6 +606,7 @@ void ArmSetup(int bias, double invalidation)
    g_ZoneTop    = zoneTop + buf;
    g_ZoneBottom = zoneBottom - buf;
    g_SetupBias  = bias;
+   g_SetupType  = setupType;
 
    double slBuf = SL_BufferPoints * _Point;
    g_InvalidationPrice = (bias==1) ? MathMin(invalidation, obBottom) - slBuf
@@ -665,14 +678,14 @@ void OpenSMCTrade(int bias)
    {
       sl  = NormalizeDouble(price - slDistance, _Digits);
       tp  = UseStructureTrailing ? 0 : NormalizeDouble(price + slDistance*RR_Ratio, _Digits);
-      cmt = (Language==LNG_TH) ? "SMC ซื้อ (CHoCH+OB)" : "SMC BUY (CHoCH+OB)";
+      cmt = (Language==LNG_TH) ? StringFormat("SMC ซื้อ (%s+OB)", g_SetupType) : StringFormat("SMC BUY (%s+OB)", g_SetupType);
       ok  = trade.Buy(lot, _Symbol, price, sl, tp, cmt);
    }
    else
    {
       sl  = NormalizeDouble(price + slDistance, _Digits);
       tp  = UseStructureTrailing ? 0 : NormalizeDouble(price - slDistance*RR_Ratio, _Digits);
-      cmt = (Language==LNG_TH) ? "SMC ขาย (CHoCH+OB)" : "SMC SELL (CHoCH+OB)";
+      cmt = (Language==LNG_TH) ? StringFormat("SMC ขาย (%s+OB)", g_SetupType) : StringFormat("SMC SELL (%s+OB)", g_SetupType);
       ok  = trade.Sell(lot, _Symbol, price, sl, tp, cmt);
    }
 
@@ -895,14 +908,15 @@ void UpdateDashboard()
    color setupClr = Dashboard_Text;
    if(g_SetupArmed)
    {
-      setupTxt = StringFormat("%s %s: %.2f - %.2f",
+      setupTxt = StringFormat("%s [%s] %s: %.2f - %.2f",
                  (Language==LNG_TH?"รอย้อนเข้าโซน":"Waiting Retest"),
+                 g_SetupType,
                  g_SetupBias==1?"BUY":"SELL", g_ZoneBottom, g_ZoneTop);
       setupClr = Dashboard_Yellow;
    }
    else
    {
-      setupTxt = (Language==LNG_TH?"สถานะ: รอ CHoCH/BOS":"Status: Waiting for CHoCH/BOS");
+      setupTxt = (Language==LNG_TH?"สถานะ: รอ MSS/BOS":"Status: Waiting for MSS/BOS");
    }
    DashLabel("setup", setupTxt, x, y, setupClr); y+=rh;
 
