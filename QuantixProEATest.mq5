@@ -42,6 +42,7 @@ bool IsLicensed = false; // เซ็ตค่าจริงใน OnInit() - �
 input group "===== 1. Time & Language ====="
 input ENUM_LANGUAGE Language = LNG_TH; // Select Language ( default: Thai )
 input bool    UseTimer         = true;    // Time Filter (คุมเวลา)
+input bool    UseLocalTime     = false;   // Use Local PC Time (อิงตามเครื่อง, ไม่ใช่ Server)
 input int     StartHour        = 2;       // Start Hour (ชม.เริ่ม)
 input int     StartMinute      = 0;
 input int     EndHour          = 22;      // Stop Hour (ชม.หยุด)
@@ -339,8 +340,11 @@ bool IsTradingAllowedByTime()
 {
    if(!UseTimer) return true;
 
+   // UseLocalTime: อิงเวลาเครื่อง (TimeLocal) แทน Server Time (TimeCurrent) - ใช้ได้เฉพาะ
+   // เทรดจริง/เดโม่เท่านั้น เพราะใน Strategy Tester เวลาเครื่องจริงตอนรันเทสไม่ได้ sync
+   // กับเวลาในตลาดจำลองเลย ถ้าเปิดตัวนี้ตอน backtest ผลลัพธ์จะไม่มีความหมาย
    MqlDateTime dt;
-   TimeToStruct(TimeCurrent(), dt);
+   TimeToStruct(UseLocalTime ? TimeLocal() : TimeCurrent(), dt);
 
    int currentMinutes = dt.hour * 60 + dt.min;
    int startMinutes   = StartHour * 60 + StartMinute;
@@ -1889,7 +1893,8 @@ void InitDashboard()
    CreateLabel(UI_PREFIX+"LED_Icon", X+16, Y+58, "n", 8, UI_Profit, "Wingdings");
    CreateLabel(UI_PREFIX+"LED_Text", X+30, Y+56, GetUIString("ระบบพร้อมทำงาน", "ONLINE"), 9, UI_Profit);
 
-   string timeStr = StringFormat("%02d:%02d - %02d:%02d", StartHour, StartMinute, EndHour, EndMinute);
+   string timeStr = StringFormat("%02d:%02d - %02d:%02d (%s)", StartHour, StartMinute, EndHour, EndMinute,
+                                  UseLocalTime ? GetUIString("เครื่อง", "Local") : GetUIString("Server", "Server"));
    if(!UseTimer) timeStr = "24/7 ALL DAY";
    CreateLabel(UI_PREFIX+"Time_Lbl", X+225, Y+56, "🕐 " + timeStr, 8, UI_TextDim);
 
