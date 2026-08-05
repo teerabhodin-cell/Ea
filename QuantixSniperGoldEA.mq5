@@ -1,7 +1,8 @@
 //+------------------------------------------------------------------+
 //|                                          QuantixSniperGoldEA.mq5 |
-//|   Sniper Precision Entry (Trend + Momentum Pullback + Price      |
-//|   Action confluence) for XAUUSD - Single Shot, No Grid/Martingale|
+//|   SMC/ICT Sniper Entry: Market Structure (BOS/CHoCH) + Liquidity |
+//|   Sweep + Order Block / Fair Value Gap Retest for XAUUSD         |
+//|   Single Shot, No Grid/Martingale                                |
 //|   On-Chart Dashboard + Full Risk Management + Recovery Guard     |
 //|   Recommended Timeframe: M5 - M15                                |
 //+------------------------------------------------------------------+
@@ -27,43 +28,40 @@ input int    StartHour              = 2;       // Start Hour (ชม.เริ�
 input int    StartMinute            = 0;
 input int    EndHour                = 22;      // Stop Hour (ชม.หยุด)
 input int    EndMinute              = 0;
-input bool   UseSessionFilter       = true;    // London/NY Session Filter (คุมเฉพาะช่วง London/NY)
+input bool   UseSessionFilter       = true;    // London/NY Kill Zone Filter (คุมเฉพาะช่วง London/NY)
 input int    LondonStartHour        = 8;       // London Start (GMT/UTC)
 input int    LondonEndHour          = 17;      // London End
 input int    NYStartHour            = 13;      // New York Start (GMT/UTC)
 input int    NYEndHour              = 22;      // New York End
 
-input group "===== 2. Sniper Entry - Trend Filter ====="
-input int    EMA_Fast_Period        = 21;      // EMA Fast Period
-input int    EMA_Slow_Period        = 55;      // EMA Slow Period
-input bool   UseMTFTrendFilter      = true;    // Require Higher-TF Trend Agreement (คุมเทรนด์ TF ใหญ่)
-input ENUM_TIMEFRAMES MTF_Period    = PERIOD_H1; // MTF Timeframe
-input int    MTF_EMA_Period         = 50;      // MTF EMA Period
+input group "===== 2. SMC/ICT - Market Structure ====="
+input int    SwingStrength          = 3;       // Swing Fractal Strength, bars each side (ความไวจุด Swing)
 
-input group "===== 3. Sniper Entry - Momentum Pullback ====="
-input int    RSI_Period             = 14;      // RSI Period
-input double RSI_Oversold           = 40.0;    // RSI Oversold Level (โซนขาย)
-input double RSI_Overbought         = 60.0;    // RSI Overbought Level (โซนซื้อ)
-input double RSI_CenterLine         = 50.0;    // RSI Center Line (เส้นกลาง)
-input int    RSI_PullbackLookback   = 8;       // Bars to Look Back for Pullback Touch
+input group "===== 3. SMC/ICT - Liquidity Sweep ====="
+input bool   RequireLiquiditySweep  = true;    // Require Stop Hunt Before CHoCH (ต้องมีการล่าสภาพคล่องก่อน)
+input int    SweepExpiryBars        = 15;      // Sweep Validity, bars (อายุของการล่าสภาพคล่อง)
 
-input group "===== 4. Sniper Entry - Price Action & Volatility ====="
-input bool   UseCandleConfirmation  = true;    // Require Confirming Candle Close (ยืนยันด้วยแท่งเทียน)
+input group "===== 4. SMC/ICT - Order Block / FVG Zone ====="
+input int    OB_MaxLookbackBars     = 12;      // Max Bars Back to Find Order Block
+input int    SetupExpiryBars        = 20;      // Armed Zone Validity, bars (ก่อนสัญญาณหมดอายุ)
+input double ZoneBufferPoints       = 0;       // Extra Buffer around Entry Zone, pts
+input double SL_BufferPoints        = 50;      // Extra Buffer beyond Invalidation, pts
+
+input group "===== 5. Filters ====="
 input int    ATR_Period             = 14;      // ATR Period
 input double ATR_MinPoints          = 150;     // Min ATR, pts (กันตลาดนิ่ง)
 input double ATR_MaxPoints          = 4000;    // Max ATR, pts (กันช่วงข่าวแรง)
 input int    MaxSpreadPoints        = 350;     // Max Allowed Spread, pts
 
-input group "===== 5. Risk & Money Management ====="
+input group "===== 6. Risk & Money Management ====="
 input double RiskPercent            = 0.5;     // Risk % of Equity per Trade
-input double SL_ATR_Multiplier      = 1.5;     // Stop Loss = ATR x Multiplier
 input double RR_Ratio               = 2.0;     // Take Profit = SL Distance x RR
 input double MinLot                 = 0.01;    // Min Lot Cap
 input double MaxLot                 = 5.0;     // Max Lot Cap
 input int    Slippage               = 20;      // Max Slippage, pts
 input ulong  MagicNumber            = 336699;
 
-input group "===== 6. Trade Management ====="
+input group "===== 7. Trade Management ====="
 input bool   UseBreakeven           = true;    // Move SL to Breakeven (คุ้มทุน)
 input double BreakevenTriggerRR     = 1.0;     // Trigger at Profit = N x Risk (R-Multiple)
 input double BreakevenLockPoints    = 20;      // Lock Points Beyond Entry
@@ -71,7 +69,7 @@ input bool   UseTrailingStop        = true;    // ATR Trailing Stop (เทร�
 input double TrailingStartRR        = 1.5;     // Start Trailing at Profit = N x Risk
 input double TrailingATRMultiplier  = 1.2;     // Trailing Distance = ATR x Multiplier
 
-input group "===== 7. Drawdown Protection ====="
+input group "===== 8. Drawdown Protection ====="
 input bool   UseDailyLossLimit      = true;    // Daily Loss Limit (จำกัดขาดทุนรายวัน)
 input double MaxDailyLossPercent    = 3.0;     // Max Daily Loss %
 input bool   UseTotalDDGuard        = true;    // Total Drawdown Guard (คุม DD สะสม)
@@ -79,13 +77,13 @@ input double MaxTotalDDPercent      = 10.0;    // Max Total DD % (from Equity Pe
 input bool   UseEquityLock          = true;    // Equity Floor Lock (ล็อคพอร์ต)
 input double MinEquityLimit         = 0.0;     // Min Equity Floor (0 = off)
 
-input group "===== 8. Recovery Mode (Defensive Risk Cut) ====="
+input group "===== 9. Recovery Mode (Defensive Risk Cut) ====="
 input bool   UseRecoveryMode        = true;    // Reduce Risk after Loss Streak (ลดความเสี่ยงหลังแพ้ติด)
 input int    RecoveryLossStreak     = 2;       // Consecutive Losses to Trigger
 input double RecoveryRiskReduceFactor = 0.5;   // Risk Multiplier while in Recovery
 input int    RecoveryCooldownTrades = 3;       // Trades before Auto-Restore (if no win)
 
-input group "===== 9. Dashboard ====="
+input group "===== 10. Dashboard ====="
 input bool   ShowDashboard          = true;
 input bool   ShowDashboardInTester  = false;   // Show Dashboard during Strategy Tester (ปิดค่าเริ่มต้นเพื่อความเร็วตอน Backtest)
 input int    Dashboard_X            = 15;
@@ -97,10 +95,6 @@ input color  Dashboard_Red          = clrTomato;
 input color  Dashboard_Yellow       = clrGold;
 
 //=========================== GLOBALS ================================//
-int      hEmaFast = INVALID_HANDLE;
-int      hEmaSlow = INVALID_HANDLE;
-int      hEmaMTF  = INVALID_HANDLE;
-int      hRSI     = INVALID_HANDLE;
 int      hATR     = INVALID_HANDLE;
 
 datetime lastBarTime   = 0;
@@ -120,6 +114,31 @@ int      totalLosses       = 0;
 double   g_EntrySLDistance = 0;
 ulong    g_EntryTicket     = 0;
 
+// --- SMC/ICT market structure state ---
+double   g_SwingHigh[2]      = {0,0};   // [0]=latest confirmed, [1]=previous
+datetime g_SwingHighTime[2]  = {0,0};
+double   g_SwingLow[2]       = {0,0};
+datetime g_SwingLowTime[2]   = {0,0};
+bool     g_HaveSwingHigh     = false;
+bool     g_HaveSwingLow      = false;
+
+int      g_StructureBias     = 0;       // 1 bullish, -1 bearish, 0 unknown
+
+bool     g_SweepLowActive    = false;
+double   g_SweepLowPrice     = 0;
+int      g_SweepLowBarsAgo   = 0;
+
+bool     g_SweepHighActive   = false;
+double   g_SweepHighPrice    = 0;
+int      g_SweepHighBarsAgo  = 0;
+
+bool     g_SetupArmed        = false;
+int      g_SetupBias         = 0;       // 1 bullish, -1 bearish
+double   g_ZoneTop           = 0;
+double   g_ZoneBottom        = 0;
+double   g_InvalidationPrice = 0;
+int      g_SetupBarsAgo      = 0;
+
 const string DashPrefix = "QSNP_DASH_";
 
 //+------------------------------------------------------------------+
@@ -129,14 +148,9 @@ int OnInit()
    trade.SetDeviationInPoints(Slippage);
    trade.SetTypeFillingBySymbol(_Symbol);
 
-   hEmaFast = iMA(_Symbol, PERIOD_CURRENT, EMA_Fast_Period, 0, MODE_EMA, PRICE_CLOSE);
-   hEmaSlow = iMA(_Symbol, PERIOD_CURRENT, EMA_Slow_Period, 0, MODE_EMA, PRICE_CLOSE);
-   hEmaMTF  = iMA(_Symbol, MTF_Period,     MTF_EMA_Period,  0, MODE_EMA, PRICE_CLOSE);
-   hRSI     = iRSI(_Symbol, PERIOD_CURRENT, RSI_Period, PRICE_CLOSE);
-   hATR     = iATR(_Symbol, PERIOD_CURRENT, ATR_Period);
+   hATR = iATR(_Symbol, PERIOD_CURRENT, ATR_Period);
 
-   if(hEmaFast==INVALID_HANDLE || hEmaSlow==INVALID_HANDLE || hEmaMTF==INVALID_HANDLE ||
-      hRSI==INVALID_HANDLE || hATR==INVALID_HANDLE)
+   if(hATR==INVALID_HANDLE)
    {
       Print("QuantixSniperGoldEA: indicator handle creation failed");
       return INIT_FAILED;
@@ -154,11 +168,7 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-   if(hEmaFast!=INVALID_HANDLE) IndicatorRelease(hEmaFast);
-   if(hEmaSlow!=INVALID_HANDLE) IndicatorRelease(hEmaSlow);
-   if(hEmaMTF!=INVALID_HANDLE)  IndicatorRelease(hEmaMTF);
-   if(hRSI!=INVALID_HANDLE)     IndicatorRelease(hRSI);
-   if(hATR!=INVALID_HANDLE)     IndicatorRelease(hATR);
+   if(hATR!=INVALID_HANDLE) IndicatorRelease(hATR);
    ObjectsDeleteAll(0, DashPrefix);
 }
 
@@ -171,19 +181,13 @@ void OnTick()
 
    if(EffectiveShowDashboard()) UpdateDashboard();
 
-   if(!IsNewBar()) return;
-   if(tradingHalted) return;
-   if(!IsWithinTradingTime()) return;
-   if(PositionSelectForMagic()) return; // sniper style: one position at a time
-   if(!PassSpreadFilter()) return;
-   if(!PassVolatilityFilter()) return;
+   if(IsNewBar())
+   {
+      UpdateSwings();
+      UpdateStructureAndSweeps();
+   }
 
-   int bias = GetTrendBias();
-   if(bias==0) return;
-   if(!CheckMomentumPullback(bias)) return;
-   if(UseCandleConfirmation && !CheckPriceAction(bias)) return;
-
-   OpenSniperTrade(bias);
+   CheckZoneRetestAndEnter();
 }
 
 //+------------------------------------------------------------------+
@@ -312,62 +316,6 @@ bool PassVolatilityFilter()
    return (atrPts >= ATR_MinPoints && atrPts <= ATR_MaxPoints);
 }
 
-int GetTrendBias()
-{
-   double emaFast[], emaSlow[];
-   if(CopyBuffer(hEmaFast, 0, 1, 1, emaFast) < 1) return 0;
-   if(CopyBuffer(hEmaSlow, 0, 1, 1, emaSlow) < 1) return 0;
-
-   int bias = 0;
-   if(emaFast[0] > emaSlow[0]) bias = 1;
-   else if(emaFast[0] < emaSlow[0]) bias = -1;
-   if(bias==0) return 0;
-
-   if(UseMTFTrendFilter)
-   {
-      double mtfEma[];
-      if(CopyBuffer(hEmaMTF, 0, 1, 1, mtfEma) < 1) return 0;
-      double mtfClose = iClose(_Symbol, MTF_Period, 1);
-      int mtfBias = mtfClose > mtfEma[0] ? 1 : (mtfClose < mtfEma[0] ? -1 : 0);
-      if(mtfBias != bias) return 0;
-   }
-
-   return bias;
-}
-
-bool CheckMomentumPullback(int bias)
-{
-   // Sniper pullback: RSI must have dipped into oversold/overbought within the
-   // lookback window, and now be back on the trend side of the center line.
-   // The recovery can unfold over several bars - it does not need to land on
-   // the exact bar the center line is crossed (that was too strict and made
-   // the setup fire almost never).
-   int need = RSI_PullbackLookback + 2;
-   double rsi[];
-   ArraySetAsSeries(rsi, true);
-   if(CopyBuffer(hRSI, 0, 0, need, rsi) < need) return false;
-
-   if(bias==1  && rsi[1] <= RSI_CenterLine) return false;
-   if(bias==-1 && rsi[1] >= RSI_CenterLine) return false;
-
-   bool touched = false;
-   for(int i=1; i<1+RSI_PullbackLookback && i<need; i++)
-   {
-      if(bias==1  && rsi[i] <= RSI_Oversold)   { touched = true; break; }
-      if(bias==-1 && rsi[i] >= RSI_Overbought) { touched = true; break; }
-   }
-   return touched;
-}
-
-bool CheckPriceAction(int bias)
-{
-   double o = iOpen(_Symbol, PERIOD_CURRENT, 1);
-   double c = iClose(_Symbol, PERIOD_CURRENT, 1);
-   if(bias==1)  return (c > o);
-   if(bias==-1) return (c < o);
-   return false;
-}
-
 bool PositionSelectForMagic()
 {
    int total = PositionsTotal();
@@ -412,12 +360,239 @@ double CalcLotSize(double slDistance)
    return NormalizeDouble(lot, 2);
 }
 
-void OpenSniperTrade(int bias)
+//=========================== SMC / ICT ENGINE ================================//
+// Confirms a swing high/low fractal at shift (SwingStrength+1): the bar that
+// has just accumulated enough closed bars on both sides to be validated.
+// Non-repainting - each new bar only ever examines one, never-before-checked bar.
+void UpdateSwings()
 {
-   double atr[];
-   if(CopyBuffer(hATR, 0, 1, 1, atr) < 1) return;
+   int n = SwingStrength;
+   int checkShift = n+1;
+   int total = 2*n+2;
+   if(Bars(_Symbol, PERIOD_CURRENT) < total+2) return;
 
-   double slDistance = atr[0] * SL_ATR_Multiplier;
+   double high[], low[];
+   ArraySetAsSeries(high, true);
+   ArraySetAsSeries(low, true);
+   if(CopyHigh(_Symbol, PERIOD_CURRENT, 0, total, high) < total) return;
+   if(CopyLow(_Symbol, PERIOD_CURRENT, 0, total, low) < total) return;
+
+   double pivotHigh = high[checkShift];
+   double pivotLow  = low[checkShift];
+   bool isSwingHigh = true, isSwingLow = true;
+
+   for(int k=checkShift-n; k<=checkShift+n; k++)
+   {
+      if(k==checkShift) continue;
+      if(k<0 || k>=total) continue;
+      if(high[k] >= pivotHigh) isSwingHigh = false;
+      if(low[k]  <= pivotLow)  isSwingLow  = false;
+   }
+
+   datetime pivotTime = iTime(_Symbol, PERIOD_CURRENT, checkShift);
+
+   if(isSwingHigh)
+   {
+      g_SwingHigh[1]     = g_SwingHigh[0];
+      g_SwingHighTime[1] = g_SwingHighTime[0];
+      g_SwingHigh[0]     = pivotHigh;
+      g_SwingHighTime[0] = pivotTime;
+      g_HaveSwingHigh    = true;
+   }
+   if(isSwingLow)
+   {
+      g_SwingLow[1]     = g_SwingLow[0];
+      g_SwingLowTime[1] = g_SwingLowTime[0];
+      g_SwingLow[0]     = pivotLow;
+      g_SwingLowTime[0] = pivotTime;
+      g_HaveSwingLow    = true;
+   }
+}
+
+// Detects liquidity sweeps (wick beyond a swing point that closes back inside)
+// and structure breaks (BOS = continuation, CHoCH = reversal after a sweep).
+// A confirmed CHoCH/BOS in the sweep's direction arms an OB/FVG entry setup.
+void UpdateStructureAndSweeps()
+{
+   if(g_SweepLowActive)
+   {
+      g_SweepLowBarsAgo++;
+      if(g_SweepLowBarsAgo > SweepExpiryBars) g_SweepLowActive = false;
+   }
+   if(g_SweepHighActive)
+   {
+      g_SweepHighBarsAgo++;
+      if(g_SweepHighBarsAgo > SweepExpiryBars) g_SweepHighActive = false;
+   }
+   if(g_SetupArmed)
+   {
+      g_SetupBarsAgo++;
+      if(g_SetupBarsAgo > SetupExpiryBars) g_SetupArmed = false;
+   }
+
+   if(!g_HaveSwingHigh || !g_HaveSwingLow) return;
+
+   double closeBar1 = iClose(_Symbol, PERIOD_CURRENT, 1);
+   double lowBar1   = iLow(_Symbol, PERIOD_CURRENT, 1);
+   double highBar1  = iHigh(_Symbol, PERIOD_CURRENT, 1);
+
+   double refLow  = g_SwingLow[0];
+   double refHigh = g_SwingHigh[0];
+
+   if(lowBar1 < refLow && closeBar1 > refLow)
+   {
+      g_SweepLowActive  = true;
+      g_SweepLowPrice   = lowBar1;
+      g_SweepLowBarsAgo = 0;
+   }
+   if(highBar1 > refHigh && closeBar1 < refHigh)
+   {
+      g_SweepHighActive  = true;
+      g_SweepHighPrice   = highBar1;
+      g_SweepHighBarsAgo = 0;
+   }
+
+   bool brokeUp   = (closeBar1 > refHigh);
+   bool brokeDown = (closeBar1 < refLow);
+
+   if(brokeUp)
+   {
+      bool wasNotBullish = (g_StructureBias <= 0);
+      g_StructureBias = 1;
+      if(wasNotBullish && (!RequireLiquiditySweep || g_SweepLowActive))
+      {
+         double invalidation = (RequireLiquiditySweep && g_SweepLowActive) ? g_SweepLowPrice : refLow;
+         ArmSetup(1, invalidation);
+         g_SweepLowActive = false;
+      }
+   }
+   else if(brokeDown)
+   {
+      bool wasNotBearish = (g_StructureBias >= 0);
+      g_StructureBias = -1;
+      if(wasNotBearish && (!RequireLiquiditySweep || g_SweepHighActive))
+      {
+         double invalidation = (RequireLiquiditySweep && g_SweepHighActive) ? g_SweepHighPrice : refHigh;
+         ArmSetup(-1, invalidation);
+         g_SweepHighActive = false;
+      }
+   }
+}
+
+// Order Block: the last opposite-colored candle before the breakout candle.
+bool FindOrderBlock(int bias, double &top, double &bottom)
+{
+   for(int i=2; i<=OB_MaxLookbackBars+1; i++)
+   {
+      double o = iOpen(_Symbol, PERIOD_CURRENT, i);
+      double c = iClose(_Symbol, PERIOD_CURRENT, i);
+      double h = iHigh(_Symbol, PERIOD_CURRENT, i);
+      double l = iLow(_Symbol, PERIOD_CURRENT, i);
+      bool isOpposite = (bias==1) ? (c<o) : (c>o);
+      if(isOpposite)
+      {
+         top    = h;
+         bottom = l;
+         return true;
+      }
+   }
+   return false;
+}
+
+// Fair Value Gap on the displacement (breakout) candle itself: 3-bar imbalance
+// between the bar two before it and the breakout bar.
+bool FindDisplacementFVG(int bias, double &top, double &bottom)
+{
+   double highA = iHigh(_Symbol, PERIOD_CURRENT, 3);
+   double lowA  = iLow(_Symbol, PERIOD_CURRENT, 3);
+   double highC = iHigh(_Symbol, PERIOD_CURRENT, 1);
+   double lowC  = iLow(_Symbol, PERIOD_CURRENT, 1);
+
+   if(bias==1)
+   {
+      if(highA < lowC) { bottom=highA; top=lowC; return true; }
+   }
+   else
+   {
+      if(lowA > highC) { top=lowA; bottom=highC; return true; }
+   }
+   return false;
+}
+
+void ArmSetup(int bias, double invalidation)
+{
+   double obTop=0, obBottom=0;
+   if(!FindOrderBlock(bias, obTop, obBottom)) return;
+
+   double fvgTop=0, fvgBottom=0;
+   bool hasFVG = FindDisplacementFVG(bias, fvgTop, fvgBottom);
+
+   double zoneTop = obTop, zoneBottom = obBottom;
+   if(hasFVG)
+   {
+      double top    = MathMin(obTop, fvgTop);
+      double bottom = MathMax(obBottom, fvgBottom);
+      if(top > bottom) { zoneTop = top; zoneBottom = bottom; } // OB/FVG overlap = tighter, higher-quality zone
+   }
+
+   double buf = ZoneBufferPoints * _Point;
+   g_ZoneTop    = zoneTop + buf;
+   g_ZoneBottom = zoneBottom - buf;
+   g_SetupBias  = bias;
+
+   double slBuf = SL_BufferPoints * _Point;
+   g_InvalidationPrice = (bias==1) ? MathMin(invalidation, obBottom) - slBuf
+                                    : MathMax(invalidation, obTop)    + slBuf;
+
+   g_SetupArmed   = true;
+   g_SetupBarsAgo = 0;
+}
+
+// Checked every tick (not just new bar) so the exact retest touch into the
+// OB/FVG zone is caught, matching sniper-style precision entries.
+void CheckZoneRetestAndEnter()
+{
+   if(!g_SetupArmed) return;
+   if(tradingHalted) return;
+   if(!IsWithinTradingTime()) return;
+   if(PositionSelectForMagic()) return;
+   if(!PassSpreadFilter()) return;
+   if(!PassVolatilityFilter()) return;
+
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+   if(g_SetupBias==1)
+   {
+      if(ask <= g_ZoneTop && ask >= g_ZoneBottom)
+      {
+         OpenSMCTrade(1);
+         g_SetupArmed = false;
+      }
+      else if(ask < g_InvalidationPrice)
+      {
+         g_SetupArmed = false; // ran straight through the invalidation without a retest - setup is dead
+      }
+   }
+   else if(g_SetupBias==-1)
+   {
+      if(bid >= g_ZoneBottom && bid <= g_ZoneTop)
+      {
+         OpenSMCTrade(-1);
+         g_SetupArmed = false;
+      }
+      else if(bid > g_InvalidationPrice)
+      {
+         g_SetupArmed = false;
+      }
+   }
+}
+
+void OpenSMCTrade(int bias)
+{
+   double price = (bias==1) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double slDistance = (bias==1) ? (price - g_InvalidationPrice) : (g_InvalidationPrice - price);
+   if(slDistance<=0) return;
 
    long stopsLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
    double minDist = stopsLevel * _Point * 1.1;
@@ -426,25 +601,23 @@ void OpenSniperTrade(int bias)
    double lot = CalcLotSize(slDistance);
    if(lot<=0) return;
 
-   double price, sl, tp;
+   double sl, tp;
    string cmt;
    bool ok;
 
    if(bias==1)
    {
-      price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-      sl    = NormalizeDouble(price - slDistance, _Digits);
-      tp    = NormalizeDouble(price + slDistance*RR_Ratio, _Digits);
-      cmt   = (Language==LNG_TH) ? "Sniper ซื้อ" : "Sniper BUY";
-      ok    = trade.Buy(lot, _Symbol, price, sl, tp, cmt);
+      sl  = NormalizeDouble(price - slDistance, _Digits);
+      tp  = NormalizeDouble(price + slDistance*RR_Ratio, _Digits);
+      cmt = (Language==LNG_TH) ? "SMC ซื้อ (CHoCH+OB)" : "SMC BUY (CHoCH+OB)";
+      ok  = trade.Buy(lot, _Symbol, price, sl, tp, cmt);
    }
    else
    {
-      price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      sl    = NormalizeDouble(price + slDistance, _Digits);
-      tp    = NormalizeDouble(price - slDistance*RR_Ratio, _Digits);
-      cmt   = (Language==LNG_TH) ? "Sniper ขาย" : "Sniper SELL";
-      ok    = trade.Sell(lot, _Symbol, price, sl, tp, cmt);
+      sl  = NormalizeDouble(price + slDistance, _Digits);
+      tp  = NormalizeDouble(price - slDistance*RR_Ratio, _Digits);
+      cmt = (Language==LNG_TH) ? "SMC ขาย (CHoCH+OB)" : "SMC SELL (CHoCH+OB)";
+      ok  = trade.Sell(lot, _Symbol, price, sl, tp, cmt);
    }
 
    if(ok && PositionSelectForMagic())
@@ -571,8 +744,8 @@ void CreateDashboard()
       ObjectSetInteger(0, bg, OBJPROP_CORNER, CORNER_LEFT_UPPER);
       ObjectSetInteger(0, bg, OBJPROP_XDISTANCE, Dashboard_X-10);
       ObjectSetInteger(0, bg, OBJPROP_YDISTANCE, Dashboard_Y-10);
-      ObjectSetInteger(0, bg, OBJPROP_XSIZE, 320);
-      ObjectSetInteger(0, bg, OBJPROP_YSIZE, 260);
+      ObjectSetInteger(0, bg, OBJPROP_XSIZE, 340);
+      ObjectSetInteger(0, bg, OBJPROP_YSIZE, 280);
       ObjectSetInteger(0, bg, OBJPROP_BGCOLOR, Dashboard_BG);
       ObjectSetInteger(0, bg, OBJPROP_BORDER_TYPE, BORDER_FLAT);
       ObjectSetInteger(0, bg, OBJPROP_COLOR, clrDimGray);
@@ -588,7 +761,7 @@ void UpdateDashboard()
    int y = Dashboard_Y;
    int rh = 18;
 
-   DashLabel("title", "QUANTIX SNIPER XAUUSD", x, y, Dashboard_Yellow, 10); y+=rh+4;
+   DashLabel("title", "QUANTIX SNIPER XAUUSD - SMC/ICT", x, y, Dashboard_Yellow, 10); y+=rh+4;
 
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    long   spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
@@ -617,13 +790,27 @@ void UpdateDashboard()
              (Language==LNG_TH?"จุดสูงสุด":"Peak"), equityPeak),
              x, y, ddPct>=MaxTotalDDPercent*0.7?Dashboard_Red:Dashboard_Text); y+=rh;
 
-   int bias = GetTrendBias();
-   string biasTxt = bias==1 ? (Language==LNG_TH?"ขาขึ้น":"UP")
-                   : bias==-1 ? (Language==LNG_TH?"ขาลง":"DOWN")
-                   : (Language==LNG_TH?"ไม่ชัดเจน":"FLAT");
-   color biasClr = bias==1?Dashboard_Green:(bias==-1?Dashboard_Red:Dashboard_Text);
-   DashLabel("bias", StringFormat("%s: %s", (Language==LNG_TH?"เทรนด์":"Trend Bias"), biasTxt),
+   string biasTxt = g_StructureBias==1 ? (Language==LNG_TH?"ขาขึ้น (Bullish)":"Bullish")
+                   : g_StructureBias==-1 ? (Language==LNG_TH?"ขาลง (Bearish)":"Bearish")
+                   : (Language==LNG_TH?"ไม่ชัดเจน":"Unknown");
+   color biasClr = g_StructureBias==1?Dashboard_Green:(g_StructureBias==-1?Dashboard_Red:Dashboard_Text);
+   DashLabel("bias", StringFormat("%s: %s", (Language==LNG_TH?"โครงสร้าง":"Structure"), biasTxt),
              x, y, biasClr); y+=rh;
+
+   string setupTxt;
+   color setupClr = Dashboard_Text;
+   if(g_SetupArmed)
+   {
+      setupTxt = StringFormat("%s %s: %.2f - %.2f",
+                 (Language==LNG_TH?"รอย้อนเข้าโซน":"Waiting Retest"),
+                 g_SetupBias==1?"BUY":"SELL", g_ZoneBottom, g_ZoneTop);
+      setupClr = Dashboard_Yellow;
+   }
+   else
+   {
+      setupTxt = (Language==LNG_TH?"สถานะ: รอ CHoCH/BOS":"Status: Waiting for CHoCH/BOS");
+   }
+   DashLabel("setup", setupTxt, x, y, setupClr); y+=rh;
 
    bool hasPos = PositionSelectForMagic();
    string posTxt;
@@ -640,7 +827,7 @@ void UpdateDashboard()
    }
    else
    {
-      posTxt = (Language==LNG_TH?"สถานะ: รอสัญญาณ Sniper":"Status: Waiting for Sniper Setup");
+      posTxt = (Language==LNG_TH?"ไม่มีออเดอร์เปิดอยู่":"No Open Position");
    }
    DashLabel("pos", posTxt, x, y, posClr); y+=rh;
 
