@@ -1821,6 +1821,8 @@ void DrawKV(int x, int y, int w, string label, string value, color labelColor, c
    int fs = SF(fontSize);
    DashCanvas.FontSet("Arial", fs);
    DashCanvas.TextOut(x, y, label, ColorToARGB(labelColor));
+   // ค่า (value) ใช้ bold เสมอ - ตัวบางที่ anti-alias บนพื้นเข้มดูจางง่าย ทำให้ตัวเลขที่สำคัญอ่านชัดกว่า label
+   DashCanvas.FontSet("Arial", fs, FW_BOLD);
    int vw = EstimateTextWidth(value, fs);
    DashCanvas.TextOut(x + w - vw, y, value, ColorToARGB(valueColor));
 }
