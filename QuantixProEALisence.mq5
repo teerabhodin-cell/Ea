@@ -241,6 +241,7 @@ void   PersistAllStats();
 // UI Engine Functions
 void InitDashboard();
 void DeleteDashboard();
+void ShowUnlicensedWarning();
 void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, int openPos, int pendingOrders);
 void CreateButton(string name, int x, int y, int w, int h, string text, color bgClr, color textClr, int fontSize = 9);
 string GetUIString(string thText, string enText);
@@ -957,7 +958,8 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-   Comment(""); // เคลียร์คำเตือน "NOT LICENSED" (ถ้ามี) ไม่ให้ค้างบนชาร์ตหลัง EA ถูกถอด
+   // DeleteDashboard() ด้านล่างลบ CANVAS_NAME (ทั้งตอน dashboard ปกติ และตอน warning
+   // "NOT LICENSED") อยู่แล้ว เพราะทั้งคู่ขึ้นต้นด้วย UI_PREFIX เหมือนกัน ไม่ต้องเคลียร์แยก
    PersistAllStats(); // เซฟรอบสุดท้ายตอนถอด/รีสตาร์ท EA กันพลาดช่วงระหว่างรอบ periodic save
    if(atrHandle != INVALID_HANDLE) IndicatorRelease(atrHandle);
    if(emaHandle != INVALID_HANDLE) IndicatorRelease(emaHandle);
@@ -1002,14 +1004,12 @@ void OnTick()
 {
    // Hard License Lock: single choke point - every trading path (grid entries, Force
    // Hedge, trailing stop, everything) is reached only from inside OnTick(), so
-   // stopping here before any of it runs is a complete, functional lock. Shows a
-   // persistent on-chart Comment() warning so it's obvious why nothing is happening,
-   // instead of the EA looking silently broken.
+   // stopping here before any of it runs is a complete, functional lock. Draws the
+   // same Canvas-styled warning card as the rest of the dashboard instead of a plain
+   // Comment(), so it's obvious this is a licensing block, not the EA looking broken.
    if(!IsLicensed)
    {
-      if(!IsTestingMode)
-         Comment(StringFormat("🔒 QuantixPro EA NOT LICENSED\nAccount #%d is not registered.\nContact the developer to register this account.",
-                               AccountInfoInteger(ACCOUNT_LOGIN)));
+      ShowUnlicensedWarning();
       return;
    }
 
@@ -2537,6 +2537,46 @@ double ComputeUIScale()
    if(scale > 2.4) scale = 2.4;   // กันขยายจนใหญ่เกินจอ
    if(scale < 0.4) scale = 0.4;   // กันหดจนเล็กเกินไป (SF() มีพื้นฟอนต์กันไว้อีกชั้น)
    return scale;
+}
+
+//+------------------------------------------------------------------+
+//| Persistent Canvas-drawn warning shown instead of the normal       |
+//| dashboard whenever the current account isn't in                  |
+//| LicensedAccountNumbers. Draws once (checks ObjectFind first) -    |
+//| OnTick() calls this every tick while unlicensed, so this must     |
+//| stay cheap and idempotent, same styling as the rest of the        |
+//| Canvas dashboard (dark card, colored border, UIFontSet text).     |
+//+------------------------------------------------------------------+
+void ShowUnlicensedWarning()
+{
+   if(IsTestingMode) return;
+   if(ObjectFind(0, CANVAS_NAME) >= 0) return; // วาดครั้งเดียวพอ ไม่ต้องรีเฟรชทุกทิค
+
+   UIScale = ComputeUIScale();
+   int w = S(560);
+   int h = S(150);
+
+   DashCanvas.CreateBitmapLabel(CANVAS_NAME, 15, 15, w, h, COLOR_FORMAT_ARGB_NORMALIZE);
+   ObjectSetInteger(0, CANVAS_NAME, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, CANVAS_NAME, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, CANVAS_NAME, OBJPROP_BACK, false);
+
+   DashCanvas.Erase(ColorToARGB(C'8,8,16'));
+   DashCanvas.FillRectangle(0, 0, w, h, ColorToARGB(C'26,10,10'));
+   DashCanvas.Rectangle(0, 0, w - 1, h - 1, ColorToARGB(C'220,38,38'));
+
+   UIFontSet(SF(22), FW_BOLD);
+   DashCanvas.TextOut(S(18), S(16), "🔒 " + GetUIString("EA ยังไม่ได้ลงทะเบียน", "EA NOT LICENSED"), ColorToARGB(C'239,68,68'));
+
+   UIFontSet(SF(16), FW_BOLD);
+   string accLine = StringFormat("Account #%d", AccountInfoInteger(ACCOUNT_LOGIN));
+   DashCanvas.TextOut(S(18), S(58), accLine, ColorToARGB(clrWhite));
+
+   UIFontSet(SF(14));
+   DashCanvas.TextOut(S(18), S(90), GetUIString("บัญชีนี้ไม่ได้รับอนุญาตให้ใช้ EA นี้", "This account is not authorized to run this EA."), ColorToARGB(C'200,200,215'));
+   DashCanvas.TextOut(S(18), S(112), GetUIString("ติดต่อผู้พัฒนาเพื่อลงทะเบียนบัญชีนี้", "Contact the developer to register this account."), ColorToARGB(C'200,200,215'));
+
+   DashCanvas.Update();
 }
 
 //+------------------------------------------------------------------+
