@@ -42,6 +42,10 @@ input bool   UseATRDistance         = true;    // Use ATR Distance (ระยะ
 input int    ATR_Period             = 14;      // ATR Period
 input double ATR_Multiplier         = 1.05;    // ATR Multiplier
 input bool   UseAdaptiveATRGrid     = false;   // Per-Side ATR Distance (แยกระยะต่อฝั่ง)
+input bool   UseBBDistance          = false;   // Use Bollinger Bands Distance (ระยะตาม BB, สำคัญกว่า ATR ถ้าเปิดพร้อมกัน)
+input int    BB_Period              = 20;      // BB Period
+input double BB_Deviation           = 2.0;     // BB Deviation
+input double BB_Multiplier          = 1.0;     // BB Width Multiplier
 input int    DistancePoints         = 250;     // Fixed Distance, pts (ระยะคงที่)
 input ulong  MagicNumber            = 112233;
 
@@ -180,10 +184,11 @@ datetime EventLogTimeVal[EVENT_LOG_MAX];
 int      DayStartDay          = -1; // dt.day_of_year ของวันที่รีเซ็ต DailyRealizedProfit ไว้ล่าสุด
 double   DailyRealizedProfit  = 0.0; // กำไรวันนี้แบบ "ปิดรอบแล้ว" เท่านั้น - บวกเพิ่มตอนบาสเก็ตปิดจริง ไม่ใช่ floating P/L สด
 
-// Handle สำหรับอินดิเคเตอร์ ATR / EMA / Multi-Timeframe EMA
+// Handle สำหรับอินดิเคเตอร์ ATR / EMA / Multi-Timeframe EMA / Bollinger Bands
 int      atrHandle       = INVALID_HANDLE;
 int      emaHandle       = INVALID_HANDLE;
 int      mtfEmaHandle    = INVALID_HANDLE;
+int      bbHandle        = INVALID_HANDLE;
 
 // --- [ UI OPTIMIZATION GLOBAL VARS ] ---
 uint     lastUIUpdateTime = 0;
@@ -893,6 +898,16 @@ int OnInit()
       }
    }
 
+   if(UseBBDistance)
+   {
+      bbHandle = iBands(_Symbol, _Period, BB_Period, 0, BB_Deviation, PRICE_CLOSE);
+      if(bbHandle == INVALID_HANDLE)
+      {
+         Print("Failed to create Bollinger Bands indicator handle.");
+         return(INIT_FAILED);
+      }
+   }
+
    if(UseEMAFilter)
    {
       emaHandle = iMA(_Symbol, _Period, EMA_Period, 0, MODE_EMA, PRICE_CLOSE);
@@ -935,6 +950,7 @@ void OnDeinit(const int reason)
    if(atrHandle != INVALID_HANDLE) IndicatorRelease(atrHandle);
    if(emaHandle != INVALID_HANDLE) IndicatorRelease(emaHandle);
    if(mtfEmaHandle != INVALID_HANDLE) IndicatorRelease(mtfEmaHandle);
+   if(bbHandle != INVALID_HANDLE) IndicatorRelease(bbHandle);
    DeleteVisualTSLine();
    DeleteDashboard();
 }
@@ -1244,10 +1260,31 @@ bool IsPerSideATRActive()
 }
 
 //+------------------------------------------------------------------+
-//| Calculate Dynamic Grid Distance using ATR                        |
+//| Calculate Dynamic Grid Distance using Bollinger Bands / ATR      |
+//| ลำดับความสำคัญ: BB Distance (ถ้าเปิดและอ่านค่าได้) > ATR Distance   |
+//| (ถ้าเปิดและอ่านค่าได้) > Fixed Distance (fallback สุดท้ายเสมอ)      |
 //+------------------------------------------------------------------+
 int GetDynamicGridDistance()
 {
+   if(UseBBDistance && bbHandle != INVALID_HANDLE)
+   {
+      double upperBuf[], lowerBuf[];
+      ArraySetAsSeries(upperBuf, true);
+      ArraySetAsSeries(lowerBuf, true);
+
+      // iBands buffer index: 0=Base Line, 1=Upper Band, 2=Lower Band
+      if(CopyBuffer(bbHandle, 1, 1, 1, upperBuf) > 0 && CopyBuffer(bbHandle, 2, 1, 1, lowerBuf) > 0)
+      {
+         double bbWidth = upperBuf[0] - lowerBuf[0];
+         if(bbWidth > 0)
+         {
+            double bbPoints = (bbWidth * BB_Multiplier) / _Point;
+            return (int)MathMax(10 * m_multiplier, MathRound(bbPoints));
+         }
+      }
+      // ดึงค่า BB ไม่สำเร็จ (buffer ยังไม่พร้อม/error) - ไหลลงไปเช็ค ATR/Fixed ด้านล่างแทน
+   }
+
    if(!UseATRDistance || atrHandle == INVALID_HANDLE)
       return DistancePoints * m_multiplier;
 
