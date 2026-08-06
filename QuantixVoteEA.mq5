@@ -35,7 +35,7 @@ enum ENUM_SLTP_MODE
 //=========================== INPUT ================================//
 input group "===== 1. Language & Round Timing ====="
 input ENUM_LANGUAGE Language            = LNG_TH;  // Select Language (default: Thai)
-input int    AnalysisIntervalSeconds    = 60;      // Analysis Round Interval, sec (ความถี่วิเคราะห์)
+input int    AnalysisIntervalSeconds    = 15;      // Analysis Round Interval, sec (ความถี่วิเคราะห์)
 
 input group "===== 2. Daily Limit ====="
 input bool   UseDailyProfitTarget       = true;    // Stop When Daily Profit Target Hit
@@ -52,13 +52,14 @@ input int    EndHour                    = 22;      // Stop Hour
 input int    EndMinute                  = 0;
 
 input group "===== 4. Voting Sources (3 Timeframes) ====="
-input ENUM_TIMEFRAMES VoteTF1           = PERIOD_M15; // Source 1 Timeframe
-input ENUM_TIMEFRAMES VoteTF2           = PERIOD_H1;  // Source 2 Timeframe
-input ENUM_TIMEFRAMES VoteTF3           = PERIOD_H4;  // Source 3 Timeframe
-input int    EMA_Fast_Period            = 21;      // EMA Fast Period (each source)
-input int    EMA_Slow_Period            = 55;      // EMA Slow Period (each source)
+input ENUM_TIMEFRAMES VoteTF1           = PERIOD_M5;  // Source 1 Timeframe
+input ENUM_TIMEFRAMES VoteTF2           = PERIOD_M15; // Source 2 Timeframe
+input ENUM_TIMEFRAMES VoteTF3           = PERIOD_H1;  // Source 3 Timeframe
+input int    EMA_Fast_Period            = 13;      // EMA Fast Period (each source)
+input int    EMA_Slow_Period            = 34;      // EMA Slow Period (each source)
 input int    RSI_Period                 = 14;      // RSI Period (each source)
 input int    ATR_Period                 = 14;      // ATR Period (confidence scaling + SL/TP)
+input double MinEMASeparationATRRatio   = 0.15;    // Min EMA Separation vs ATR to Count as Directional (0=off) - กรอง noise ต่อแหล่ง
 input double MinAvgConfidencePercent    = 60.0;    // Min Average Confidence % to Trade
 
 input group "===== 5. Position Sizing ====="
@@ -310,14 +311,21 @@ bool GetSourceVote(int idx, int &voteOut, double &confOut)
    if(CopyBuffer(g_hATR[idx],     0, 1, 1, atr)     < 1) return false;
    if(atr[0] <= 0) return false;
 
-   double emaDiff  = emaFast[0] - emaSlow[0];
-   double emaScore = MathMin(100.0, MathAbs(emaDiff)/atr[0]*100.0);
-   double rsiScore = MathMin(100.0, MathAbs(rsi[0]-50.0)*2.0);
+   double emaDiff       = emaFast[0] - emaSlow[0];
+   double emaSeparation = MathAbs(emaDiff) / atr[0];
+   double emaScore      = MathMin(100.0, emaSeparation*100.0);
+   double rsiScore      = MathMin(100.0, MathAbs(rsi[0]-50.0)*2.0);
    confOut = (emaScore + rsiScore) / 2.0;
 
    voteOut = 0;
-   if(emaDiff>0 && rsi[0]>50.0)      voteOut = 1;
-   else if(emaDiff<0 && rsi[0]<50.0) voteOut = -1;
+   // A tiny EMA separation is noise, not a real trend lean on this timeframe -
+   // only let the source vote a direction once it clears a minimum gap vs ATR.
+   bool separationOK = (MinEMASeparationATRRatio<=0) || (emaSeparation >= MinEMASeparationATRRatio);
+   if(separationOK)
+   {
+      if(emaDiff>0 && rsi[0]>50.0)      voteOut = 1;
+      else if(emaDiff<0 && rsi[0]<50.0) voteOut = -1;
+   }
 
    return true;
 }
