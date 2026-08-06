@@ -93,7 +93,7 @@ input double RecoveryLotBoost          = 2.0;  // Recovery Lot Boost
 
 input group "===== 8. Overflow ====="
 input bool   UseLevelUnlock      = true;    // Level Unlock (ปลดล็อคชั้น)
-input int    MaxUnlockedLevels   = 0;       // Max Unlocked Levels (0=∞)
+input int    MaxUnlockedLevels   = 10;      // Max Unlocked Levels (0=∞)
 input bool   UseForceHedgeOnDD          = false;  // Force Hedge on DD
 input double ForceHedgeDD_TriggerPercent = 10.0;  // Force Hedge DD Trigger %
 input double ForceHedgeResetPercent      = 5.0;   // Force Hedge Reset %
