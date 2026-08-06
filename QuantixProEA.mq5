@@ -46,6 +46,7 @@ input bool   UseBBDistance          = false;   // Use Bollinger Bands Distance (
 input int    BB_Period              = 20;      // BB Period
 input double BB_Deviation           = 2.0;     // BB Deviation
 input double BB_Multiplier          = 1.0;     // BB Width Multiplier
+input bool   UseAdaptiveBBGrid      = false;   // Per-Side BB Distance (แยกระยะต่อฝั่งตาม BB)
 input int    DistancePoints         = 250;     // Fixed Distance, pts (ระยะคงที่)
 input ulong  MagicNumber            = 112233;
 
@@ -223,7 +224,7 @@ void DeleteVisualTSLine();
 void UpdateDrawdownTracker();
 
 int GetDynamicGridDistance();
-bool IsPerSideATRActive();
+bool IsPerSideDistanceActive();
 void RecalculateBasePrice();
 void ReconcileGridStateOnInit();
 ENUM_ORDER_TYPE_FILLING GetBestFillingMode();
@@ -357,8 +358,8 @@ void ReconcileGridStateOnInit()
    // เหมือนกับ live pin ใน CheckAndExecuteVirtualGrid ที่แก้ไปแล้ว ผูกกับราคาไม้ล่าสุดของอีกฝั่ง
    // ได้เฉพาะ Per-Side ATR เท่านั้น โหมด Fixed/ATR ปกติต้องกลับไปที่ GridBasePrice (ฐานจริงที่เพิ่ง
    // ประมาณย้อนกลับไว้ด้านบน) ไม่งั้นฝั่งที่ยังว่างจะเปิดไม้ก่อนถึงเส้นฐานเหมือนบั๊กที่เพิ่งแก้ไปแทน
-   GridBasePriceBuy  = (buyCount  > 0) ? lastBuyPrice  : ((IsPerSideATRActive() && sellCount > 0) ? lastSellPrice : GridBasePrice);
-   GridBasePriceSell = (sellCount > 0) ? lastSellPrice : ((IsPerSideATRActive() && buyCount  > 0) ? lastBuyPrice  : GridBasePrice);
+   GridBasePriceBuy  = (buyCount  > 0) ? lastBuyPrice  : ((IsPerSideDistanceActive() && sellCount > 0) ? lastSellPrice : GridBasePrice);
+   GridBasePriceSell = (sellCount > 0) ? lastSellPrice : ((IsPerSideDistanceActive() && buyCount  > 0) ? lastBuyPrice  : GridBasePrice);
 
    BuyGapAnchor  = 0.0;
    SellGapAnchor = 0.0;
@@ -1251,12 +1252,15 @@ void UpdateDrawdownTracker()
    }
 }
 
-// Per-Side ATR Distance เป็นส่วนขยายของ ATR Distance เท่านั้น - ถ้าปิด ATR Distance ไว้
-// (ใช้ Fixed Distance) ต่อให้เปิด Per-Side ก็ต้องไม่มีผลอะไรเลย เพราะไม่มี "ระยะจาก ATR สด"
-// ให้แยกต่อฝั่งตั้งแต่แรก
-bool IsPerSideATRActive()
+// Per-Side ATR/BB Distance เป็นส่วนขยายของ ATR Distance / BB Distance เท่านั้น - ถ้าปิดตัวหลัก
+// ไว้ (ใช้ Fixed Distance) ต่อให้เปิด Per-Side ของตัวนั้นก็ต้องไม่มีผลอะไรเลย เพราะไม่มี "ระยะสด"
+// ให้แยกต่อฝั่งตั้งแต่แรก - เช็คคู่กันตามแหล่งระยะที่ GetDynamicGridDistance() เลือกใช้จริง (BB มา
+// ก่อน ATR เสมอถ้าเปิดทั้งคู่ ดู GetDynamicGridDistance())
+bool IsPerSideDistanceActive()
 {
-   return UseATRDistance && UseAdaptiveATRGrid;
+   if(UseBBDistance)  return UseAdaptiveBBGrid;
+   if(UseATRDistance) return UseAdaptiveATRGrid;
+   return false;
 }
 
 //+------------------------------------------------------------------+
@@ -1498,8 +1502,8 @@ void CheckAndExecuteVirtualGrid()
 
    // UseAdaptiveATRGrid: แต่ละฝั่งใช้ระยะของตัวเอง (คำนวณสดจาก ATR ตอนฝั่งนั้น fill ล่าสุด)
    // แทนที่จะใช้ stepDistance ตัวเดียวร่วมกันทั้งสองฝั่ง - ฝั่งที่ยังไม่ fill จะไม่ถูกกระทบเลย
-   int buyStepDistance  = IsPerSideATRActive() ? ((BuyGridDistance  > 0) ? BuyGridDistance  : GetDynamicGridDistance()) : stepDistance;
-   int sellStepDistance = IsPerSideATRActive() ? ((SellGridDistance > 0) ? SellGridDistance : GetDynamicGridDistance()) : stepDistance;
+   int buyStepDistance  = IsPerSideDistanceActive() ? ((BuyGridDistance  > 0) ? BuyGridDistance  : GetDynamicGridDistance()) : stepDistance;
+   int sellStepDistance = IsPerSideDistanceActive() ? ((SellGridDistance > 0) ? SellGridDistance : GetDynamicGridDistance()) : stepDistance;
 
    MqlTradeRequest request;
    MqlTradeResult  result;
@@ -1584,11 +1588,11 @@ void CheckAndExecuteVirtualGrid()
                // here made Sell's real trigger silently drift off of GridBasePrice
                // (which the dashboard shows as the fixed base), so the still-empty
                // side ended up opening before/past what the UI displayed as its base.
-               if(IsPerSideATRActive() && sellCount == 0) GridBasePriceSell = ask;
+               if(IsPerSideDistanceActive() && sellCount == 0) GridBasePriceSell = ask;
                BuyGapAnchor = 0.0; // lastBuyPrice now reflects this real fill, override no longer needed
                // ฝั่ง Buy fill แล้ว - คำนวณระยะ Buy รอบถัดไปใหม่จาก ATR สด ณ ตอนนี้
                // ฝั่ง Sell ที่ยังไม่ fill ไม่ถูกแตะเลย ยังรอที่เป้าเดิมต่อไป
-               if(IsPerSideATRActive()) BuyGridDistance = GetDynamicGridDistance();
+               if(IsPerSideDistanceActive()) BuyGridDistance = GetDynamicGridDistance();
                LogEvent(StringFormat(GetUIString("เปิดออเดอร์ Buy ชั้น %d", "Opened Buy Level %d"), nextLevel));
                return;
             }
@@ -1668,11 +1672,11 @@ void CheckAndExecuteVirtualGrid()
                LastOrderSentTime = TimeCurrent();
                // Symmetric to the Buy-fills-first case above - same Per-Side ATR gate,
                // same reasoning: outside that mode the base must stay put.
-               if(IsPerSideATRActive() && buyCount == 0) GridBasePriceBuy = bid;
+               if(IsPerSideDistanceActive() && buyCount == 0) GridBasePriceBuy = bid;
                SellGapAnchor = 0.0; // lastSellPrice now reflects this real fill, override no longer needed
                // ฝั่ง Sell fill แล้ว - คำนวณระยะ Sell รอบถัดไปใหม่จาก ATR สด ณ ตอนนี้
                // ฝั่ง Buy ที่ยังไม่ fill ไม่ถูกแตะเลย ยังรอที่เป้าเดิมต่อไป
-               if(IsPerSideATRActive()) SellGridDistance = GetDynamicGridDistance();
+               if(IsPerSideDistanceActive()) SellGridDistance = GetDynamicGridDistance();
                LogEvent(StringFormat(GetUIString("เปิดออเดอร์ Sell ชั้น %d", "Opened Sell Level %d"), nextLevel));
                return;
             }
@@ -2163,14 +2167,14 @@ double GetNextGridTargetPrice(bool isBuy)
    }
 
    int stepDistance     = (CachedGridDistance > 0) ? CachedGridDistance : GetDynamicGridDistance();
-   int buyStepDistance  = IsPerSideATRActive() ? ((BuyGridDistance  > 0) ? BuyGridDistance  : GetDynamicGridDistance()) : stepDistance;
-   int sellStepDistance = IsPerSideATRActive() ? ((SellGridDistance > 0) ? SellGridDistance : GetDynamicGridDistance()) : stepDistance;
+   int buyStepDistance  = IsPerSideDistanceActive() ? ((BuyGridDistance  > 0) ? BuyGridDistance  : GetDynamicGridDistance()) : stepDistance;
+   int sellStepDistance = IsPerSideDistanceActive() ? ((SellGridDistance > 0) ? SellGridDistance : GetDynamicGridDistance()) : stepDistance;
 
    // เฉพาะ Per-Side ATR Distance ที่ "ใช้งานจริง" (ต้องเปิด ATR Distance ด้วย ไม่งั้น Per-Side
    // ไม่มีผลอะไรเลย) เท่านั้นที่ทำให้ระยะแต่ละฝั่งไม่เท่ากันและเปลี่ยนสดทุกครั้งที่ฝั่งนั้น fill -
    // เลยให้ฐานเลื่อนตามไม้ล่าสุดจริงเฉพาะโหมดนี้ ส่วน ATR Distance ปกติ (ไม่ per-side) หรือ
    // Fixed Distance ให้ยึดฐานเดิมที่ level 1 ตายตัวเสมอ
-   bool dynamicTarget = IsPerSideATRActive();
+   bool dynamicTarget = IsPerSideDistanceActive();
 
    // ระดับ 2+ ของทั้ง 2 ฝั่ง เคาะสูตร "ไม้ล่าสุดจริง +/- ระยะ" ในเอนจิ้นจริงเสมอ ไม่ว่าโหมดไหน -
    // ความแตกต่างของ dynamicTarget มีผลแค่ระดับ 1 เท่านั้น (ฐานคงที่ vs ไล่ตามราคาที่อีกฝั่งเพิ่ง fill)
