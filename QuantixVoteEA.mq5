@@ -32,6 +32,12 @@ enum ENUM_SLTP_MODE
    SLTP_FIXED_POINTS  // Fixed Points
 };
 
+enum ENUM_TRAIL_MODE
+{
+   TRAIL_ATR,          // ATR-based (adapts to real volatility)
+   TRAIL_FIXED_POINTS  // Fixed Points
+};
+
 //=========================== INPUT ================================//
 input group "===== 1. Language & Round Timing ====="
 input ENUM_LANGUAGE Language            = LNG_TH;  // Select Language (default: Thai)
@@ -83,12 +89,23 @@ input bool   UseBreakeven               = true;    // Move SL to Breakeven
 input double BreakevenTriggerPoints     = 300;     // Breakeven Trigger, pts
 input double BreakevenLockPoints        = 20;      // Breakeven Lock, pts
 input bool   UseTrailingStop            = true;    // Trailing Stop
-input double TrailingStartPoints        = 400;     // Trailing Start, pts
-input double TrailingDistancePoints     = 250;     // Trailing Distance, pts
+input ENUM_TRAIL_MODE TrailingMode      = TRAIL_ATR; // Trailing Distance Mode
+input double TrailingStartATRMult       = 1.5;     // Trailing Start = ATR x Mult (if TRAIL_ATR)
+input double TrailingATRMult            = 2.0;     // Trailing Distance = ATR x Mult (if TRAIL_ATR)
+input double TrailingStartPoints        = 400;     // Trailing Start, pts (if TRAIL_FIXED_POINTS)
+input double TrailingDistancePoints     = 250;     // Trailing Distance, pts (if TRAIL_FIXED_POINTS)
 input bool   UseQuickProfitClose        = false;   // Close Early at Small Profit Target
 input double QuickProfitTargetUSD       = 5.0;     // Quick Profit Target, $
 
-input group "===== 8. Dashboard ====="
+input group "===== 8. Total Drawdown Guard (Kill Switch) ====="
+input bool   UseTotalDDGuard            = true;    // Halt Trading if Equity Drops X% from Peak
+input double MaxTotalDDPercent          = 10.0;    // Max Total DD % (from Equity Peak)
+
+input group "===== 9. Support/Resistance Pivot Filter ====="
+input bool   UsePivotFilter             = true;    // Require Price Near a Daily Pivot Level to Enter
+input double PivotProximityATRMult      = 0.5;     // Max Distance to Nearest Pivot = ATR x Mult
+
+input group "===== 10. Dashboard ====="
 input bool   ShowDashboard              = true;
 input bool   ShowDashboardInTester      = false;   // Show Dashboard during Strategy Tester
 input int    Dashboard_X                = 15;
@@ -112,6 +129,17 @@ datetime currentDay       = 0;
 double   dayStartEquity   = 0;
 bool     dailyHalted      = false;
 string   haltReason       = "";
+
+double   equityPeak       = 0;
+bool     ddGuardHalted    = false;
+string   ddGuardReason    = "";
+
+double   g_PivotPP  = 0;
+double   g_PivotR1  = 0;
+double   g_PivotR2  = 0;
+double   g_PivotS1  = 0;
+double   g_PivotS2  = 0;
+bool     g_HavePivots = false;
 
 int      g_LastVote[3]    = {0,0,0};
 double   g_LastConf[3]    = {0,0,0};
@@ -155,7 +183,9 @@ int OnInit()
    }
 
    dayStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   equityPeak     = dayStartEquity;
    currentDay     = DayStart(TimeCurrent());
+   RecalcPivots();
 
    if(EffectiveShowDashboard()) CreateDashboard();
 
@@ -182,10 +212,11 @@ void OnTick()
    ManageNewDay();
    ManageOpenPosition();      // trailing / breakeven / quick-profit run every tick, concurrently
    CheckDailyLimits();        // closes everything + halts for the day the moment a target/limit is hit
+   CheckTotalDDGuard();       // permanent kill switch if equity drops too far from its peak
 
    if(EffectiveShowDashboard()) UpdateDashboard();
 
-   if(dailyHalted) return;
+   if(dailyHalted || ddGuardHalted) return;
 
    if(TimeCurrent() - lastAnalysisTime < AnalysisIntervalSeconds) return;
    lastAnalysisTime = TimeCurrent();
@@ -196,6 +227,7 @@ void OnTick()
 
    if(g_FinalSignal==0) return;
    if(g_AvgConfidence < MinAvgConfidencePercent) return;
+   if(!PassPivotFilter()) return;
 
    bool hasPos = PositionSelectForMagic();
    long posType = hasPos ? PositionGetInteger(POSITION_TYPE) : -1;
@@ -238,7 +270,49 @@ void ManageNewDay()
       dayStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
       dailyHalted    = false;
       haltReason     = "";
+      RecalcPivots(); // classic pivots use the prior D1 bar - recompute once the day rolls over
    }
+}
+
+// Classic daily Pivot Points from the previous completed D1 bar - PP/R1/R2/S1/S2.
+// This is the standard "dynamic" pivot: it re-anchors itself automatically every day.
+void RecalcPivots()
+{
+   double h = iHigh(_Symbol, PERIOD_D1, 1);
+   double l = iLow(_Symbol, PERIOD_D1, 1);
+   double c = iClose(_Symbol, PERIOD_D1, 1);
+   if(h<=0 || l<=0) { g_HavePivots=false; return; }
+
+   g_PivotPP = (h+l+c)/3.0;
+   g_PivotR1 = 2*g_PivotPP - l;
+   g_PivotS1 = 2*g_PivotPP - h;
+   g_PivotR2 = g_PivotPP + (h-l);
+   g_PivotS2 = g_PivotPP - (h-l);
+   g_HavePivots = true;
+}
+
+// Extra confluence gate: only trade when price is currently near one of the
+// day's significant pivot levels, rather than in the middle of no-man's-land.
+bool PassPivotFilter()
+{
+   if(!UsePivotFilter) return true;
+   if(!g_HavePivots) return false;
+
+   double atr[];
+   if(CopyBuffer(hATR_Exec, 0, 1, 1, atr) < 1) return false;
+   if(atr[0]<=0) return false;
+
+   double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double levels[5] = {g_PivotPP, g_PivotR1, g_PivotR2, g_PivotS1, g_PivotS2};
+
+   double minDist = DBL_MAX;
+   for(int i=0; i<5; i++)
+   {
+      double d = MathAbs(price - levels[i]);
+      if(d < minDist) minDist = d;
+   }
+
+   return (minDist <= atr[0]*PivotProximityATRMult);
 }
 
 bool IsWithinSession()
@@ -268,6 +342,32 @@ void CheckDailyLimits()
       dailyHalted = true;
       if(hitTarget) haltReason = (Language==LNG_TH) ? "ถึงเป้ากำไรวันนี้แล้ว รอรีเซ็ตเที่ยงคืน" : "Daily profit target hit - waiting for midnight reset";
       else          haltReason = (Language==LNG_TH) ? "ถึงจุดขาดทุนวันนี้แล้ว รอรีเซ็ตเที่ยงคืน" : "Daily loss limit hit - waiting for midnight reset";
+   }
+}
+
+// Kill switch: tracks the all-time equity high-water mark and permanently
+// halts new entries once equity drops MaxTotalDDPercent below it, closing
+// everything the moment it trips. Unlike the daily limit this does NOT
+// reset automatically - equityPeak never decreases, so it requires the
+// account/EA to be reviewed and restarted deliberately (same protective
+// behavior as QuantixSniperGoldEA's Total DD Guard).
+void CheckTotalDDGuard()
+{
+   if(!UseTotalDDGuard) return;
+
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   if(equity > equityPeak) equityPeak = equity;
+
+   if(ddGuardHalted) return;
+
+   double ddPct = (equityPeak>0) ? (equityPeak-equity)/equityPeak*100.0 : 0;
+   if(ddPct >= MaxTotalDDPercent)
+   {
+      CloseAllPositions();
+      ddGuardHalted = true;
+      ddGuardReason = (Language==LNG_TH)
+                      ? StringFormat("หยุดเทรดถาวร: DD รวม %.1f%% เกินกำหนด (Peak %.2f)", ddPct, equityPeak)
+                      : StringFormat("Halted permanently: Total DD %.1f%% exceeded (Peak %.2f)", ddPct, equityPeak);
    }
 }
 
@@ -503,8 +603,21 @@ void ManageOpenPosition()
 
    if(UseTrailingStop)
    {
-      double trigDist  = TrailingStartPoints*_Point;
-      double trailDist = TrailingDistancePoints*_Point;
+      double trigDist, trailDist;
+
+      if(TrailingMode==TRAIL_ATR)
+      {
+         double atr[];
+         if(CopyBuffer(hATR_Exec, 0, 0, 1, atr) < 1) return;
+         trigDist  = atr[0]*TrailingStartATRMult;
+         trailDist = atr[0]*TrailingATRMult;
+      }
+      else
+      {
+         trigDist  = TrailingStartPoints*_Point;
+         trailDist = TrailingDistancePoints*_Point;
+      }
+
       if(type==POSITION_TYPE_BUY && (bid-openPrice)>=trigDist)
       {
          double newSL = bid - trailDist;
@@ -548,7 +661,7 @@ void CreateDashboard()
       ObjectSetInteger(0, bg, OBJPROP_XDISTANCE, Dashboard_X-10);
       ObjectSetInteger(0, bg, OBJPROP_YDISTANCE, Dashboard_Y-10);
       ObjectSetInteger(0, bg, OBJPROP_XSIZE, 340);
-      ObjectSetInteger(0, bg, OBJPROP_YSIZE, 280);
+      ObjectSetInteger(0, bg, OBJPROP_YSIZE, 320);
       ObjectSetInteger(0, bg, OBJPROP_BGCOLOR, Dashboard_BG);
       ObjectSetInteger(0, bg, OBJPROP_BORDER_TYPE, BORDER_FLAT);
       ObjectSetInteger(0, bg, OBJPROP_COLOR, clrDimGray);
@@ -625,7 +738,21 @@ void UpdateDashboard()
    }
    DashLabel("pos", posTxt, x, y, posClr); y+=rh;
 
-   string statusTxt = dailyHalted ? haltReason : (Language==LNG_TH?"สถานะ: เทรดได้ปกติ":"Status: Active");
-   DashLabel("status", statusTxt, x, y, dailyHalted?Dashboard_Red:Dashboard_Green); y+=rh;
+   double ddPct = equityPeak>0 ? (equityPeak-eq)/equityPeak*100.0 : 0;
+   DashLabel("dd", StringFormat("%s: %.2f%%  (%s: %.2f)",
+             (Language==LNG_TH?"DD รวม":"Total DD"), ddPct,
+             (Language==LNG_TH?"จุดสูงสุด":"Peak"), equityPeak),
+             x, y, ddPct>=MaxTotalDDPercent*0.7?Dashboard_Red:Dashboard_Text); y+=rh;
+
+   if(UsePivotFilter)
+   {
+      string pivTxt = g_HavePivots
+                       ? StringFormat("Pivot PP:%.2f R1:%.2f S1:%.2f", g_PivotPP, g_PivotR1, g_PivotS1)
+                       : (Language==LNG_TH?"Pivot: ยังไม่มีข้อมูล":"Pivot: no data yet");
+      DashLabel("pivot", pivTxt, x, y, Dashboard_Text); y+=rh;
+   }
+
+   string statusTxt = ddGuardHalted ? ddGuardReason : (dailyHalted ? haltReason : (Language==LNG_TH?"สถานะ: เทรดได้ปกติ":"Status: Active"));
+   DashLabel("status", statusTxt, x, y, (dailyHalted||ddGuardHalted)?Dashboard_Red:Dashboard_Green); y+=rh;
 }
 //+------------------------------------------------------------------+
