@@ -64,6 +64,8 @@ input bool   UseMTFFilter          = false;   // Use MTF Filter (ใช้ MTF)
 input ENUM_TIMEFRAMES MTF_Period   = PERIOD_H1; // MTF Timeframe
 
 input group "===== 5. Lot & Capital ====="
+input bool   UseLotRiskPercent      = false;   // Use Lot Risk % (คำนวณ Lot จาก % ความเสี่ยง, สำคัญกว่า Dynamic Lot ถ้าเปิดพร้อมกัน)
+input double LotRiskPercent         = 1.0;     // Risk % of Equity (ต่อระยะ Grid ปัจจุบัน 1 ช่วง)
 input bool   UseDynamicLot          = false;   // Dynamic Lot by Equity (Lot ตาม Equity)
 input double BalancePerLot          = 8000.0;  // Equity per 0.01 Lot
 input bool   UseEquityLock          = false;   // Equity Lock (ล็อคพอร์ต)
@@ -502,7 +504,24 @@ double CalcEmergencySL(bool isBuy, double entryPrice, double point)
 double GetCalculatedLotSize(int nextLevel)
 {
    double base = BaseLot;
-   if(UseDynamicLot)
+   // Lot Risk %: คำนวณ base lot จาก "ถ้าราคาขยับผิดทาง 1 ช่วงระยะ Grid ปัจจุบัน จะเสียไม่เกิน
+   // LotRiskPercent% ของ equity" - ใช้ระยะ Grid ปัจจุบันเป็นตัวอ้างอิงความเสี่ยง (ไม่ใช่ Emergency SL
+   // ซึ่งตั้งใจให้กว้างมากเป็น backstop สุดท้าย ไม่เหมาะเป็นฐานคำนวณความเสี่ยงต่อไม้) สำคัญกว่า
+   // Dynamic Lot by Equity ถ้าเปิดพร้อมกัน เพราะเป็นสูตรที่ผูกกับความเสี่ยงจริงมากกว่า
+   if(UseLotRiskPercent)
+   {
+      double currentEq       = AccountInfoDouble(ACCOUNT_EQUITY);
+      double riskAmount      = currentEq * (LotRiskPercent / 100.0);
+      int    distPoints      = (CachedGridDistance > 0) ? CachedGridDistance : GetDynamicGridDistance();
+      double distPrice       = distPoints * _Point;
+      double tickValue       = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+      double tickSize        = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+      double valuePerLotMove = (tickSize > 0) ? (distPrice / tickSize) * tickValue : 0.0;
+
+      base = (valuePerLotMove > 0) ? NormalizeDouble(riskAmount / valuePerLotMove, 2) : BaseLot;
+      if(base < 0.01) base = 0.01;
+   }
+   else if(UseDynamicLot)
    {
       double currentEq = AccountInfoDouble(ACCOUNT_EQUITY);
       if(BalancePerLot > 0)
