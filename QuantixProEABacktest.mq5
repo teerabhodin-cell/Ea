@@ -110,6 +110,7 @@ input int    MaxSpreadAllowed    = 40;     // Max Spread Allowed, pts
 
 input group "===== 10. Dashboard ====="
 input double UIScaleMultiplier   = 1.3;    // Dashboard Size Multiplier (ตัวคูณขนาดแดชบอร์ด)
+input bool   ShowDashboardInBacktest = false; // Show Dashboard in Backtest (โชว์ UI ตอน backtest, ช้าลง - เปิดไว้ดูใน Visual Mode เท่านั้น)
 
 //=========================== GLOBAL ===============================//
 
@@ -1908,7 +1909,7 @@ void ClearEverythingAsync()
 //+------------------------------------------------------------------+
 void DrawVisualTSLine(double tsValue)
 {
-   if(IsTestingMode) return;
+   if(IsTestingMode && !ShowDashboardInBacktest) return;
 
    string text = "==> BASKET SL: $" + DoubleToString(tsValue, 2) + " (Peak: $" + DoubleToString(MaxBasketProfit, 2) + ")";
 
@@ -1975,7 +1976,7 @@ void LogEvent(string text)
 }
 
 void CreateButton(string name, int x, int y, int w, int h, string text, color bgClr, color textClr, int fontSize = 9) {
-   if(IsTestingMode) return;
+   if(IsTestingMode && !ShowDashboardInBacktest) return;
    ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0);
    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
@@ -2559,7 +2560,7 @@ double ComputeUIScale()
 //+------------------------------------------------------------------+
 void InitDashboard()
 {
-   if(IsTestingMode) return;
+   if(IsTestingMode && !ShowDashboardInBacktest) return;
    DeleteDashboard();
 
    UIScale = ComputeUIScale();
@@ -2581,7 +2582,7 @@ void InitDashboard()
 
 void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, int openPos, int pendingOrders)
 {
-   if(IsTestingMode) return;
+   if(IsTestingMode && !ShowDashboardInBacktest) return;
    if(ObjectFind(0, CANVAS_NAME) < 0) InitDashboard();
    else if(MathAbs(ComputeUIScale() - UIScale) >= 0.03) InitDashboard(); // ขนาดหน้าต่างชาร์ตเปลี่ยนพอสมควร - สร้าง canvas ใหม่ที่ความละเอียดใหม่
 
