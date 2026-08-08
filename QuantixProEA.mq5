@@ -23,6 +23,12 @@ enum ENUM_GRID_TYPE
    GRID_PENDING  // Pending Order (ตั้ง Buy Stop / Sell Stop บน Server)
 };
 
+enum ENUM_LOT_TYPE
+{
+   LOT_FIXED,        // Fixed Lot (ล็อตคงที่)
+   LOT_RISK_PERCENT  // % of Risk (คำนวณตาม % ความเสี่ยง)
+};
+
 //=========================== INPUT ================================//
 input group "===== 1. Time & Language ====="
 input ENUM_LANGUAGE Language = LNG_TH; // Select Language ( default: Thai )
@@ -34,11 +40,11 @@ input int     EndHour          = 22;      // Stop Hour (ชม.หยุด)
 input int     EndMinute        = 0;
 
 input group "===== 2. Lot ====="
-input double BaseLot                = 0.05;
+input ENUM_LOT_TYPE LotType         = LOT_FIXED; // Lot Type (ประเภท Lot)
+input double BaseLot                = 0.05;      // ใช้เมื่อ LotType = Fixed Lot
 input double LotMultiplier          = 1.5;
-input bool   UseLotRiskPercent      = false;   // Use Lot Risk % (คำนวณ Lot จาก % ความเสี่ยง, สำคัญกว่า Dynamic Lot ถ้าเปิดพร้อมกัน)
-input double LotRiskPercent         = 1.0;     // Risk % of Equity (ต่อระยะ Grid ปัจจุบัน 1 ช่วง)
-input bool   UseDynamicLot          = false;   // Dynamic Lot by Equity (Lot ตาม Equity)
+input double LotRiskPercent         = 1.0;     // Risk % of Equity (ใช้เมื่อ LotType = % of Risk, ต่อระยะ Grid ปัจจุบัน 1 ช่วง)
+input bool   UseDynamicLot          = false;   // Dynamic Lot by Equity (Lot ตาม Equity, ใช้เมื่อ LotType = Fixed Lot เท่านั้น)
 input double BalancePerLot          = 8000.0;  // Equity per 0.01 Lot
 input bool   UseEquityLock          = false;   // Equity Lock (ล็อคพอร์ต)
 input double MinEquityLimit         = 4000.0;  // Min Equity Limit
@@ -504,11 +510,12 @@ double CalcEmergencySL(bool isBuy, double entryPrice, double point)
 double GetCalculatedLotSize(int nextLevel)
 {
    double base = BaseLot;
-   // Lot Risk %: คำนวณ base lot จาก "ถ้าราคาขยับผิดทาง 1 ช่วงระยะ Grid ปัจจุบัน จะเสียไม่เกิน
+   // LotType = % of Risk: คำนวณ base lot จาก "ถ้าราคาขยับผิดทาง 1 ช่วงระยะ Grid ปัจจุบัน จะเสียไม่เกิน
    // LotRiskPercent% ของ equity" - ใช้ระยะ Grid ปัจจุบันเป็นตัวอ้างอิงความเสี่ยง (ไม่ใช่ Emergency SL
-   // ซึ่งตั้งใจให้กว้างมากเป็น backstop สุดท้าย ไม่เหมาะเป็นฐานคำนวณความเสี่ยงต่อไม้) สำคัญกว่า
-   // Dynamic Lot by Equity ถ้าเปิดพร้อมกัน เพราะเป็นสูตรที่ผูกกับความเสี่ยงจริงมากกว่า
-   if(UseLotRiskPercent)
+   // ซึ่งตั้งใจให้กว้างมากเป็น backstop สุดท้าย ไม่เหมาะเป็นฐานคำนวณความเสี่ยงต่อไม้) - LotType นี้ตัด
+   // Dynamic Lot by Equity ทิ้งไปเลย เพราะเป็นสูตรที่ผูกกับความเสี่ยงจริงมากกว่าอยู่แล้ว ไม่ต้องมีสองระบบ
+   // คำนวณ base lot ซ้อนกัน
+   if(LotType == LOT_RISK_PERCENT)
    {
       double currentEq       = AccountInfoDouble(ACCOUNT_EQUITY);
       double riskAmount      = currentEq * (LotRiskPercent / 100.0);
@@ -2408,7 +2415,8 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    DrawKV(cx + S(12), ry, innerW, GetUIString("ย่อตัวสูงสุด", "Max DD"), DoubleToString(MaxDrawdownPercent, 2) + "%", C'160,160,180', MaxDrawdownPercent > 5 ? C'239,68,68' : C'34,197,94'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ลิมิต", "DD Limit"), (ddLimit > 0 ? DoubleToString(ddLimit, 1) + "%" : "—"), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ล็อตเริ่มต้น", "Base Lot"), DoubleToString(BaseLot, 2), C'160,160,180', clrWhite); ry += rowStep;
-   DrawKV(cx + S(12), ry, innerW, GetUIString("โหมดล็อต", "Lot Mode"), (UseDynamicLot ? GetUIString("อัตโนมัติ", "Dynamic") : GetUIString("คงที่", "Fixed")), C'160,160,180', clrWhite); ry += rowStep;
+   string lotModeTxt = (LotType == LOT_RISK_PERCENT) ? GetUIString("% ความเสี่ยง", "% of Risk") : (UseDynamicLot ? GetUIString("อัตโนมัติ", "Dynamic") : GetUIString("คงที่", "Fixed"));
+   DrawKV(cx + S(12), ry, innerW, GetUIString("โหมดล็อต", "Lot Mode"), lotModeTxt, C'160,160,180', clrWhite); ry += rowStep;
    string riskStatusTxt = GetUIString("ปลอดภัย", "SAFE");
    color  riskStatusClr = C'34,197,94';
    if(TradingHalted) { riskStatusTxt = GetUIString("หยุดถาวร", "HALTED"); riskStatusClr = C'239,68,68'; }
