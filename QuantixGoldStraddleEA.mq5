@@ -1,11 +1,12 @@
 //+------------------------------------------------------------------+
 //|                                        QuantixGoldStraddleEA.mq5 |
-//|   XAUUSD M1 Dual Buy/Sell Straddle Scalper:                      |
-//|   Opens Buy+Sell together (market or Buy Stop/Sell Stop pending) |
-//|   Trailing Stop on the winning leg, Trailing Pending on the      |
-//|   untriggered leg (keeps a constant Distance Step from price)    |
-//|   Closes the whole basket at a net profit target (or max loss    |
-//|   safety net), then immediately opens a fresh cycle              |
+//|   XAUUSD M1 Stop & Reverse (SAR):                                |
+//|   Always exactly one position open. Its Stop Loss doubles as the |
+//|   reversal trigger: a matching opposite Stop order sits at the   |
+//|   same price, so when SL is hit the position closes AND a new   |
+//|   position opens immediately in the opposite direction. Trailing |
+//|   Stop pulls that shared level along as a trade runs in profit,  |
+//|   continuously re-arming the next reversal closer to price.      |
 //|   Recommended Timeframe: M1 (XAUUSD)                             |
 //+------------------------------------------------------------------+
 #property strict
@@ -21,67 +22,58 @@ enum ENUM_LANGUAGE
    LNG_EN  // English
 };
 
-enum ENUM_ENTRY_MODE
+enum ENUM_INITIAL_DIRECTION
 {
-   ENTRY_PENDING_STRADDLE, // Buy Stop / Sell Stop คร่อมราคา
-   ENTRY_MARKET_DUAL       // เปิด Buy + Sell พร้อมกันที่ตลาด
+   DIR_AUTO, // ตามทิศทางแท่งเทียนล่าสุด
+   DIR_BUY,  // เริ่มด้วย Buy เสมอ
+   DIR_SELL  // เริ่มด้วย Sell เสมอ
 };
 
 //=========================== INPUT ================================//
-input group "===== 1. Language & Cycle Setup ====="
-input ENUM_LANGUAGE Language        = LNG_TH;  // Select Language (default: Thai)
-input ENUM_ENTRY_MODE EntryMode     = ENTRY_PENDING_STRADDLE; // Initial Entry Mode
-input double LotSize                = 0.01;    // Lot per Side (Buy กับ Sell เท่ากัน)
-input int    DistancePoints         = 150;     // Straddle Distance from Price, pts (100-200 แนะนำ)
-input ulong  MagicNumber            = 771144;
+input group "===== 1. Language & SAR Setup ====="
+input ENUM_LANGUAGE Language            = LNG_TH;  // Select Language (default: Thai)
+input ENUM_INITIAL_DIRECTION InitialDirectionMode = DIR_AUTO; // First Position Direction
+input double LotSize                    = 0.01;    // Lot per Position
+input int    DistancePoints             = 150;     // SL / Reversal Distance, pts (100-200 แนะนำ)
+input double PendingTrailStepPoints     = 20;      // Min Move Before Re-Syncing Reverse Order, pts
+input ulong  MagicNumber                = 771144;
 
-input group "===== 2. Trailing Stop (Winning Leg) ====="
-input bool   UseTrailingStop        = true;    // Trail SL on the Profitable Side
-input double TrailingStartPoints    = 100;     // Trailing Start, pts
-input double TrailingDistancePoints = 50;      // Trailing Distance, pts
-input double TrailingStepPoints     = 10;      // Min Move Before Re-Modifying SL, pts
+input group "===== 2. Trailing Stop (also drags the Reversal level) ====="
+input bool   UseTrailingStop            = true;    // Trail SL as the Trade Runs in Profit
+input double TrailingStartPoints        = 100;     // Trailing Start, pts
+input double TrailingDistancePoints     = 50;      // Trailing Distance, pts
+input double TrailingStepPoints         = 10;      // Min Move Before Re-Modifying SL, pts
 
-input group "===== 3. Trailing Pending (Untriggered Leg) ====="
-input bool   UseTrailingPending     = true;    // Chase Untriggered Pending Order (Pending Mode only)
-input double PendingTrailStepPoints = 30;      // Min Price Move Before Re-Centering Pending, pts
+input group "===== 3. Filters (first entry only - reversals always allowed) ====="
+input int    MaxSpreadPoints            = 200;     // Max Allowed Spread, pts (สำคัญสำหรับ Gold M1)
+input bool   UseSessionFilter           = false;   // Only Open the First Position Within Allowed Hours
+input bool   UseLocalTime               = false;   // Use Local PC Time
+input int    StartHour                  = 2;       // Start Hour
+input int    StartMinute                = 0;
+input int    EndHour                    = 22;      // Stop Hour
+input int    EndMinute                  = 0;
 
-input group "===== 4. Basket Management ====="
-input double TargetProfitUSD        = 20.0;    // Close Whole Basket at Net Profit, $ (10-30 แนะนำ)
-input bool   UseBasketMaxLoss       = true;    // Safety Net: Close Basket if Loss Exceeds Limit
-input double BasketMaxLossUSD       = 50.0;    // Max Basket Floating Loss, $ (ตัดขาดทุนฉุกเฉิน)
-input double EmergencySLPoints      = 300;     // Hard SL per Leg on Fill, pts (0 = off, กันไม้เปล่า SL ก่อนถึง Trailing)
+input group "===== 4. Drawdown Protection (Account-Level Kill Switch) ====="
+input bool   UseDailyLossLimit          = true;    // Daily Loss Limit
+input double MaxDailyLossPercent        = 5.0;     // Max Daily Loss %
+input bool   UseTotalDDGuard            = true;    // Total Drawdown Guard (Kill Switch)
+input double MaxTotalDDPercent          = 15.0;    // Max Total DD % (from Equity Peak)
+input bool   UseEquityLock              = true;    // Equity Floor Lock
+input double MinEquityLimit             = 0.0;     // Min Equity Floor (0 = off)
 
-input group "===== 5. Filters ====="
-input int    MaxSpreadPoints        = 200;     // Max Allowed Spread, pts (สำคัญสำหรับ Gold M1)
-input bool   UseSessionFilter       = false;   // Only Open New Cycles Within Allowed Hours
-input bool   UseLocalTime           = false;   // Use Local PC Time
-input int    StartHour              = 2;       // Start Hour
-input int    StartMinute            = 0;
-input int    EndHour                = 22;      // Stop Hour
-input int    EndMinute              = 0;
-
-input group "===== 6. Drawdown Protection (Account-Level Kill Switch) ====="
-input bool   UseDailyLossLimit      = true;    // Daily Loss Limit
-input double MaxDailyLossPercent    = 5.0;     // Max Daily Loss %
-input bool   UseTotalDDGuard        = true;    // Total Drawdown Guard (Kill Switch)
-input double MaxTotalDDPercent      = 15.0;    // Max Total DD % (from Equity Peak)
-input bool   UseEquityLock          = true;    // Equity Floor Lock
-input double MinEquityLimit         = 0.0;     // Min Equity Floor (0 = off)
-
-input group "===== 7. Dashboard ====="
-input bool   ShowDashboard          = true;
-input bool   ShowDashboardInTester  = false;   // Show Dashboard during Strategy Tester
-input int    Dashboard_X            = 15;
-input int    Dashboard_Y            = 20;
-input color  Dashboard_BG           = C'20,20,20';
-input color  Dashboard_Text         = clrWhite;
-input color  Dashboard_Green        = clrLimeGreen;
-input color  Dashboard_Red          = clrTomato;
-input color  Dashboard_Yellow       = clrGold;
+input group "===== 5. Dashboard ====="
+input bool   ShowDashboard              = true;
+input bool   ShowDashboardInTester      = false;   // Show Dashboard during Strategy Tester
+input int    Dashboard_X                = 15;
+input int    Dashboard_Y                = 20;
+input color  Dashboard_BG               = C'20,20,20';
+input color  Dashboard_Text             = clrWhite;
+input color  Dashboard_Green            = clrLimeGreen;
+input color  Dashboard_Red              = clrTomato;
+input color  Dashboard_Yellow           = clrGold;
 
 //=========================== GLOBALS ================================//
-ulong    g_BuyStopTicket  = 0;
-ulong    g_SellStopTicket = 0;
+ulong    g_ReverseOrderTicket = 0;
 
 datetime currentDay     = 0;
 double   dayStartEquity = 0;
@@ -92,7 +84,7 @@ string   haltReason    = "";
 bool     ddGuardHalted = false;
 string   ddGuardReason = "";
 
-int      g_CycleCount = 0;
+int      g_FlipCount = 0;
 
 const string DashPrefix = "QGST_DASH_";
 
@@ -128,16 +120,17 @@ void OnTick()
 
    if(dailyHalted || ddGuardHalted) return;
 
-   ManageTrailingStop();
-   ManageTrailingPending();
-   CheckBasketTargets();
-
-   if(!HasAnyOpenOrPending())
+   if(PositionSelectForMagic())
+   {
+      ManageTrailingAndReverseSync();
+   }
+   else if(!HasPendingOrder())
    {
       if(!IsWithinSession()) return;
       if(!PassSpreadFilter()) return;
-      StartNewCycle();
+      OpenInitialPosition();
    }
+   // else: the reverse Stop order is still working, waiting to trigger - nothing to do
 }
 
 //=========================== HELPERS ================================//
@@ -199,25 +192,29 @@ double NormalizeLot(double lot)
    return NormalizeDouble(l, 2);
 }
 
-bool HasAnyOpenOrPending()
+bool PositionSelectForMagic()
 {
-   int totalPos = PositionsTotal();
-   for(int i=0; i<totalPos; i++)
+   int total = PositionsTotal();
+   for(int i=0; i<total; i++)
    {
       ulong ticket = PositionGetTicket(i);
       if(ticket==0) continue;
-      if(PositionGetString(POSITION_SYMBOL)!=_Symbol) continue;
-      if(PositionGetInteger(POSITION_MAGIC)!=(long)MagicNumber) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != (long)MagicNumber) continue;
       return true;
    }
+   return false;
+}
 
-   int totalOrd = OrdersTotal();
-   for(int i=0; i<totalOrd; i++)
+bool HasPendingOrder()
+{
+   int total = OrdersTotal();
+   for(int i=0; i<total; i++)
    {
       ulong ticket = OrderGetTicket(i);
       if(ticket==0) continue;
-      if(OrderGetString(ORDER_SYMBOL)!=_Symbol) continue;
-      if(OrderGetInteger(ORDER_MAGIC)!=(long)MagicNumber) continue;
+      if(OrderGetString(ORDER_SYMBOL) != _Symbol) continue;
+      if(OrderGetInteger(ORDER_MAGIC) != (long)MagicNumber) continue;
       return true;
    }
    return false;
@@ -243,162 +240,112 @@ void CloseAllAndCancelPending()
       trade.OrderDelete(ticket);
    }
 
-   g_BuyStopTicket  = 0;
-   g_SellStopTicket = 0;
+   g_ReverseOrderTicket = 0;
 }
 
-//=========================== CYCLE / ENTRY ================================//
-void StartNewCycle()
+//=========================== SAR ENGINE ================================//
+void OpenInitialPosition()
 {
+   int dir;
+   if(InitialDirectionMode==DIR_BUY) dir=1;
+   else if(InitialDirectionMode==DIR_SELL) dir=-1;
+   else
+   {
+      double o = iOpen(_Symbol, PERIOD_CURRENT, 1);
+      double c = iClose(_Symbol, PERIOD_CURRENT, 1);
+      dir = (c>=o) ? 1 : -1;
+   }
+
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double lot = NormalizeLot(LotSize);
-   double slBuf = EmergencySLPoints*_Point;
+   double price = (dir==1) ? ask : bid;
+   double sl = (dir==1) ? price-DistancePoints*_Point : price+DistancePoints*_Point;
 
-   if(EntryMode==ENTRY_MARKET_DUAL)
-   {
-      string cmtB = (Language==LNG_TH) ? "Straddle ซื้อ" : "Straddle BUY";
-      string cmtS = (Language==LNG_TH) ? "Straddle ขาย" : "Straddle SELL";
+   string cmt = (Language==LNG_TH) ? (dir==1?"SAR ซื้อ":"SAR ขาย") : (dir==1?"SAR BUY":"SAR SELL");
+   bool ok = (dir==1) ? trade.Buy(lot, _Symbol, price, NormalizeDouble(sl,_Digits), 0, cmt)
+                       : trade.Sell(lot, _Symbol, price, NormalizeDouble(sl,_Digits), 0, cmt);
 
-      double slBuy  = (EmergencySLPoints>0) ? NormalizeDouble(ask-slBuf,_Digits) : 0;
-      double slSell = (EmergencySLPoints>0) ? NormalizeDouble(bid+slBuf,_Digits) : 0;
-
-      trade.Buy(lot, _Symbol, ask, slBuy, 0, cmtB);
-      trade.Sell(lot, _Symbol, bid, slSell, 0, cmtS);
-   }
-   else // ENTRY_PENDING_STRADDLE
-   {
-      double buyStopPrice  = NormalizeDouble(ask + DistancePoints*_Point, _Digits);
-      double sellStopPrice = NormalizeDouble(bid - DistancePoints*_Point, _Digits);
-
-      double slBuy  = (EmergencySLPoints>0) ? NormalizeDouble(buyStopPrice-slBuf,_Digits)  : 0;
-      double slSell = (EmergencySLPoints>0) ? NormalizeDouble(sellStopPrice+slBuf,_Digits) : 0;
-
-      string cmtB = (Language==LNG_TH) ? "Straddle BuyStop" : "Straddle BuyStop";
-      string cmtS = (Language==LNG_TH) ? "Straddle SellStop" : "Straddle SellStop";
-
-      if(trade.BuyStop(lot, buyStopPrice, _Symbol, slBuy, 0, ORDER_TIME_GTC, 0, cmtB))
-         g_BuyStopTicket = trade.ResultOrder();
-
-      if(trade.SellStop(lot, sellStopPrice, _Symbol, slSell, 0, ORDER_TIME_GTC, 0, cmtS))
-         g_SellStopTicket = trade.ResultOrder();
-   }
-
-   g_CycleCount++;
+   if(ok) g_FlipCount++;
+   // the paired reverse Stop order is placed on the next tick by
+   // ManageTrailingAndReverseSync(), once the position is selectable
 }
 
-// Ratchets SL on whichever leg(s) are in profit - never loosens, only tightens
-// in the position's favor. Applies to both legs independently since in
-// pending mode both can end up live (hedged) at the same time.
-void ManageTrailingStop()
+// Every tick: optionally trail the live position's SL in its favor, then make
+// sure a reverse Stop order sits exactly at that SL price with the SAME lot
+// size - so hitting SL both closes this position AND opens the opposite one.
+// The reverse order's own SL is pre-computed and baked in at placement time,
+// so the instant it fills, the new position already carries its own
+// protective/reversal level with no gap tick.
+void ManageTrailingAndReverseSync()
 {
-   if(!UseTrailingStop) return;
-
+   long   type      = PositionGetInteger(POSITION_TYPE);
+   double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+   double curSL      = PositionGetDouble(POSITION_SL);
+   ulong  posTicket  = PositionGetInteger(POSITION_TICKET);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double trigDist  = TrailingStartPoints*_Point;
-   double trailDist = TrailingDistancePoints*_Point;
-   double stepDist  = TrailingStepPoints*_Point;
 
-   int total = PositionsTotal();
-   for(int i=0; i<total; i++)
+   if(UseTrailingStop)
    {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket==0) continue;
-      if(PositionGetString(POSITION_SYMBOL)!=_Symbol) continue;
-      if(PositionGetInteger(POSITION_MAGIC)!=(long)MagicNumber) continue;
-
-      long   type      = PositionGetInteger(POSITION_TYPE);
-      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
-      double curSL      = PositionGetDouble(POSITION_SL);
-      double curTP      = PositionGetDouble(POSITION_TP);
+      double trigDist  = TrailingStartPoints*_Point;
+      double trailDist = TrailingDistancePoints*_Point;
+      double stepDist  = TrailingStepPoints*_Point;
+      double newSL = curSL;
 
       if(type==POSITION_TYPE_BUY && (bid-openPrice)>=trigDist)
       {
-         double newSL = bid - trailDist;
-         if(curSL==0 || newSL > curSL+stepDist)
-            trade.PositionModify(ticket, NormalizeDouble(newSL,_Digits), curTP);
+         double candidate = bid-trailDist;
+         if(curSL==0 || candidate>curSL+stepDist) newSL = candidate;
       }
       else if(type==POSITION_TYPE_SELL && (openPrice-ask)>=trigDist)
       {
-         double newSL = ask + trailDist;
-         if(curSL==0 || newSL < curSL-stepDist)
-            trade.PositionModify(ticket, NormalizeDouble(newSL,_Digits), curTP);
+         double candidate = ask+trailDist;
+         if(curSL==0 || candidate<curSL-stepDist) newSL = candidate;
+      }
+
+      if(newSL!=curSL)
+      {
+         trade.PositionModify(posTicket, NormalizeDouble(newSL,_Digits), 0);
+         curSL = newSL;
       }
    }
+
+   SyncReverseOrder(type, curSL);
 }
 
-// Re-centers whichever pending order(s) are still untriggered so they keep a
-// constant Distance Step from the current market price instead of getting
-// left behind (or too close) as price runs. Only relevant in pending mode -
-// the other, already-filled leg is handled by ManageTrailingStop() instead.
-void ManageTrailingPending()
+void SyncReverseOrder(long currentType, double slPrice)
 {
-   if(EntryMode!=ENTRY_PENDING_STRADDLE || !UseTrailingPending) return;
+   if(slPrice<=0) return; // no level to reverse at yet
 
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double gap = DistancePoints*_Point;
-   double stepDist = PendingTrailStepPoints*_Point;
+   double lot = NormalizeLot(LotSize);
+   // The reverse order's own future SL, baked in now so the flipped position
+   // is protected the instant it fills (one DistancePoints step further on).
+   double nextSL = (currentType==POSITION_TYPE_BUY) ? slPrice+DistancePoints*_Point
+                                                       : slPrice-DistancePoints*_Point;
 
-   if(g_BuyStopTicket!=0 && OrderSelect(g_BuyStopTicket))
+   if(g_ReverseOrderTicket!=0 && OrderSelect(g_ReverseOrderTicket))
    {
-      double curPrice   = OrderGetDouble(ORDER_PRICE_OPEN);
-      double curSL      = OrderGetDouble(ORDER_SL);
-      double curTP      = OrderGetDouble(ORDER_TP);
-      double idealPrice = ask + gap;
-      if(MathAbs(idealPrice-curPrice) >= stepDist)
+      double curPrice = OrderGetDouble(ORDER_PRICE_OPEN);
+      if(MathAbs(slPrice-curPrice) >= PendingTrailStepPoints*_Point)
       {
-         double newSL = (curSL!=0) ? NormalizeDouble(idealPrice-EmergencySLPoints*_Point,_Digits) : 0;
-         trade.OrderModify(g_BuyStopTicket, NormalizeDouble(idealPrice,_Digits), newSL, curTP, ORDER_TIME_GTC, 0);
+         trade.OrderModify(g_ReverseOrderTicket, NormalizeDouble(slPrice,_Digits),
+                            NormalizeDouble(nextSL,_Digits), 0, ORDER_TIME_GTC, 0);
       }
+      return;
    }
 
-   if(g_SellStopTicket!=0 && OrderSelect(g_SellStopTicket))
-   {
-      double curPrice   = OrderGetDouble(ORDER_PRICE_OPEN);
-      double curSL      = OrderGetDouble(ORDER_SL);
-      double curTP      = OrderGetDouble(ORDER_TP);
-      double idealPrice = bid - gap;
-      if(MathAbs(idealPrice-curPrice) >= stepDist)
-      {
-         double newSL = (curSL!=0) ? NormalizeDouble(idealPrice+EmergencySLPoints*_Point,_Digits) : 0;
-         trade.OrderModify(g_SellStopTicket, NormalizeDouble(idealPrice,_Digits), newSL, curTP, ORDER_TIME_GTC, 0);
-      }
-   }
-}
+   // No live reverse order (first time, or the previous one just triggered) - place a fresh one
+   string cmt = (Language==LNG_TH) ? "SAR Reverse" : "SAR Reverse";
+   bool ok;
+   if(currentType==POSITION_TYPE_BUY)
+      ok = trade.SellStop(lot, NormalizeDouble(slPrice,_Digits), _Symbol,
+                           NormalizeDouble(nextSL,_Digits), 0, ORDER_TIME_GTC, 0, cmt);
+   else
+      ok = trade.BuyStop(lot, NormalizeDouble(slPrice,_Digits), _Symbol,
+                          NormalizeDouble(nextSL,_Digits), 0, ORDER_TIME_GTC, 0, cmt);
 
-// Net Basket P/L = sum of every open leg's floating profit + swap. Closes
-// everything (positions and any still-pending order) the moment the target
-// is reached, or the safety-net max loss is breached, then immediately opens
-// a fresh cycle at the current price (subject to session/spread filters).
-void CheckBasketTargets()
-{
-   double totalProfit = 0;
-   bool anyPosition = false;
-
-   int total = PositionsTotal();
-   for(int i=0; i<total; i++)
-   {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket==0) continue;
-      if(PositionGetString(POSITION_SYMBOL)!=_Symbol) continue;
-      if(PositionGetInteger(POSITION_MAGIC)!=(long)MagicNumber) continue;
-      totalProfit += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
-      anyPosition = true;
-   }
-
-   if(!anyPosition) return;
-
-   bool hitTarget = totalProfit >= TargetProfitUSD;
-   bool hitMaxLoss = UseBasketMaxLoss && totalProfit <= -BasketMaxLossUSD;
-
-   if(hitTarget || hitMaxLoss)
-   {
-      CloseAllAndCancelPending();
-      if(!dailyHalted && !ddGuardHalted && IsWithinSession() && PassSpreadFilter())
-         StartNewCycle();
-   }
+   if(ok) g_ReverseOrderTicket = trade.ResultOrder();
 }
 
 void CheckDailyLimits()
@@ -488,7 +435,7 @@ void UpdateDashboard()
    int y = Dashboard_Y;
    int rh = 18;
 
-   DashLabel("title", "QUANTIX GOLD STRADDLE - M1", x, y, Dashboard_Yellow, 10); y+=rh+4;
+   DashLabel("title", "QUANTIX GOLD SAR - M1", x, y, Dashboard_Yellow, 10); y+=rh+4;
 
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    long   spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
@@ -497,33 +444,33 @@ void UpdateDashboard()
              (Language==LNG_TH?"สเปรด":"Spread"), (int)spread),
              x, y, Dashboard_Text); y+=rh;
 
-   DashLabel("cycle", StringFormat("%s: %d  |  %s: %s",
-             (Language==LNG_TH?"รอบที่":"Cycle"), g_CycleCount,
-             (Language==LNG_TH?"โหมด":"Mode"),
-             EntryMode==ENTRY_MARKET_DUAL?(Language==LNG_TH?"ตลาดคู่":"Market Dual"):(Language==LNG_TH?"Pending คร่อม":"Pending Straddle")),
+   DashLabel("flips", StringFormat("%s: %d", (Language==LNG_TH?"จำนวนครั้งที่กลับทิศ":"Reversals"), g_FlipCount),
              x, y, Dashboard_Text); y+=rh;
 
-   double totalProfit=0; string buyTxt="-", sellTxt="-";
-   color buyClr=Dashboard_Text, sellClr=Dashboard_Text;
-   int total=PositionsTotal();
-   for(int i=0;i<total;i++)
+   bool hasPos = PositionSelectForMagic();
+   string posTxt; color posClr = Dashboard_Text;
+   double curSL = 0;
+   if(hasPos)
    {
-      ulong ticket=PositionGetTicket(i);
-      if(ticket==0) continue;
-      if(PositionGetString(POSITION_SYMBOL)!=_Symbol) continue;
-      if(PositionGetInteger(POSITION_MAGIC)!=(long)MagicNumber) continue;
-      long type=PositionGetInteger(POSITION_TYPE);
-      double vol=PositionGetDouble(POSITION_VOLUME);
-      double profit=PositionGetDouble(POSITION_PROFIT)+PositionGetDouble(POSITION_SWAP);
-      totalProfit+=profit;
-      if(type==POSITION_TYPE_BUY)  { buyTxt=StringFormat("BUY %.2f | %.2f",vol,profit);  buyClr=profit>=0?Dashboard_Green:Dashboard_Red; }
-      else                         { sellTxt=StringFormat("SELL %.2f | %.2f",vol,profit); sellClr=profit>=0?Dashboard_Green:Dashboard_Red; }
+      long type = PositionGetInteger(POSITION_TYPE);
+      double vol = PositionGetDouble(POSITION_VOLUME);
+      double profit = PositionGetDouble(POSITION_PROFIT);
+      curSL = PositionGetDouble(POSITION_SL);
+      posTxt = StringFormat("%s %s %.2f | P/L %.2f | SL %.2f",
+               (Language==LNG_TH?"ทิศทาง":"Direction"),
+               type==POSITION_TYPE_BUY?"BUY":"SELL", vol, profit, curSL);
+      posClr = profit>=0?Dashboard_Green:Dashboard_Red;
    }
-   DashLabel("buy", (Language==LNG_TH?"ฝั่งซื้อ: ":"Buy Leg: ")+buyTxt, x, y, buyClr); y+=rh;
-   DashLabel("sell", (Language==LNG_TH?"ฝั่งขาย: ":"Sell Leg: ")+sellTxt, x, y, sellClr); y+=rh;
+   else
+   {
+      posTxt = (Language==LNG_TH?"ไม่มีออเดอร์เปิดอยู่":"No Open Position");
+   }
+   DashLabel("pos", posTxt, x, y, posClr); y+=rh;
 
-   DashLabel("basket", StringFormat("%s: %.2f / %.2f", (Language==LNG_TH?"รวมพอร์ต/เป้า":"Basket/Target"), totalProfit, TargetProfitUSD),
-             x, y, totalProfit>=0?Dashboard_Green:Dashboard_Red); y+=rh;
+   string revTxt = (g_ReverseOrderTicket!=0 && OrderSelect(g_ReverseOrderTicket))
+                   ? StringFormat("%s: %.2f", (Language==LNG_TH?"จุดกลับทิศถัดไป":"Next Reverse Level"), OrderGetDouble(ORDER_PRICE_OPEN))
+                   : (Language==LNG_TH?"ยังไม่มีจุดกลับทิศ":"No reverse order yet");
+   DashLabel("reverse", revTxt, x, y, Dashboard_Yellow); y+=rh;
 
    double bal = AccountInfoDouble(ACCOUNT_BALANCE);
    double eq  = AccountInfoDouble(ACCOUNT_EQUITY);
