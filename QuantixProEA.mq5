@@ -33,10 +33,20 @@ input int     StartMinute      = 0;
 input int     EndHour          = 22;      // Stop Hour (ชม.หยุด)
 input int     EndMinute        = 0;
 
-input group "===== 2. Main Grid ====="
-input ENUM_GRID_TYPE GridType       = GRID_VIRTUAL; // Grid Type (รูปแบบ Grid)
+input group "===== 2. Lot ====="
 input double BaseLot                = 0.05;
 input double LotMultiplier          = 1.5;
+input bool   UseLotRiskPercent      = false;   // Use Lot Risk % (คำนวณ Lot จาก % ความเสี่ยง, สำคัญกว่า Dynamic Lot ถ้าเปิดพร้อมกัน)
+input double LotRiskPercent         = 1.0;     // Risk % of Equity (ต่อระยะ Grid ปัจจุบัน 1 ช่วง)
+input bool   UseDynamicLot          = false;   // Dynamic Lot by Equity (Lot ตาม Equity)
+input double BalancePerLot          = 8000.0;  // Equity per 0.01 Lot
+input bool   UseEquityLock          = false;   // Equity Lock (ล็อคพอร์ต)
+input double MinEquityLimit         = 4000.0;  // Min Equity Limit
+input bool   UseAutoReduceLot       = false;   // Auto Reduce Lot on DD (ลด Lot อัตโนมัติ)
+input double ReduceLotThresholdDD   = 20.0;    // Reduce Lot DD Trigger %
+
+input group "===== 3. Grid ====="
+input ENUM_GRID_TYPE GridType       = GRID_VIRTUAL; // Grid Type (รูปแบบ Grid)
 input int    TotalLevels            = 10;      // Levels per Side (จำนวนชั้น/ฝั่ง)
 input bool   UseATRDistance         = true;    // Use ATR Distance (ระยะตาม ATR)
 input int    ATR_Period             = 14;      // ATR Period
@@ -50,28 +60,18 @@ input bool   UseAdaptiveBBGrid      = false;   // Per-Side BB Distance (แย�
 input int    DistancePoints         = 250;     // Fixed Distance, pts (ระยะคงที่)
 input ulong  MagicNumber            = 112233;
 
-input group "===== 3. Target & Trailing ====="
+input group "===== 4. Target & Trailing ====="
 input double TargetProfit        = 5.0;    // Target Profit $ (เป้ากำไร)
 input double TrailingStopUSD     = 0.2;    // Trailing Distance $ (ระยะเทรล)
 input double DailyProfitGoal     = 100.0;  // Daily Profit Goal $ (เป้ากำไรรายวัน, ใช้แสดงในเกจ Dashboard)
 
-input group "===== 4. Trend Filters ====="
+input group "===== 5. Trend Filters ====="
 input bool   UseEMAFilter           = false;   // Use EMA Filter (ใช้ EMA)
 input int    EMA_Period             = 200;     // EMA Period
 input bool   StrictBuyFilter        = false;   // Block Buy < EMA (ล็อค Buy)
 input bool   StrictSellFilter       = false;   // Block Sell > EMA (ล็อค Sell)
 input bool   UseMTFFilter          = false;   // Use MTF Filter (ใช้ MTF)
 input ENUM_TIMEFRAMES MTF_Period   = PERIOD_H1; // MTF Timeframe
-
-input group "===== 5. Lot & Capital ====="
-input bool   UseLotRiskPercent      = false;   // Use Lot Risk % (คำนวณ Lot จาก % ความเสี่ยง, สำคัญกว่า Dynamic Lot ถ้าเปิดพร้อมกัน)
-input double LotRiskPercent         = 1.0;     // Risk % of Equity (ต่อระยะ Grid ปัจจุบัน 1 ช่วง)
-input bool   UseDynamicLot          = false;   // Dynamic Lot by Equity (Lot ตาม Equity)
-input double BalancePerLot          = 8000.0;  // Equity per 0.01 Lot
-input bool   UseEquityLock          = false;   // Equity Lock (ล็อคพอร์ต)
-input double MinEquityLimit         = 4000.0;  // Min Equity Limit
-input bool   UseAutoReduceLot       = false;   // Auto Reduce Lot on DD (ลด Lot อัตโนมัติ)
-input double ReduceLotThresholdDD   = 20.0;    // Reduce Lot DD Trigger %
 
 input group "===== 6. Max DD Stop ====="
 input bool   UseMaxDDStop           = false;   // Max DD Stop (ตัดขาดทุน)
