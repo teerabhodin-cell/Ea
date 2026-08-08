@@ -23,6 +23,12 @@ enum ENUM_GRID_TYPE
    GRID_PENDING  // Pending Order (ตั้ง Buy Stop / Sell Stop บน Server)
 };
 
+enum ENUM_LOT_TYPE
+{
+   LOT_FIXED,        // Fixed Lot (ล็อตคงที่)
+   LOT_RISK_PERCENT  // % of Risk (คำนวณตาม % ความเสี่ยง)
+};
+
 //=========================== INPUT ================================//
 input group "===== 1. Time & Language ====="
 input ENUM_LANGUAGE Language = LNG_TH; // Select Language ( default: Thai )
@@ -33,10 +39,20 @@ input int     StartMinute      = 0;
 input int     EndHour          = 22;      // Stop Hour (ชม.หยุด)
 input int     EndMinute        = 0;
 
-input group "===== 2. Main Grid ====="
-input ENUM_GRID_TYPE GridType       = GRID_VIRTUAL; // Grid Type (รูปแบบ Grid)
-input double BaseLot                = 0.05;
+input group "===== 2. Lot ====="
+input ENUM_LOT_TYPE LotType         = LOT_FIXED; // Lot Type (ประเภท Lot)
+input double BaseLot                = 0.05;      // ใช้เมื่อ LotType = Fixed Lot
 input double LotMultiplier          = 1.5;
+input double LotRiskPercent         = 1.0;     // Risk % of Equity (ใช้เมื่อ LotType = % of Risk, ต่อระยะ Grid ปัจจุบัน 1 ช่วง)
+input bool   UseDynamicLot          = false;   // Dynamic Lot by Equity (Lot ตาม Equity, ใช้เมื่อ LotType = Fixed Lot เท่านั้น)
+input double BalancePerLot          = 8000.0;  // Equity per 0.01 Lot
+input bool   UseEquityLock          = false;   // Equity Lock (ล็อคพอร์ต)
+input double MinEquityLimit         = 4000.0;  // Min Equity Limit
+input bool   UseAutoReduceLot       = false;   // Auto Reduce Lot on DD (ลด Lot อัตโนมัติ)
+input double ReduceLotThresholdDD   = 20.0;    // Reduce Lot DD Trigger %
+
+input group "===== 3. Grid ====="
+input ENUM_GRID_TYPE GridType       = GRID_VIRTUAL; // Grid Type (รูปแบบ Grid)
 input int    TotalLevels            = 10;      // Levels per Side (จำนวนชั้น/ฝั่ง)
 input bool   UseATRDistance         = true;    // Use ATR Distance (ระยะตาม ATR)
 input int    ATR_Period             = 14;      // ATR Period
@@ -50,26 +66,18 @@ input bool   UseAdaptiveBBGrid      = false;   // Per-Side BB Distance (แย�
 input int    DistancePoints         = 250;     // Fixed Distance, pts (ระยะคงที่)
 input ulong  MagicNumber            = 112233;
 
-input group "===== 3. Target & Trailing ====="
+input group "===== 4. Target & Trailing ====="
 input double TargetProfit        = 5.0;    // Target Profit $ (เป้ากำไร)
 input double TrailingStopUSD     = 0.2;    // Trailing Distance $ (ระยะเทรล)
 input double DailyProfitGoal     = 100.0;  // Daily Profit Goal $ (เป้ากำไรรายวัน, ใช้แสดงในเกจ Dashboard)
 
-input group "===== 4. Trend Filters ====="
+input group "===== 5. Trend Filters ====="
 input bool   UseEMAFilter           = false;   // Use EMA Filter (ใช้ EMA)
 input int    EMA_Period             = 200;     // EMA Period
 input bool   StrictBuyFilter        = false;   // Block Buy < EMA (ล็อค Buy)
 input bool   StrictSellFilter       = false;   // Block Sell > EMA (ล็อค Sell)
 input bool   UseMTFFilter          = false;   // Use MTF Filter (ใช้ MTF)
 input ENUM_TIMEFRAMES MTF_Period   = PERIOD_H1; // MTF Timeframe
-
-input group "===== 5. Lot & Capital ====="
-input bool   UseDynamicLot          = false;   // Dynamic Lot by Equity (Lot ตาม Equity)
-input double BalancePerLot          = 8000.0;  // Equity per 0.01 Lot
-input bool   UseEquityLock          = false;   // Equity Lock (ล็อคพอร์ต)
-input double MinEquityLimit         = 4000.0;  // Min Equity Limit
-input bool   UseAutoReduceLot       = false;   // Auto Reduce Lot on DD (ลด Lot อัตโนมัติ)
-input double ReduceLotThresholdDD   = 20.0;    // Reduce Lot DD Trigger %
 
 input group "===== 6. Max DD Stop ====="
 input bool   UseMaxDDStop           = false;   // Max DD Stop (ตัดขาดทุน)
@@ -502,7 +510,25 @@ double CalcEmergencySL(bool isBuy, double entryPrice, double point)
 double GetCalculatedLotSize(int nextLevel)
 {
    double base = BaseLot;
-   if(UseDynamicLot)
+   // LotType = % of Risk: คำนวณ base lot จาก "ถ้าราคาขยับผิดทาง 1 ช่วงระยะ Grid ปัจจุบัน จะเสียไม่เกิน
+   // LotRiskPercent% ของ equity" - ใช้ระยะ Grid ปัจจุบันเป็นตัวอ้างอิงความเสี่ยง (ไม่ใช่ Emergency SL
+   // ซึ่งตั้งใจให้กว้างมากเป็น backstop สุดท้าย ไม่เหมาะเป็นฐานคำนวณความเสี่ยงต่อไม้) - LotType นี้ตัด
+   // Dynamic Lot by Equity ทิ้งไปเลย เพราะเป็นสูตรที่ผูกกับความเสี่ยงจริงมากกว่าอยู่แล้ว ไม่ต้องมีสองระบบ
+   // คำนวณ base lot ซ้อนกัน
+   if(LotType == LOT_RISK_PERCENT)
+   {
+      double currentEq       = AccountInfoDouble(ACCOUNT_EQUITY);
+      double riskAmount      = currentEq * (LotRiskPercent / 100.0);
+      int    distPoints      = (CachedGridDistance > 0) ? CachedGridDistance : GetDynamicGridDistance();
+      double distPrice       = distPoints * _Point;
+      double tickValue       = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+      double tickSize        = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+      double valuePerLotMove = (tickSize > 0) ? (distPrice / tickSize) * tickValue : 0.0;
+
+      base = (valuePerLotMove > 0) ? NormalizeDouble(riskAmount / valuePerLotMove, 2) : BaseLot;
+      if(base < 0.01) base = 0.01;
+   }
+   else if(UseDynamicLot)
    {
       double currentEq = AccountInfoDouble(ACCOUNT_EQUITY);
       if(BalancePerLot > 0)
@@ -844,8 +870,8 @@ int OnInit()
 
    // เวอร์ชัน Backtest-only: รันได้เฉพาะใน Strategy Tester เท่านั้น (backtest/optimization) -
    // ถ้าถูกแนบเข้ากับชาร์ตจริง (ไลฟ์หรือเดโมก็ตาม) จะปฏิเสธการทำงานทันที คนละไฟล์กับ
-   // QuantixProEA.mq5 (เวอร์ชันทดลอง ล็อคเฉพาะเดโม ยังรันบนชาร์ตจริงได้) - ไฟล์นี้ตั้งใจให้ใช้
-   // ทดสอบ/optimize เท่านั้น กันการแนบเข้าชาร์ตจริงโดยไม่ตั้งใจระหว่างทำงานวิจัยกลยุทธ์
+   // QuantixProEA.mq5 (รันบนชาร์ตจริงได้ปกติ ไม่มีล็อคบัญชี) - ไฟล์นี้ตั้งใจให้ใช้ทดสอบ/optimize
+   // เท่านั้น กันการแนบเข้าชาร์ตจริงโดยไม่ตั้งใจระหว่างทำงานวิจัยกลยุทธ์
    if(!IsTestingMode)
    {
       Alert("QuantixPro EA (Backtest-Only): This build only runs inside Strategy Tester. It will not run on a live chart (demo or real).");
@@ -2391,7 +2417,8 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    DrawKV(cx + S(12), ry, innerW, GetUIString("ย่อตัวสูงสุด", "Max DD"), DoubleToString(MaxDrawdownPercent, 2) + "%", C'160,160,180', MaxDrawdownPercent > 5 ? C'239,68,68' : C'34,197,94'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ลิมิต", "DD Limit"), (ddLimit > 0 ? DoubleToString(ddLimit, 1) + "%" : "—"), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ล็อตเริ่มต้น", "Base Lot"), DoubleToString(BaseLot, 2), C'160,160,180', clrWhite); ry += rowStep;
-   DrawKV(cx + S(12), ry, innerW, GetUIString("โหมดล็อต", "Lot Mode"), (UseDynamicLot ? GetUIString("อัตโนมัติ", "Dynamic") : GetUIString("คงที่", "Fixed")), C'160,160,180', clrWhite); ry += rowStep;
+   string lotModeTxt = (LotType == LOT_RISK_PERCENT) ? GetUIString("% ความเสี่ยง", "% of Risk") : (UseDynamicLot ? GetUIString("อัตโนมัติ", "Dynamic") : GetUIString("คงที่", "Fixed"));
+   DrawKV(cx + S(12), ry, innerW, GetUIString("โหมดล็อต", "Lot Mode"), lotModeTxt, C'160,160,180', clrWhite); ry += rowStep;
    string riskStatusTxt = GetUIString("ปลอดภัย", "SAFE");
    color  riskStatusClr = C'34,197,94';
    if(TradingHalted) { riskStatusTxt = GetUIString("หยุดถาวร", "HALTED"); riskStatusClr = C'239,68,68'; }
