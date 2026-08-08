@@ -124,13 +124,24 @@ void OnTick()
    {
       ManageTrailingAndReverseSync();
    }
-   else if(!HasPendingOrder())
+   else
    {
-      if(!IsWithinSession()) return;
-      if(!PassSpreadFilter()) return;
-      OpenInitialPosition();
+      // Flat with a pending order left over that should already have triggered
+      // (price gapped past it - e.g. a weekend gap - without it filling, or its
+      // paired position closed via SL without this order firing in the same
+      // moment) is a stuck/orphaned state: clear it out and treat as flat so a
+      // fresh cycle can start, instead of waiting forever for a stale order.
+      if(HasPendingOrder() && IsPendingOrderStale())
+         CloseAllAndCancelPending();
+
+      if(!HasPendingOrder())
+      {
+         if(!IsWithinSession()) return;
+         if(!PassSpreadFilter()) return;
+         OpenInitialPosition();
+      }
+      // else: the reverse Stop order is still fresh and working, waiting to trigger
    }
-   // else: the reverse Stop order is still working, waiting to trigger - nothing to do
 }
 
 //=========================== HELPERS ================================//
@@ -216,6 +227,32 @@ bool HasPendingOrder()
       if(OrderGetString(ORDER_SYMBOL) != _Symbol) continue;
       if(OrderGetInteger(ORDER_MAGIC) != (long)MagicNumber) continue;
       return true;
+   }
+   return false;
+}
+
+// A Buy Stop sitting at/below the current Ask (or a Sell Stop at/above the
+// current Bid) should already have been triggered by the broker - if it
+// wasn't, price moved through it without a fill (typically a gap) and it's
+// now stuck. Treat that as stale rather than waiting on it indefinitely.
+bool IsPendingOrderStale()
+{
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+
+   int total = OrdersTotal();
+   for(int i=0; i<total; i++)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket==0) continue;
+      if(OrderGetString(ORDER_SYMBOL) != _Symbol) continue;
+      if(OrderGetInteger(ORDER_MAGIC) != (long)MagicNumber) continue;
+
+      ENUM_ORDER_TYPE type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+      double price = OrderGetDouble(ORDER_PRICE_OPEN);
+
+      if(type==ORDER_TYPE_BUY_STOP  && ask>=price) return true;
+      if(type==ORDER_TYPE_SELL_STOP && bid<=price) return true;
    }
    return false;
 }
