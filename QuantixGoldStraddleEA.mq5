@@ -38,13 +38,18 @@ input int    DistancePoints             = 150;     // SL / Reversal Distance, pt
 input double PendingTrailStepPoints     = 20;      // Min Move Before Re-Syncing Reverse Order, pts
 input ulong  MagicNumber                = 771144;
 
-input group "===== 2. Trailing Stop (also drags the Reversal level) ====="
+input group "===== 2. Breakeven Lock ====="
+input bool   UseBreakeven               = true;    // Move SL to Breakeven Once in Profit
+input double BreakevenTriggerPoints     = 50;      // Breakeven Trigger, pts (ก่อนถึง Trailing Start)
+input double BreakevenLockPoints        = 10;      // Lock Points Beyond Entry
+
+input group "===== 3. Trailing Stop (also drags the Reversal level) ====="
 input bool   UseTrailingStop            = true;    // Trail SL as the Trade Runs in Profit
 input double TrailingStartPoints        = 100;     // Trailing Start, pts
 input double TrailingDistancePoints     = 50;      // Trailing Distance, pts
 input double TrailingStepPoints         = 10;      // Min Move Before Re-Modifying SL, pts
 
-input group "===== 3. Filters (first entry only - reversals always allowed) ====="
+input group "===== 4. Filters (first entry only - reversals always allowed) ====="
 input int    MaxSpreadPoints            = 200;     // Max Allowed Spread, pts (สำคัญสำหรับ Gold M1)
 input bool   UseSessionFilter           = false;   // Only Open the First Position Within Allowed Hours
 input bool   UseLocalTime               = false;   // Use Local PC Time
@@ -60,6 +65,9 @@ input bool   UseTotalDDGuard            = true;    // Total Drawdown Guard (Kill
 input double MaxTotalDDPercent          = 15.0;    // Max Total DD % (from Equity Peak)
 input bool   UseEquityLock              = true;    // Equity Floor Lock
 input double MinEquityLimit             = 0.0;     // Min Equity Floor (0 = off)
+input bool   UseDailyProfitLock         = true;    // Lock In Today's Profit (หยุดเทรดถ้ากำไรวันนี้ย่อเกินกำหนด)
+input double DailyProfitLockTriggerPercent = 1.0;  // Arm the Lock Once Today's Profit Reaches %
+input double DailyProfitLockGivebackPercent = 0.5; // Stop for the Day if Profit Gives Back This Much %
 
 input group "===== 5. Dashboard ====="
 input bool   ShowDashboard              = true;
@@ -83,6 +91,9 @@ bool     dailyHalted   = false;
 string   haltReason    = "";
 bool     ddGuardHalted = false;
 string   ddGuardReason = "";
+
+double   dayPeakProfitPct   = 0;
+bool     dayProfitLockArmed = false;
 
 int      g_FlipCount = 0;
 
@@ -114,6 +125,7 @@ void OnTick()
 {
    ManageNewDay();
    CheckDailyLimits();
+   CheckDailyProfitLock();
    CheckTotalDDGuard();
 
    if(EffectiveShowDashboard()) UpdateDashboard();
@@ -169,6 +181,8 @@ void ManageNewDay()
       dayStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
       dailyHalted    = false;
       haltReason     = "";
+      dayPeakProfitPct   = 0;
+      dayProfitLockArmed = false;
    }
 }
 
@@ -323,29 +337,48 @@ void ManageTrailingAndReverseSync()
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
 
+   double newSL = curSL;
+
+   // Breakeven fires at a lower profit threshold than trailing, so a trade
+   // that pulls back before reaching TrailingStartPoints still can't turn
+   // into a full loss once it's been comfortably in profit.
+   if(UseBreakeven)
+   {
+      double beTrig = BreakevenTriggerPoints*_Point;
+      if(type==POSITION_TYPE_BUY && (bid-openPrice)>=beTrig)
+      {
+         double beSL = openPrice+BreakevenLockPoints*_Point;
+         if(curSL==0 || beSL>newSL) newSL = beSL;
+      }
+      else if(type==POSITION_TYPE_SELL && (openPrice-ask)>=beTrig)
+      {
+         double beSL = openPrice-BreakevenLockPoints*_Point;
+         if(curSL==0 || beSL<newSL) newSL = beSL;
+      }
+   }
+
    if(UseTrailingStop)
    {
       double trigDist  = TrailingStartPoints*_Point;
       double trailDist = TrailingDistancePoints*_Point;
       double stepDist  = TrailingStepPoints*_Point;
-      double newSL = curSL;
 
       if(type==POSITION_TYPE_BUY && (bid-openPrice)>=trigDist)
       {
          double candidate = bid-trailDist;
-         if(curSL==0 || candidate>curSL+stepDist) newSL = candidate;
+         if(newSL==0 || candidate>newSL+stepDist) newSL = candidate;
       }
       else if(type==POSITION_TYPE_SELL && (openPrice-ask)>=trigDist)
       {
          double candidate = ask+trailDist;
-         if(curSL==0 || candidate<curSL-stepDist) newSL = candidate;
+         if(newSL==0 || candidate<newSL-stepDist) newSL = candidate;
       }
+   }
 
-      if(newSL!=curSL)
-      {
-         trade.PositionModify(posTicket, NormalizeDouble(newSL,_Digits), 0);
-         curSL = newSL;
-      }
+   if(newSL!=curSL)
+   {
+      trade.PositionModify(posTicket, NormalizeDouble(newSL,_Digits), 0);
+      curSL = newSL;
    }
 
    SyncReverseOrder(type, curSL);
@@ -406,6 +439,36 @@ void CheckDailyLimits()
    }
 }
 
+// Tracks today's peak floating+realized profit %. Once that peak reaches
+// DailyProfitLockTriggerPercent the lock arms; from then on, if today's
+// profit ever gives back more than DailyProfitLockGivebackPercent from that
+// peak, trading stops for the day - protecting most of what was made instead
+// of letting a good day round-trip back to breakeven or a loss.
+void CheckDailyProfitLock()
+{
+   if(!UseDailyProfitLock || dailyHalted) return;
+
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double dayPLPct = (dayStartEquity>0) ? (equity-dayStartEquity)/dayStartEquity*100.0 : 0;
+
+   if(dayPLPct > dayPeakProfitPct) dayPeakProfitPct = dayPLPct;
+
+   if(!dayProfitLockArmed && dayPeakProfitPct >= DailyProfitLockTriggerPercent)
+      dayProfitLockArmed = true;
+
+   if(!dayProfitLockArmed) return;
+
+   double giveback = dayPeakProfitPct - dayPLPct;
+   if(giveback >= DailyProfitLockGivebackPercent)
+   {
+      CloseAllAndCancelPending();
+      dailyHalted = true;
+      haltReason = (Language==LNG_TH)
+                   ? StringFormat("หยุดเทรด: ล็อคกำไรวันนี้ (พีค %.2f%%, คืนไป %.2f%%) รอรีเซ็ตเที่ยงคืน", dayPeakProfitPct, giveback)
+                   : StringFormat("Halted: Daily profit locked (peak %.2f%%, gave back %.2f%%) - waiting for midnight reset", dayPeakProfitPct, giveback);
+   }
+}
+
 void CheckTotalDDGuard()
 {
    if(!UseTotalDDGuard) return;
@@ -456,7 +519,7 @@ void CreateDashboard()
       ObjectSetInteger(0, bg, OBJPROP_XDISTANCE, Dashboard_X-10);
       ObjectSetInteger(0, bg, OBJPROP_YDISTANCE, Dashboard_Y-10);
       ObjectSetInteger(0, bg, OBJPROP_XSIZE, 330);
-      ObjectSetInteger(0, bg, OBJPROP_YSIZE, 260);
+      ObjectSetInteger(0, bg, OBJPROP_YSIZE, 280);
       ObjectSetInteger(0, bg, OBJPROP_BGCOLOR, Dashboard_BG);
       ObjectSetInteger(0, bg, OBJPROP_BORDER_TYPE, BORDER_FLAT);
       ObjectSetInteger(0, bg, OBJPROP_COLOR, clrDimGray);
@@ -521,6 +584,15 @@ void UpdateDashboard()
    DashLabel("daypl", StringFormat("%s: %.2f (%.2f%%)",
              (Language==LNG_TH?"กำไรวันนี้":"Today P/L"), dayPL, dayPLPct),
              x, y, dayPL>=0?Dashboard_Green:Dashboard_Red); y+=rh;
+
+   if(UseDailyProfitLock)
+   {
+      string lockTxt = StringFormat("%s: %s (%s %.2f%%)",
+                        (Language==LNG_TH?"ล็อคกำไรวัน":"Profit Lock"),
+                        dayProfitLockArmed?(Language==LNG_TH?"พร้อม":"Armed"):(Language==LNG_TH?"ยังไม่ถึงเกณฑ์":"Not armed"),
+                        (Language==LNG_TH?"พีค":"Peak"), dayPeakProfitPct);
+      DashLabel("profitlock", lockTxt, x, y, dayProfitLockArmed?Dashboard_Yellow:Dashboard_Text); y+=rh;
+   }
 
    double ddPct = equityPeak>0 ? (equityPeak-eq)/equityPeak*100.0 : 0;
    DashLabel("dd", StringFormat("%s: %.2f%%  (%s: %.2f)",
