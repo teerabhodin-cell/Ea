@@ -248,7 +248,7 @@ void OnTick()
    if(score < MinSignalScore) return;
    if(!PassRegimeFilter(g_SetupBias)) return;
 
-   if(OpenTrade(g_SetupBias)) g_SetupArmed = false;
+   if(OpenTrade(g_SetupBias)) { g_SetupArmed = false; g_LastScore = 0; }
    // on failure, leave the setup armed - it will retry on the next EntryTF
    // bar, or get cleared naturally by CheckSetupInvalidation()/AgeSetupExpiry()
 }
@@ -662,7 +662,7 @@ void AgeSetupExpiry()
 {
    if(!g_SetupArmed) return;
    g_SetupBarsAgo++;
-   if(g_SetupBarsAgo > SetupExpiryBars) g_SetupArmed = false;
+   if(g_SetupBarsAgo > SetupExpiryBars) { g_SetupArmed = false; g_LastScore = 0; }
 }
 
 void CheckSetupInvalidation()
@@ -670,8 +670,8 @@ void CheckSetupInvalidation()
    if(!g_SetupArmed) return;
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   if(g_SetupBias==1  && ask < g_InvalidationPrice) g_SetupArmed = false;
-   if(g_SetupBias==-1 && bid > g_InvalidationPrice) g_SetupArmed = false;
+   if(g_SetupBias==1  && ask < g_InvalidationPrice) { g_SetupArmed = false; g_LastScore = 0; }
+   if(g_SetupBias==-1 && bid > g_InvalidationPrice) { g_SetupArmed = false; g_LastScore = 0; }
 }
 
 bool InZone()
