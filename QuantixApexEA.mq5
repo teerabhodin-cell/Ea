@@ -32,7 +32,7 @@ input group "===== 2. Multi-TF Trend Confluence ====="
 input int    EMA_TrendPeriod        = 50;      // EMA Period (both TrendTF1 & TrendTF2 must agree)
 
 input group "===== 3. SMC Structure (Zone Timeframe) ====="
-input int    SwingStrength          = 3;       // Swing Fractal Strength, bars each side
+input int    SwingStrength          = 5;       // Swing Fractal Strength, bars each side
 input double MinDisplacementATRMult = 0.6;     // Min Breakout Candle Body vs ATR - filters weak CHoCH/BOS
 input bool   RequireLiquiditySweep  = true;    // Require Stop Hunt Before CHoCH
 input int    SweepExpiryBars        = 10;      // Sweep Validity, bars
@@ -65,9 +65,14 @@ input double MinSignalScore         = 60.0;    // Min Composite Score (0-100) to
 
 input group "===== 9. Filters ====="
 input int    ATR_Period             = 14;      // ATR Period
-input double ATR_MinPoints          = 150;     // Min ATR (EntryTF), pts - avoid dead market
-input double ATR_MaxPoints          = 4000;    // Max ATR (EntryTF), pts - avoid news spikes
-input int    MaxSpreadPoints        = 300;     // Max Allowed Spread, pts
+input double ATR_MinPoints          = 250;     // Min ATR (EntryTF), pts - avoid dead market
+input double ATR_MaxPoints          = 3000;    // Max ATR (EntryTF), pts - avoid news spikes
+input int    MaxSpreadPoints        = 250;     // Max Allowed Spread, pts
+input bool   UseRegimeFilter        = true;    // Require Trending Market via ADX (กันเทรดตอนตลาด Sideway)
+input ENUM_TIMEFRAMES RegimeTimeframe = PERIOD_H1; // Regime Timeframe
+input int    ADX_Period             = 14;      // ADX Period
+input double ADX_MinTrendStrength   = 22.0;    // Min ADX to Allow Entries
+input bool   RequireADXDirectionAgreement = true; // Require +DI/-DI to Match Trade Bias
 input bool   UseSessionFilter       = true;    // Only Trade Within Allowed Hours
 input bool   UseLocalTime           = false;   // Use Local PC Time
 input int    StartHour              = 2;       // Start Hour
@@ -113,6 +118,7 @@ int hEmaTrend2  = INVALID_HANDLE;
 int hEmaCorr    = INVALID_HANDLE;
 int hATR_Zone   = INVALID_HANDLE;
 int hATR_Entry  = INVALID_HANDLE;
+int hADX        = INVALID_HANDLE;
 
 datetime lastZoneBarTime  = 0;
 datetime lastEntryBarTime = 0;
@@ -166,8 +172,10 @@ int OnInit()
    hEmaTrend2 = iMA(_Symbol, TrendTF2, EMA_TrendPeriod, 0, MODE_EMA, PRICE_CLOSE);
    hATR_Zone  = iATR(_Symbol, ZoneTF, ATR_Period);
    hATR_Entry = iATR(_Symbol, EntryTF, ATR_Period);
+   hADX       = iADX(_Symbol, RegimeTimeframe, ADX_Period);
 
-   if(hEmaTrend1==INVALID_HANDLE || hEmaTrend2==INVALID_HANDLE || hATR_Zone==INVALID_HANDLE || hATR_Entry==INVALID_HANDLE)
+   if(hEmaTrend1==INVALID_HANDLE || hEmaTrend2==INVALID_HANDLE || hATR_Zone==INVALID_HANDLE ||
+      hATR_Entry==INVALID_HANDLE || hADX==INVALID_HANDLE)
    {
       Print("QuantixApexEA: indicator handle creation failed");
       return INIT_FAILED;
@@ -197,6 +205,7 @@ void OnDeinit(const int reason)
    if(hEmaCorr!=INVALID_HANDLE)   IndicatorRelease(hEmaCorr);
    if(hATR_Zone!=INVALID_HANDLE)  IndicatorRelease(hATR_Zone);
    if(hATR_Entry!=INVALID_HANDLE) IndicatorRelease(hATR_Entry);
+   if(hADX!=INVALID_HANDLE)       IndicatorRelease(hADX);
    ObjectsDeleteAll(0, DashPrefix);
 }
 
@@ -237,9 +246,11 @@ void OnTick()
    double score = ComputeSignalScore(trapConf);
    g_LastScore = score;
    if(score < MinSignalScore) return;
+   if(!PassRegimeFilter(g_SetupBias)) return;
 
-   OpenTrade(g_SetupBias);
-   g_SetupArmed = false;
+   if(OpenTrade(g_SetupBias)) g_SetupArmed = false;
+   // on failure, leave the setup armed - it will retry on the next EntryTF
+   // bar, or get cleared naturally by CheckSetupInvalidation()/AgeSetupExpiry()
 }
 
 //=========================== HELPERS ================================//
@@ -309,6 +320,29 @@ bool PassVolatilityFilter()
    if(CopyBuffer(hATR_Entry, 0, 1, 1, atr) < 1) return false;
    double atrPts = atr[0] / _Point;
    return (atrPts >= ATR_MinPoints && atrPts <= ATR_MaxPoints);
+}
+
+// Blocks entries when the higher-timeframe market isn't actually trending
+// (low ADX = range/chop) - the improvement that most helped QuantixSniperGoldEA
+// stop getting chopped up during sideways stretches.
+bool PassRegimeFilter(int bias)
+{
+   if(!UseRegimeFilter) return true;
+
+   double adxMain[];
+   if(CopyBuffer(hADX, 0, 1, 1, adxMain) < 1) return false;
+   if(adxMain[0] < ADX_MinTrendStrength) return false;
+
+   if(RequireADXDirectionAgreement)
+   {
+      double plusDI[], minusDI[];
+      if(CopyBuffer(hADX, 1, 1, 1, plusDI) < 1) return false;
+      if(CopyBuffer(hADX, 2, 1, 1, minusDI) < 1) return false;
+      if(bias==1  && plusDI[0] <= minusDI[0]) return false;
+      if(bias==-1 && minusDI[0] <= plusDI[0]) return false;
+   }
+
+   return true;
 }
 
 bool PositionSelectForMagic()
@@ -714,18 +748,28 @@ double ComputeSignalScore(double trapConfidence)
 }
 
 //=========================== TRADE EXECUTION ================================//
-void OpenTrade(int bias)
+// Returns true only if a position was actually opened. The caller must NOT
+// discard the armed setup on a false return - CheckSetupInvalidation() /
+// AgeSetupExpiry() already handle cleanup once the zone is truly gone, and
+// abandoning it after every failed attempt (e.g. lot rounds to 0 because the
+// SL is currently too wide for RiskPercent) would silently throw away a
+// still-valid, still-scoring setup for no reason.
+bool OpenTrade(int bias)
 {
    double price = (bias==1) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double slDistance = (bias==1) ? (price-g_InvalidationPrice) : (g_InvalidationPrice-price);
-   if(slDistance<=0) return;
+   if(slDistance<=0) return false;
 
    long stopsLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
    double minDist = stopsLevel * _Point * 1.1;
    if(slDistance < minDist) slDistance = minDist;
 
    double lot = CalcLot(slDistance);
-   if(lot<=0) return;
+   if(lot<=0)
+   {
+      Print("QuantixApexEA: skipped entry - SL too wide for RiskPercent at min lot (slDistance=", slDistance, ")");
+      return false;
+   }
 
    double sl = (bias==1) ? price-slDistance : price+slDistance;
    double tp1 = (bias==1) ? price+slDistance*RR_TP1 : price-slDistance*RR_TP1;
@@ -739,12 +783,19 @@ void OpenTrade(int bias)
    bool ok = (bias==1) ? trade.Buy(lot, _Symbol, price, sl, tpBroker, cmt)
                         : trade.Sell(lot, _Symbol, price, sl, tpBroker, cmt);
 
-   if(ok && PositionSelectForMagic())
+   if(!ok)
+   {
+      Print("QuantixApexEA: order send failed, retcode=", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
+      return false;
+   }
+
+   if(PositionSelectForMagic())
    {
       g_EntryTicket = PositionGetInteger(POSITION_TICKET);
       g_TP1Price=tp1; g_TP2Price=tp2; g_TP3Price=tp3;
       g_TP1Done=false; g_TP2Done=false;
    }
+   return true;
 }
 
 void ManageOpenPosition()
@@ -830,7 +881,7 @@ void CreateDashboard()
       ObjectSetInteger(0, bg, OBJPROP_XDISTANCE, Dashboard_X-10);
       ObjectSetInteger(0, bg, OBJPROP_YDISTANCE, Dashboard_Y-10);
       ObjectSetInteger(0, bg, OBJPROP_XSIZE, 340);
-      ObjectSetInteger(0, bg, OBJPROP_YSIZE, 280);
+      ObjectSetInteger(0, bg, OBJPROP_YSIZE, 300);
       ObjectSetInteger(0, bg, OBJPROP_BGCOLOR, Dashboard_BG);
       ObjectSetInteger(0, bg, OBJPROP_BORDER_TYPE, BORDER_FLAT);
       ObjectSetInteger(0, bg, OBJPROP_COLOR, clrDimGray);
@@ -861,6 +912,16 @@ void UpdateDashboard()
                      : (Language==LNG_TH?"ไม่สอดคล้อง":"No Confluence");
    DashLabel("trend", StringFormat("%s: %s", (Language==LNG_TH?"เทรนด์":"Trend"), trendTxt),
              x, y, tb==1?Dashboard_Green:(tb==-1?Dashboard_Red:Dashboard_Text)); y+=rh;
+
+   if(UseRegimeFilter)
+   {
+      double adxVal[];
+      double adxNow = (CopyBuffer(hADX, 0, 1, 1, adxVal) >= 1) ? adxVal[0] : 0;
+      bool trending = adxNow >= ADX_MinTrendStrength;
+      DashLabel("regime", StringFormat("ADX(%s): %.1f %s", EnumToString(RegimeTimeframe), adxNow,
+                trending ? (Language==LNG_TH?"(เทรนด์)":"(Trending)") : (Language==LNG_TH?"(Sideway)":"(Ranging)")),
+                x, y, trending?Dashboard_Green:Dashboard_Red); y+=rh;
+   }
 
    string setupTxt = g_SetupArmed
       ? StringFormat("%s %s | OB:%.0f Vol:%.0f", (Language==LNG_TH?"โซนพร้อม":"Zone Armed"),
