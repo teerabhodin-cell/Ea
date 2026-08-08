@@ -87,7 +87,9 @@ input double RR_TP2                 = 2.5;     // TP2 = SL Distance x RR (partia
 input double RR_TP3                 = 4.0;     // TP3 = SL Distance x RR (final target)
 input double TP1_ClosePercent       = 40.0;    // % of Position to Close at TP1
 input double TP2_ClosePercent       = 40.0;    // % of Remaining Position to Close at TP2
-input double BreakevenLockPoints    = 10;      // Lock Points Beyond Entry after TP1
+input bool   UseBreakeven           = true;    // Move SL to Breakeven Before TP1 (ป้องกันไม้ที่เคยกำไรเยอะแต่ย้อนชน SL)
+input double BreakevenTriggerRR     = 0.7;     // Breakeven Trigger = SL Distance x RR (ควรน้อยกว่า RR_TP1)
+input double BreakevenLockPoints    = 10;      // Lock Points Beyond Entry (ใช้ทั้ง Breakeven เร็วและหลัง TP1)
 input double MinLot                 = 0.01;    // Min Lot Cap
 input double MaxLot                 = 5.0;     // Max Lot Cap
 input int    Slippage               = 20;      // Max Slippage, pts
@@ -154,6 +156,7 @@ double   g_VolumeScore    = 0;
 
 // --- open position TP ladder ---
 ulong    g_EntryTicket = 0;
+double   g_EntrySLDistance = 0;
 double   g_TP1Price=0, g_TP2Price=0, g_TP3Price=0;
 bool     g_TP1Done=false, g_TP2Done=false;
 
@@ -792,6 +795,7 @@ bool OpenTrade(int bias)
    if(PositionSelectForMagic())
    {
       g_EntryTicket = PositionGetInteger(POSITION_TICKET);
+      g_EntrySLDistance = slDistance;
       g_TP1Price=tp1; g_TP2Price=tp2; g_TP3Price=tp3;
       g_TP1Done=false; g_TP2Done=false;
    }
@@ -802,7 +806,7 @@ void ManageOpenPosition()
 {
    if(!PositionSelectForMagic())
    {
-      if(g_EntryTicket!=0) { g_EntryTicket=0; g_TP1Done=false; g_TP2Done=false; }
+      if(g_EntryTicket!=0) { g_EntryTicket=0; g_EntrySLDistance=0; g_TP1Done=false; g_TP2Done=false; }
       return;
    }
 
@@ -817,6 +821,24 @@ void ManageOpenPosition()
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double volMin  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+
+   // Breakeven fires at a lower R-multiple than TP1, so a trade that runs
+   // deep in profit and then reverses without ever quite touching TP1 still
+   // can't round-trip all the way back into a full loss.
+   if(UseBreakeven && g_EntrySLDistance>0)
+   {
+      double rr = (type==POSITION_TYPE_BUY) ? (bid-openPrice) : (openPrice-ask);
+      if(rr >= g_EntrySLDistance*BreakevenTriggerRR)
+      {
+         double beSL = (type==POSITION_TYPE_BUY) ? openPrice+BreakevenLockPoints*_Point : openPrice-BreakevenLockPoints*_Point;
+         bool needMove = (type==POSITION_TYPE_BUY) ? (curSL<beSL) : (curSL==0 || curSL>beSL);
+         if(needMove)
+         {
+            trade.PositionModify(_Symbol, NormalizeDouble(beSL,_Digits), curTP);
+            curSL = beSL;
+         }
+      }
+   }
 
    if(!g_TP1Done && g_TP1Price>0)
    {
