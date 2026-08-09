@@ -2229,8 +2229,12 @@ void DrawEquityCurveChart(int x, int y, int w, int h)
    double range = maxV - minV;
    if(range < 1.0) range = 1.0;
 
-   // พื้นที่ใต้เส้น (filled area) สีฟ้าโปร่งแสงจางๆ ให้ดูเป็นกราฟการเงินสมัยใหม่แทนเส้นเปล่าๆ วาดทีละ
-   // ช่วง (segment) เป็นสี่เหลี่ยมคางหมู 2 สามเหลี่ยม จากเส้นกราฟลงไปจนถึงพื้นล่างของกรอบ
+   // พื้นที่ใต้เส้น (filled area) โทนฟ้าอมเข้ม "ทึบแสง" - ผสมสีไว้ล่วงหน้าด้วย BlendColor() แทนการใช้
+   // ColorToARGB(..., alpha<255) ตรงๆ เพราะ CCanvas เขียนพิกเซลทับตรงๆ ไม่ได้ blend กับพื้นหลังการ์ด
+   // ที่วาดไปแล้วในตัว canvas เอง - ค่า alpha ต่ำที่เขียนลงจะกลายเป็นค่าที่ terminal เอาไปผสมกับ "ชาร์ต
+   // ราคาจริงข้างหลัง" ตอน composite ขึ้นจอแทน (บั๊กจริงที่เจอ: เห็นแท่งเทียนราคาทะลุพื้นที่นี้ขึ้นมา)
+   color areaFillClr  = BlendColor(C'12,12,22', C'59,130,246', 0.16);
+   uint  areaFillARGB = ColorToARGB(areaFillClr);
    int prevX = x + 2, prevY = y + h - 4;
    for(int i = 0; i < EquityHistoryCount; i++)
    {
@@ -2238,8 +2242,8 @@ void DrawEquityCurveChart(int x, int y, int w, int h)
       int py = y + h - 4 - (int)((EquityHistoryBuf[i] - minV) / range * (h - 8));
       if(i > 0)
       {
-         DashCanvas.FillTriangle(prevX, prevY, px, py, px, y + h, ColorToARGB(C'59,130,246', 35));
-         DashCanvas.FillTriangle(prevX, prevY, prevX, y + h, px, y + h, ColorToARGB(C'59,130,246', 35));
+         DashCanvas.FillTriangle(prevX, prevY, px, py, px, y + h, areaFillARGB);
+         DashCanvas.FillTriangle(prevX, prevY, prevX, y + h, px, y + h, areaFillARGB);
       }
       prevX = px;
       prevY = py;
