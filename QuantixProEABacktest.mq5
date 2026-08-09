@@ -1771,17 +1771,22 @@ void ClearEverythingAsync()
    MqlTradeResult  result;
    ENUM_ORDER_TYPE_FILLING fillMode = GetBestFillingMode();
 
-   // สแนปช็อตกำไร/ขาดทุนของบาสเก็ตไว้ก่อนปิดจริง (ต้องอ่านตอนโพซิชั่นยังเปิดอยู่)
-   // เพื่อเอาไปนับสถิติ Win/Loss - อ่านทีหลังหลังปิดแล้วจะดึงค่าไม่ได้
-   double statsSnapshotProfit = 0.0;
-   int    statsPosCount       = 0;
+   // เก็บ ticket ของโพซิชั่นในบาสเก็ตไว้ก่อนปิดจริง (ต้องอ่านตอนโพซิชั่นยังเปิดอยู่ ที่หลังปิดแล้ว
+   // PositionGetTicket จะดึงไม่ได้อีก) เอาไว้ย้อนไปรวมยอดจาก deal history จริงหลังปิดเสร็จ แทนการใช้
+   // POSITION_PROFIT+SWAP สดตอนนี้ตรงๆ เพราะ PositionGetDouble ไม่มีค่าคอมมิชชั่นให้เลย (คอมมิชชั่นอยู่ใน
+   // deal history เท่านั้น) ถ้าใช้ snapshot สดจะได้ตัวเลขกำไรสูงกว่าความจริงเท่ากับค่าคอมที่โบรกเกอร์หักไป
+   int   statsPosCount = 0;
+   ulong statsTickets[];
+   ArrayResize(statsTickets, 0);
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
       if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
       if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
 
-      statsSnapshotProfit += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+      int tn = ArraySize(statsTickets);
+      ArrayResize(statsTickets, tn + 1);
+      statsTickets[tn] = ticket;
       statsPosCount++;
    }
 
@@ -1882,7 +1887,25 @@ void ClearEverythingAsync()
       if(retryCount < 10 && !IsTestingMode) Sleep(20);
    }
 
-   // บันทึกสถิติจาก snapshot ที่เก็บไว้ตอนต้นฟังก์ชัน - นับเป็น "บาสเก็ตที่ปิดแล้ว" เฉพาะตอนที่มีไม้จริงๆ ให้ปิด
+   // รวมยอดกำไรจริงจาก deal history ของแต่ละ ticket ที่เก็บไว้ตอนต้นฟังก์ชัน (ทำได้ตอนนี้เพราะโพซิชั่น
+   // ปิดจริงแล้วตาม while loop ด้านบน) รวม PROFIT+SWAP+COMMISSION ของทุก deal ในแต่ละ position
+   // (deal เปิด + deal ปิด) เพื่อให้ตัวเลข "กำไรวันนี้" ตรงกับที่ MT5 คิดจริง ไม่สูงเกินจริงเพราะขาดค่าคอม
+   double statsSnapshotProfit = 0.0;
+   for(int ti = 0; ti < ArraySize(statsTickets); ti++)
+   {
+      if(!HistorySelectByPosition(statsTickets[ti])) continue;
+      int dealsCount = HistoryDealsTotal();
+      for(int di = 0; di < dealsCount; di++)
+      {
+         ulong dealTicket = HistoryDealGetTicket(di);
+         if(dealTicket == 0) continue;
+         statsSnapshotProfit += HistoryDealGetDouble(dealTicket, DEAL_PROFIT)
+                               + HistoryDealGetDouble(dealTicket, DEAL_SWAP)
+                               + HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+      }
+   }
+
+   // บันทึกสถิติจาก ticket ที่เก็บไว้ตอนต้นฟังก์ชัน - นับเป็น "บาสเก็ตที่ปิดแล้ว" เฉพาะตอนที่มีไม้จริงๆ ให้ปิด
    // (กันนับซ้ำตอนกดปุ่ม Close All ทั้งที่พอร์ตว่างอยู่แล้ว)
    if(statsPosCount > 0)
    {
