@@ -129,6 +129,12 @@ input group "===== 10. Dashboard ====="
 input double UIScaleMultiplier   = 1.3;    // Dashboard Size Multiplier (ตัวคูณขนาดแดชบอร์ด)
 input bool   ShowDashboardInBacktest = false; // Show Dashboard in Backtest (โชว์ UI ตอน backtest, ช้าลง - เปิดไว้ดูใน Visual Mode เท่านั้น)
 
+input group "===== 11. News Filter ====="
+input bool   UseNewsFilter          = false;                       // Use News Filter (พักเปิดไม้ช่วงข่าว)
+input ENUM_CALENDAR_EVENT_IMPORTANCE NewsMinImportance = CALENDAR_IMPORTANCE_HIGH; // Min News Importance (ระดับข่าวขั้นต่ำ)
+input int    NewsMinutesBefore      = 15;                          // Minutes Before News (นาทีก่อนข่าว)
+input int    NewsMinutesAfter       = 15;                          // Minutes After News (นาทีหลังข่าว)
+
 //=========================== GLOBAL ===============================//
 
 bool     GridCreated     = false;
@@ -219,9 +225,13 @@ datetime lastSpreadLogTime      = 0; // throttles the SPREAD BLOCKED message - w
 datetime lastTickTimeForGap     = 0; // เวลาของทิคก่อนหน้า ใช้แยก "เทรนด์วิ่งแรงต่อเนื่อง" ออกจาก "Gap จริง" (ราคาข้ามช่วงที่ไม่มีทิคเลย)
 int      SecondsSinceLastTick   = 0; // อัปเดตครั้งเดียวต่อทิคใน OnTick() แล้วอ่านใช้ใน ExecuteGridLogic()
 
+bool     NewsBlackoutActive     = false; // ผลตรวจข่าวล่าสุดที่ cache ไว้ - CalendarValueHistory() หนักเกินจะเรียกทุกทิค
+datetime LastNewsCheckTime      = 0;     // เวลาที่ตรวจข่าวครั้งล่าสุด (ตรวจซ้ำทุก 60 วินาทีพอ เพราะหน้าต่างข่าวหน่วยเป็นนาทีอยู่แล้ว)
+
 //====================== FUNCTION DECLARE ==========================//
 
 bool IsTradingAllowedByTime();
+bool IsNewsBlackout();
 bool CheckEMATrend(bool isBuy);
 bool CheckMTFFilter(bool isBuy);
 double GetCalculatedLotSize(int nextLevel);
@@ -416,6 +426,45 @@ bool IsTradingAllowedByTime()
    {
       return (currentMinutes >= startMinutes || currentMinutes < endMinutes);
    }
+}
+
+//+------------------------------------------------------------------+
+//| News Filter - เหมือน Time Filter ทุกอย่างเรื่องนโยบาย: บาสเก็ตที่เปิดอยู่แล้ว |
+//| ยังจัดการ/ปิดตามปกติ (กำไรได้ ก็ปิดได้) แค่ "ห้ามเปิดไม้ใหม่" ช่วงใกล้ข่าวแรงเท่านั้น |
+//| เช็คจากปฏิทินเศรษฐกิจของ MT5 (currency = สกุลเงินกำไรของสัญลักษณ์ เช่น USD    |
+//| สำหรับ XAUUSD) ผลลัพธ์ cache ไว้ 60 วินาที เพราะ CalendarValueHistory()      |
+//| หนักเกินจะเรียกทุกทิค และหน้าต่างข่าวหน่วยเป็นนาทีอยู่แล้วไม่ต้องเช็คถี่กว่านั้น |
+//+------------------------------------------------------------------+
+bool IsNewsBlackout()
+{
+   if(!UseNewsFilter) return false;
+
+   if(LastNewsCheckTime > 0 && TimeCurrent() - LastNewsCheckTime < 60) return NewsBlackoutActive;
+   LastNewsCheckTime = TimeCurrent();
+
+   string curr = SymbolInfoString(_Symbol, SYMBOL_CURRENCY_PROFIT);
+   datetime winStart = TimeCurrent() - NewsMinutesAfter * 60;
+   datetime winEnd   = TimeCurrent() + NewsMinutesBefore * 60;
+
+   MqlCalendarValue values[];
+   if(CalendarValueHistory(values, winStart, winEnd, NULL, curr) <= 0)
+   {
+      NewsBlackoutActive = false;
+      return false;
+   }
+
+   NewsBlackoutActive = false;
+   for(int i = 0; i < ArraySize(values); i++)
+   {
+      MqlCalendarEvent evt;
+      if(!CalendarEventById(values[i].event_id, evt)) continue;
+      if(evt.importance < NewsMinImportance) continue;
+
+      NewsBlackoutActive = true;
+      break;
+   }
+
+   return NewsBlackoutActive;
 }
 
 //+------------------------------------------------------------------+
@@ -1216,7 +1265,10 @@ void OnTick()
    // 3. Grid Logic Execution & Auto-Close on Time Filter
    bool timeAllowed = IsTradingAllowedByTime();
 
-   if(timeAllowed)
+   // News Filter ใช้นโยบายเดียวกับ Time Filter เป๊ะ - แค่ห้ามเปิดไม้ใหม่ ไม่แตะบาสเก็ตที่เปิดอยู่แล้ว
+   // เลยเช็ครวมกับ timeAllowed ตรงนี้จุดเดียว ไม่ต้องแยกเงื่อนไข else ใหม่ (สถานะ OFF-TIME เดิมยัง
+   // ใช้จับ "นอกเวลาเทรด" ได้ถูกต้อง ส่วนสถานะ NEWS PAUSE แยกแสดงเองใน DrawServerTimeRow)
+   if(timeAllowed && !IsNewsBlackout())
    {
       if(!IsClosingState && !equityLocked && !TradingHalted && (MaxBasketProfit < TargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
       {
@@ -1236,7 +1288,8 @@ void OnTick()
          if(openPositions > 0 && currentProfit > 0)
          {
             IsClosingState = true;
-            Print("⏰ [TIME FILTER] Outside trading hours and in profit -> Auto Closing all active positions...");
+            string blockReason = !timeAllowed ? "Outside trading hours" : "News blackout window";
+            PrintFormat("⏰ [ENTRY BLOCKED] %s and in profit -> Auto Closing all active positions...", blockReason);
             ClearEverythingAsync();
             DeleteVisualTSLine();
             RecalculateBasePrice();
@@ -2449,6 +2502,7 @@ int DrawServerTimeRow(int y, int openPos, int pendingOrders)
    if(TradingHalted)                              { dotColor = C'239,68,68';  statusTxt = GetUIString("EA หยุดถาวร", "EA HALTED"); }
    else if(IsClosingState)                        { dotColor = C'251,146,60'; statusTxt = GetUIString("กำลังปิดไม้", "CLOSING"); }
    else if(!timeAllowed)                           { dotColor = C'239,68,68';  statusTxt = GetUIString("นอกเวลาเทรด", "OFF-TIME"); }
+   else if(IsNewsBlackout())                       { dotColor = C'168,85,247'; statusTxt = GetUIString("พักช่วงข่าว", "NEWS PAUSE"); }
    else if(openPos == 0 && pendingOrders == 0)     { dotColor = C'251,193,7';  statusTxt = GetUIString("พร้อมทำงาน", "STANDBY"); }
 
    int sw   = EstimateTextWidth(statusTxt, SF(15));
