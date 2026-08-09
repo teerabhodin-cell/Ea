@@ -23,9 +23,15 @@ enum ENUM_GRID_TYPE
    GRID_PENDING  // Pending Order (ตั้ง Buy Stop / Sell Stop บน Server)
 };
 
+enum ENUM_LOT_TYPE
+{
+   LOT_FIXED,        // Fixed Lot (ล็อตคงที่)
+   LOT_RISK_PERCENT  // % of Risk (คำนวณตาม % ความเสี่ยง)
+};
+
 //=========================== HARD LICENSE LOCK ================================//
 // รายชื่อเลขบัญชี MT5 ที่อนุญาตให้รัน EA นี้ได้ (ทั้งเดโมและบัญชีจริง) - ไฟล์นี้คนละตัวกับ
-// QuantixProEA.mq5 (เวอร์ชันทดลอง ล็อคเฉพาะเดโม ไม่ล็อคเลขบัญชี) **ห้ามทำเป็น input เด็ดขาด**
+// QuantixProEA.mq5 (รันบนชาร์ตจริงได้ปกติ ไม่มีล็อคบัญชี) **ห้ามทำเป็น input เด็ดขาด**
 // เพราะถ้าเป็น input ผู้ใช้จะเปิดหน้า Inputs แล้วแก้ค่าเองได้ทันที ทำให้ล็อคไม่มีความหมายอะไรเลย -
 // ต้องเป็นค่าคงที่ใน source code เท่านั้นถึงจะบังคับได้จริง
 const long LicensedAccountNumbers[] = {257431196, 41004623, 2121992812, 416094438};
@@ -42,38 +48,45 @@ input int     StartMinute      = 0;
 input int     EndHour          = 22;      // Stop Hour (ชม.หยุด)
 input int     EndMinute        = 0;
 
-input group "===== 2. Main Grid ====="
-input ENUM_GRID_TYPE GridType       = GRID_VIRTUAL; // Grid Type (รูปแบบ Grid)
-input double BaseLot                = 0.05;
+input group "===== 2. Lot ====="
+input ENUM_LOT_TYPE LotType         = LOT_FIXED; // Lot Type (ประเภท Lot)
+input double BaseLot                = 0.05;      // ใช้เมื่อ LotType = Fixed Lot
 input double LotMultiplier          = 1.5;
+input double LotRiskPercent         = 1.0;     // Risk % of Equity (ใช้เมื่อ LotType = % of Risk, ต่อระยะ Grid ปัจจุบัน 1 ช่วง)
+input bool   UseDynamicLot          = false;   // Dynamic Lot by Equity (Lot ตาม Equity, ใช้เมื่อ LotType = Fixed Lot เท่านั้น)
+input double BalancePerLot          = 8000.0;  // Equity per 0.01 Lot
+input bool   UseEquityLock          = false;   // Equity Lock (ล็อคพอร์ต)
+input double MinEquityLimit         = 4000.0;  // Min Equity Limit
+input bool   UseAutoReduceLot       = false;   // Auto Reduce Lot on DD (ลด Lot อัตโนมัติ)
+input double ReduceLotThresholdDD   = 20.0;    // Reduce Lot DD Trigger %
+
+input group "===== 3. Grid ====="
+input ENUM_GRID_TYPE GridType       = GRID_VIRTUAL; // Grid Type (รูปแบบ Grid)
 input int    TotalLevels            = 10;      // Levels per Side (จำนวนชั้น/ฝั่ง)
 input bool   UseATRDistance         = true;    // Use ATR Distance (ระยะตาม ATR)
 input int    ATR_Period             = 14;      // ATR Period
 input double ATR_Multiplier         = 1.05;    // ATR Multiplier
 input bool   UseAdaptiveATRGrid     = false;   // Per-Side ATR Distance (แยกระยะต่อฝั่ง)
+input bool   UseBBDistance          = false;   // Use Bollinger Bands Distance (ระยะตาม BB, สำคัญกว่า ATR ถ้าเปิดพร้อมกัน)
+input int    BB_Period              = 20;      // BB Period
+input double BB_Deviation           = 2.0;     // BB Deviation
+input double BB_Multiplier          = 1.0;     // BB Width Multiplier
+input bool   UseAdaptiveBBGrid      = false;   // Per-Side BB Distance (แยกระยะต่อฝั่งตาม BB)
 input int    DistancePoints         = 250;     // Fixed Distance, pts (ระยะคงที่)
 input ulong  MagicNumber            = 112233;
 
-input group "===== 3. Target & Trailing ====="
+input group "===== 4. Target & Trailing ====="
 input double TargetProfit        = 5.0;    // Target Profit $ (เป้ากำไร)
 input double TrailingStopUSD     = 0.2;    // Trailing Distance $ (ระยะเทรล)
 input double DailyProfitGoal     = 100.0;  // Daily Profit Goal $ (เป้ากำไรรายวัน, ใช้แสดงในเกจ Dashboard)
 
-input group "===== 4. Trend Filters ====="
+input group "===== 5. Trend Filters ====="
 input bool   UseEMAFilter           = false;   // Use EMA Filter (ใช้ EMA)
 input int    EMA_Period             = 200;     // EMA Period
 input bool   StrictBuyFilter        = false;   // Block Buy < EMA (ล็อค Buy)
 input bool   StrictSellFilter       = false;   // Block Sell > EMA (ล็อค Sell)
 input bool   UseMTFFilter          = false;   // Use MTF Filter (ใช้ MTF)
 input ENUM_TIMEFRAMES MTF_Period   = PERIOD_H1; // MTF Timeframe
-
-input group "===== 5. Lot & Capital ====="
-input bool   UseDynamicLot          = false;   // Dynamic Lot by Equity (Lot ตาม Equity)
-input double BalancePerLot          = 8000.0;  // Equity per 0.01 Lot
-input bool   UseEquityLock          = false;   // Equity Lock (ล็อคพอร์ต)
-input double MinEquityLimit         = 4000.0;  // Min Equity Limit
-input bool   UseAutoReduceLot       = false;   // Auto Reduce Lot on DD (ลด Lot อัตโนมัติ)
-input double ReduceLotThresholdDD   = 20.0;    // Reduce Lot DD Trigger %
 
 input group "===== 6. Max DD Stop ====="
 input bool   UseMaxDDStop           = false;   // Max DD Stop (ตัดขาดทุน)
@@ -114,6 +127,7 @@ input int    MaxSpreadAllowed    = 40;     // Max Spread Allowed, pts
 
 input group "===== 10. Dashboard ====="
 input double UIScaleMultiplier   = 1.3;    // Dashboard Size Multiplier (ตัวคูณขนาดแดชบอร์ด)
+input bool   ShowDashboardInBacktest = false; // Show Dashboard in Backtest (โชว์ UI ตอน backtest, ช้าลง - เปิดไว้ดูใน Visual Mode เท่านั้น)
 
 //=========================== GLOBAL ===============================//
 
@@ -189,10 +203,11 @@ datetime EventLogTimeVal[EVENT_LOG_MAX];
 int      DayStartDay          = -1; // dt.day_of_year ของวันที่รีเซ็ต DailyRealizedProfit ไว้ล่าสุด
 double   DailyRealizedProfit  = 0.0; // กำไรวันนี้แบบ "ปิดรอบแล้ว" เท่านั้น - บวกเพิ่มตอนบาสเก็ตปิดจริง ไม่ใช่ floating P/L สด
 
-// Handle สำหรับอินดิเคเตอร์ ATR / EMA / Multi-Timeframe EMA
+// Handle สำหรับอินดิเคเตอร์ ATR / EMA / Multi-Timeframe EMA / Bollinger Bands
 int      atrHandle       = INVALID_HANDLE;
 int      emaHandle       = INVALID_HANDLE;
 int      mtfEmaHandle    = INVALID_HANDLE;
+int      bbHandle        = INVALID_HANDLE;
 
 // --- [ UI OPTIMIZATION GLOBAL VARS ] ---
 uint     lastUIUpdateTime = 0;
@@ -227,7 +242,7 @@ void DeleteVisualTSLine();
 void UpdateDrawdownTracker();
 
 int GetDynamicGridDistance();
-bool IsPerSideATRActive();
+bool IsPerSideDistanceActive();
 void RecalculateBasePrice();
 void ReconcileGridStateOnInit();
 ENUM_ORDER_TYPE_FILLING GetBestFillingMode();
@@ -362,8 +377,8 @@ void ReconcileGridStateOnInit()
    // เหมือนกับ live pin ใน CheckAndExecuteVirtualGrid ที่แก้ไปแล้ว ผูกกับราคาไม้ล่าสุดของอีกฝั่ง
    // ได้เฉพาะ Per-Side ATR เท่านั้น โหมด Fixed/ATR ปกติต้องกลับไปที่ GridBasePrice (ฐานจริงที่เพิ่ง
    // ประมาณย้อนกลับไว้ด้านบน) ไม่งั้นฝั่งที่ยังว่างจะเปิดไม้ก่อนถึงเส้นฐานเหมือนบั๊กที่เพิ่งแก้ไปแทน
-   GridBasePriceBuy  = (buyCount  > 0) ? lastBuyPrice  : ((IsPerSideATRActive() && sellCount > 0) ? lastSellPrice : GridBasePrice);
-   GridBasePriceSell = (sellCount > 0) ? lastSellPrice : ((IsPerSideATRActive() && buyCount  > 0) ? lastBuyPrice  : GridBasePrice);
+   GridBasePriceBuy  = (buyCount  > 0) ? lastBuyPrice  : ((IsPerSideDistanceActive() && sellCount > 0) ? lastSellPrice : GridBasePrice);
+   GridBasePriceSell = (sellCount > 0) ? lastSellPrice : ((IsPerSideDistanceActive() && buyCount  > 0) ? lastBuyPrice  : GridBasePrice);
 
    BuyGapAnchor  = 0.0;
    SellGapAnchor = 0.0;
@@ -505,7 +520,25 @@ double CalcEmergencySL(bool isBuy, double entryPrice, double point)
 double GetCalculatedLotSize(int nextLevel)
 {
    double base = BaseLot;
-   if(UseDynamicLot)
+   // LotType = % of Risk: คำนวณ base lot จาก "ถ้าราคาขยับผิดทาง 1 ช่วงระยะ Grid ปัจจุบัน จะเสียไม่เกิน
+   // LotRiskPercent% ของ equity" - ใช้ระยะ Grid ปัจจุบันเป็นตัวอ้างอิงความเสี่ยง (ไม่ใช่ Emergency SL
+   // ซึ่งตั้งใจให้กว้างมากเป็น backstop สุดท้าย ไม่เหมาะเป็นฐานคำนวณความเสี่ยงต่อไม้) - LotType นี้ตัด
+   // Dynamic Lot by Equity ทิ้งไปเลย เพราะเป็นสูตรที่ผูกกับความเสี่ยงจริงมากกว่าอยู่แล้ว ไม่ต้องมีสองระบบ
+   // คำนวณ base lot ซ้อนกัน
+   if(LotType == LOT_RISK_PERCENT)
+   {
+      double currentEq       = AccountInfoDouble(ACCOUNT_EQUITY);
+      double riskAmount      = currentEq * (LotRiskPercent / 100.0);
+      int    distPoints      = (CachedGridDistance > 0) ? CachedGridDistance : GetDynamicGridDistance();
+      double distPrice       = distPoints * _Point;
+      double tickValue       = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+      double tickSize        = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+      double valuePerLotMove = (tickSize > 0) ? (distPrice / tickSize) * tickValue : 0.0;
+
+      base = (valuePerLotMove > 0) ? NormalizeDouble(riskAmount / valuePerLotMove, 2) : BaseLot;
+      if(base < 0.01) base = 0.01;
+   }
+   else if(UseDynamicLot)
    {
       double currentEq = AccountInfoDouble(ACCOUNT_EQUITY);
       if(BalancePerLot > 0)
@@ -872,6 +905,18 @@ int OnInit()
       // silently detaching - easier to tell "not licensed" from "broken" this way.
    }
 
+   // Hard cap: LotMultiplier ห้ามเกิน 3.0 เด็ดขาด (กันตั้งค่า/optimize สูงเกินไปจนกลายเป็น
+   // martingale ที่รุนแรงเกินควบคุม) - input เป็น read-only แก้ค่าเองในโค้ดไม่ได้ (MQL5 ห้าม
+   // reassign ตัวแปร input) เลยต้อง reject การ init ไปเลยแทนการ clamp เงียบๆ ให้เห็นชัดว่าค่านี้
+   // ใช้ไม่ได้ ไม่ใช่แอบรันด้วยค่าอื่นลับหลัง - ระหว่าง optimize จะ fail เร็วสำหรับทุก pass ที่เกิน 3.0
+   // แทนที่จะเสียเวลารันเต็มรอบด้วยค่าเดียวกันซ้ำๆ
+   if(LotMultiplier > 3.0)
+   {
+      Alert(StringFormat("QuantixPro EA: LotMultiplier %.2f exceeds the maximum allowed (3.0). Please lower it and reload.", LotMultiplier));
+      Print("❌ [INPUT LIMIT] LotMultiplier ", LotMultiplier, " > 3.0 max - EA init blocked.");
+      return(INIT_FAILED);
+   }
+
    // FIXED: derive m_multiplier from the attached symbol's digit count so every
    // *Points input (DistancePoints, MaxSlippagePoints, MaxAllowedGapPoints,
    // MaxSpreadAllowed) keeps meaning the same real price distance whether the
@@ -921,6 +966,16 @@ int OnInit()
       }
    }
 
+   if(UseBBDistance)
+   {
+      bbHandle = iBands(_Symbol, _Period, BB_Period, 0, BB_Deviation, PRICE_CLOSE);
+      if(bbHandle == INVALID_HANDLE)
+      {
+         Print("Failed to create Bollinger Bands indicator handle.");
+         return(INIT_FAILED);
+      }
+   }
+
    if(UseEMAFilter)
    {
       emaHandle = iMA(_Symbol, _Period, EMA_Period, 0, MODE_EMA, PRICE_CLOSE);
@@ -966,6 +1021,7 @@ void OnDeinit(const int reason)
    if(atrHandle != INVALID_HANDLE) IndicatorRelease(atrHandle);
    if(emaHandle != INVALID_HANDLE) IndicatorRelease(emaHandle);
    if(mtfEmaHandle != INVALID_HANDLE) IndicatorRelease(mtfEmaHandle);
+   if(bbHandle != INVALID_HANDLE) IndicatorRelease(bbHandle);
    DeleteVisualTSLine();
    DeleteDashboard();
 }
@@ -1277,19 +1333,43 @@ void UpdateDrawdownTracker()
    }
 }
 
-// Per-Side ATR Distance เป็นส่วนขยายของ ATR Distance เท่านั้น - ถ้าปิด ATR Distance ไว้
-// (ใช้ Fixed Distance) ต่อให้เปิด Per-Side ก็ต้องไม่มีผลอะไรเลย เพราะไม่มี "ระยะจาก ATR สด"
-// ให้แยกต่อฝั่งตั้งแต่แรก
-bool IsPerSideATRActive()
+// Per-Side ATR/BB Distance เป็นส่วนขยายของ ATR Distance / BB Distance เท่านั้น - ถ้าปิดตัวหลัก
+// ไว้ (ใช้ Fixed Distance) ต่อให้เปิด Per-Side ของตัวนั้นก็ต้องไม่มีผลอะไรเลย เพราะไม่มี "ระยะสด"
+// ให้แยกต่อฝั่งตั้งแต่แรก - เช็คคู่กันตามแหล่งระยะที่ GetDynamicGridDistance() เลือกใช้จริง (BB มา
+// ก่อน ATR เสมอถ้าเปิดทั้งคู่ ดู GetDynamicGridDistance())
+bool IsPerSideDistanceActive()
 {
-   return UseATRDistance && UseAdaptiveATRGrid;
+   if(UseBBDistance)  return UseAdaptiveBBGrid;
+   if(UseATRDistance) return UseAdaptiveATRGrid;
+   return false;
 }
 
 //+------------------------------------------------------------------+
-//| Calculate Dynamic Grid Distance using ATR                        |
+//| Calculate Dynamic Grid Distance using Bollinger Bands / ATR      |
+//| ลำดับความสำคัญ: BB Distance (ถ้าเปิดและอ่านค่าได้) > ATR Distance   |
+//| (ถ้าเปิดและอ่านค่าได้) > Fixed Distance (fallback สุดท้ายเสมอ)      |
 //+------------------------------------------------------------------+
 int GetDynamicGridDistance()
 {
+   if(UseBBDistance && bbHandle != INVALID_HANDLE)
+   {
+      double upperBuf[], lowerBuf[];
+      ArraySetAsSeries(upperBuf, true);
+      ArraySetAsSeries(lowerBuf, true);
+
+      // iBands buffer index: 0=Base Line, 1=Upper Band, 2=Lower Band
+      if(CopyBuffer(bbHandle, 1, 1, 1, upperBuf) > 0 && CopyBuffer(bbHandle, 2, 1, 1, lowerBuf) > 0)
+      {
+         double bbWidth = upperBuf[0] - lowerBuf[0];
+         if(bbWidth > 0)
+         {
+            double bbPoints = (bbWidth * BB_Multiplier) / _Point;
+            return (int)MathMax(10 * m_multiplier, MathRound(bbPoints));
+         }
+      }
+      // ดึงค่า BB ไม่สำเร็จ (buffer ยังไม่พร้อม/error) - ไหลลงไปเช็ค ATR/Fixed ด้านล่างแทน
+   }
+
    if(!UseATRDistance || atrHandle == INVALID_HANDLE)
       return DistancePoints * m_multiplier;
 
@@ -1503,8 +1583,8 @@ void CheckAndExecuteVirtualGrid()
 
    // UseAdaptiveATRGrid: แต่ละฝั่งใช้ระยะของตัวเอง (คำนวณสดจาก ATR ตอนฝั่งนั้น fill ล่าสุด)
    // แทนที่จะใช้ stepDistance ตัวเดียวร่วมกันทั้งสองฝั่ง - ฝั่งที่ยังไม่ fill จะไม่ถูกกระทบเลย
-   int buyStepDistance  = IsPerSideATRActive() ? ((BuyGridDistance  > 0) ? BuyGridDistance  : GetDynamicGridDistance()) : stepDistance;
-   int sellStepDistance = IsPerSideATRActive() ? ((SellGridDistance > 0) ? SellGridDistance : GetDynamicGridDistance()) : stepDistance;
+   int buyStepDistance  = IsPerSideDistanceActive() ? ((BuyGridDistance  > 0) ? BuyGridDistance  : GetDynamicGridDistance()) : stepDistance;
+   int sellStepDistance = IsPerSideDistanceActive() ? ((SellGridDistance > 0) ? SellGridDistance : GetDynamicGridDistance()) : stepDistance;
 
    MqlTradeRequest request;
    MqlTradeResult  result;
@@ -1589,11 +1669,11 @@ void CheckAndExecuteVirtualGrid()
                // here made Sell's real trigger silently drift off of GridBasePrice
                // (which the dashboard shows as the fixed base), so the still-empty
                // side ended up opening before/past what the UI displayed as its base.
-               if(IsPerSideATRActive() && sellCount == 0) GridBasePriceSell = ask;
+               if(IsPerSideDistanceActive() && sellCount == 0) GridBasePriceSell = ask;
                BuyGapAnchor = 0.0; // lastBuyPrice now reflects this real fill, override no longer needed
                // ฝั่ง Buy fill แล้ว - คำนวณระยะ Buy รอบถัดไปใหม่จาก ATR สด ณ ตอนนี้
                // ฝั่ง Sell ที่ยังไม่ fill ไม่ถูกแตะเลย ยังรอที่เป้าเดิมต่อไป
-               if(IsPerSideATRActive()) BuyGridDistance = GetDynamicGridDistance();
+               if(IsPerSideDistanceActive()) BuyGridDistance = GetDynamicGridDistance();
                LogEvent(StringFormat(GetUIString("เปิดออเดอร์ Buy ชั้น %d", "Opened Buy Level %d"), nextLevel));
                return;
             }
@@ -1673,11 +1753,11 @@ void CheckAndExecuteVirtualGrid()
                LastOrderSentTime = TimeCurrent();
                // Symmetric to the Buy-fills-first case above - same Per-Side ATR gate,
                // same reasoning: outside that mode the base must stay put.
-               if(IsPerSideATRActive() && buyCount == 0) GridBasePriceBuy = bid;
+               if(IsPerSideDistanceActive() && buyCount == 0) GridBasePriceBuy = bid;
                SellGapAnchor = 0.0; // lastSellPrice now reflects this real fill, override no longer needed
                // ฝั่ง Sell fill แล้ว - คำนวณระยะ Sell รอบถัดไปใหม่จาก ATR สด ณ ตอนนี้
                // ฝั่ง Buy ที่ยังไม่ fill ไม่ถูกแตะเลย ยังรอที่เป้าเดิมต่อไป
-               if(IsPerSideATRActive()) SellGridDistance = GetDynamicGridDistance();
+               if(IsPerSideDistanceActive()) SellGridDistance = GetDynamicGridDistance();
                LogEvent(StringFormat(GetUIString("เปิดออเดอร์ Sell ชั้น %d", "Opened Sell Level %d"), nextLevel));
                return;
             }
@@ -1895,7 +1975,7 @@ void ClearEverythingAsync()
 //+------------------------------------------------------------------+
 void DrawVisualTSLine(double tsValue)
 {
-   if(IsTestingMode) return;
+   if(IsTestingMode && !ShowDashboardInBacktest) return;
 
    string text = "==> BASKET SL: $" + DoubleToString(tsValue, 2) + " (Peak: $" + DoubleToString(MaxBasketProfit, 2) + ")";
 
@@ -1962,7 +2042,7 @@ void LogEvent(string text)
 }
 
 void CreateButton(string name, int x, int y, int w, int h, string text, color bgClr, color textClr, int fontSize = 9) {
-   if(IsTestingMode) return;
+   if(IsTestingMode && !ShowDashboardInBacktest) return;
    ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0);
    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
@@ -2168,14 +2248,14 @@ double GetNextGridTargetPrice(bool isBuy)
    }
 
    int stepDistance     = (CachedGridDistance > 0) ? CachedGridDistance : GetDynamicGridDistance();
-   int buyStepDistance  = IsPerSideATRActive() ? ((BuyGridDistance  > 0) ? BuyGridDistance  : GetDynamicGridDistance()) : stepDistance;
-   int sellStepDistance = IsPerSideATRActive() ? ((SellGridDistance > 0) ? SellGridDistance : GetDynamicGridDistance()) : stepDistance;
+   int buyStepDistance  = IsPerSideDistanceActive() ? ((BuyGridDistance  > 0) ? BuyGridDistance  : GetDynamicGridDistance()) : stepDistance;
+   int sellStepDistance = IsPerSideDistanceActive() ? ((SellGridDistance > 0) ? SellGridDistance : GetDynamicGridDistance()) : stepDistance;
 
    // เฉพาะ Per-Side ATR Distance ที่ "ใช้งานจริง" (ต้องเปิด ATR Distance ด้วย ไม่งั้น Per-Side
    // ไม่มีผลอะไรเลย) เท่านั้นที่ทำให้ระยะแต่ละฝั่งไม่เท่ากันและเปลี่ยนสดทุกครั้งที่ฝั่งนั้น fill -
    // เลยให้ฐานเลื่อนตามไม้ล่าสุดจริงเฉพาะโหมดนี้ ส่วน ATR Distance ปกติ (ไม่ per-side) หรือ
    // Fixed Distance ให้ยึดฐานเดิมที่ level 1 ตายตัวเสมอ
-   bool dynamicTarget = IsPerSideATRActive();
+   bool dynamicTarget = IsPerSideDistanceActive();
 
    // ระดับ 2+ ของทั้ง 2 ฝั่ง เคาะสูตร "ไม้ล่าสุดจริง +/- ระยะ" ในเอนจิ้นจริงเสมอ ไม่ว่าโหมดไหน -
    // ความแตกต่างของ dynamicTarget มีผลแค่ระดับ 1 เท่านั้น (ฐานคงที่ vs ไล่ตามราคาที่อีกฝั่งเพิ่ง fill)
@@ -2377,7 +2457,8 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    DrawKV(cx + S(12), ry, innerW, GetUIString("ย่อตัวสูงสุด", "Max DD"), DoubleToString(MaxDrawdownPercent, 2) + "%", C'160,160,180', MaxDrawdownPercent > 5 ? C'239,68,68' : C'34,197,94'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ลิมิต", "DD Limit"), (ddLimit > 0 ? DoubleToString(ddLimit, 1) + "%" : "—"), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ล็อตเริ่มต้น", "Base Lot"), DoubleToString(BaseLot, 2), C'160,160,180', clrWhite); ry += rowStep;
-   DrawKV(cx + S(12), ry, innerW, GetUIString("โหมดล็อต", "Lot Mode"), (UseDynamicLot ? GetUIString("อัตโนมัติ", "Dynamic") : GetUIString("คงที่", "Fixed")), C'160,160,180', clrWhite); ry += rowStep;
+   string lotModeTxt = (LotType == LOT_RISK_PERCENT) ? GetUIString("% ความเสี่ยง", "% of Risk") : (UseDynamicLot ? GetUIString("อัตโนมัติ", "Dynamic") : GetUIString("คงที่", "Fixed"));
+   DrawKV(cx + S(12), ry, innerW, GetUIString("โหมดล็อต", "Lot Mode"), lotModeTxt, C'160,160,180', clrWhite); ry += rowStep;
    string riskStatusTxt = GetUIString("ปลอดภัย", "SAFE");
    color  riskStatusClr = C'34,197,94';
    if(TradingHalted) { riskStatusTxt = GetUIString("หยุดถาวร", "HALTED"); riskStatusClr = C'239,68,68'; }
@@ -2586,7 +2667,7 @@ void ShowUnlicensedWarning()
 //+------------------------------------------------------------------+
 void InitDashboard()
 {
-   if(IsTestingMode) return;
+   if(IsTestingMode && !ShowDashboardInBacktest) return;
    DeleteDashboard();
 
    UIScale = ComputeUIScale();
@@ -2608,7 +2689,7 @@ void InitDashboard()
 
 void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, int openPos, int pendingOrders)
 {
-   if(IsTestingMode) return;
+   if(IsTestingMode && !ShowDashboardInBacktest) return;
    if(ObjectFind(0, CANVAS_NAME) < 0) InitDashboard();
    else if(MathAbs(ComputeUIScale() - UIScale) >= 0.03) InitDashboard(); // ขนาดหน้าต่างชาร์ตเปลี่ยนพอสมควร - สร้าง canvas ใหม่ที่ความละเอียดใหม่
 
