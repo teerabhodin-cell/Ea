@@ -34,7 +34,7 @@ enum ENUM_LOT_TYPE
 // QuantixProEA.mq5 (รันบนชาร์ตจริงได้ปกติ ไม่มีล็อคบัญชี) **ห้ามทำเป็น input เด็ดขาด**
 // เพราะถ้าเป็น input ผู้ใช้จะเปิดหน้า Inputs แล้วแก้ค่าเองได้ทันที ทำให้ล็อคไม่มีความหมายอะไรเลย -
 // ต้องเป็นค่าคงที่ใน source code เท่านั้นถึงจะบังคับได้จริง
-const long LicensedAccountNumbers[] = {257431196, 41004623, 2121992812, 416094438};
+const long LicensedAccountNumbers[] = {257431196, 41004623, 2121992812, 416094438, 184104764};
 
 bool IsLicensed = false; // เซ็ตค่าจริงใน OnInit() - เทียบ ACCOUNT_LOGIN ปัจจุบันกับลิสต์ด้านบน
 
