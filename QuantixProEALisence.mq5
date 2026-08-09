@@ -2112,12 +2112,65 @@ void DrawKV(int x, int y, int w, string label, string value, color labelColor, c
    DashCanvas.TextOut(x + w - vw, y, value, ColorToARGB(valueColor));
 }
 
+// วาดสี่เหลี่ยมมุมโค้งแบบเติมสี - เติมกากบาทกลาง (บน/ล่าง/ซ้าย/ขวา เว้นมุม) ตรงๆ ก่อน แล้วไล่เช็ค
+// พิกเซลทีละจุดเฉพาะกรอบมุมทั้ง 4 (r x r) ว่าอยู่ในวงกลมรัศมี r จากจุดศูนย์กลางมุมหรือเปล่า ถ้าเกิน
+// ปล่อยว่างไว้ (ไม่ set พิกเซล) ให้ชาร์ตด้านหลังทะลุผ่าน - วาดวงกลมทับด้วยสีพื้นใช้แทนไม่ได้ เพราะ
+// พื้นหลังจริงคือชาร์ตที่เปลี่ยนได้ตลอด ไม่ใช่สีทึบค่าเดียว
+void FillRoundedRect(int x1, int y1, int x2, int y2, int r, uint argb)
+{
+   int w = x2 - x1, h = y2 - y1;
+   if(r <= 0 || w <= 0 || h <= 0) { DashCanvas.FillRectangle(x1, y1, x2, y2, argb); return; }
+   if(r * 2 > w) r = w / 2;
+   if(r * 2 > h) r = h / 2;
+   if(r <= 0) { DashCanvas.FillRectangle(x1, y1, x2, y2, argb); return; }
+
+   DashCanvas.FillRectangle(x1 + r, y1,     x2 - r, y2,     argb);
+   DashCanvas.FillRectangle(x1,     y1 + r, x1 + r, y2 - r, argb);
+   DashCanvas.FillRectangle(x2 - r, y1 + r, x2,     y2 - r, argb);
+
+   int cornerCx[4], cornerCy[4], cornerOx[4], cornerOy[4];
+   cornerCx[0] = x1 + r; cornerCy[0] = y1 + r; cornerOx[0] = x1;     cornerOy[0] = y1;
+   cornerCx[1] = x2 - r; cornerCy[1] = y1 + r; cornerOx[1] = x2 - r; cornerOy[1] = y1;
+   cornerCx[2] = x1 + r; cornerCy[2] = y2 - r; cornerOx[2] = x1;     cornerOy[2] = y2 - r;
+   cornerCx[3] = x2 - r; cornerCy[3] = y2 - r; cornerOx[3] = x2 - r; cornerOy[3] = y2 - r;
+
+   for(int c = 0; c < 4; c++)
+   {
+      for(int py = 0; py < r; py++)
+      {
+         int wy = cornerOy[c] + py;
+         for(int px = 0; px < r; px++)
+         {
+            int wx = cornerOx[c] + px;
+            int dx = wx - cornerCx[c];
+            int dy = wy - cornerCy[c];
+            if(dx*dx + dy*dy <= r*r) DashCanvas.PixelSet(wx, wy, argb);
+         }
+      }
+   }
+}
+
+// เงานุ่มด้านล่าง-ขวาของการ์ด (offset เล็กน้อย + ดำโปร่งแสง) ให้การ์ดดูลอยขึ้นมาจากพื้นชาร์ต
+// ต้องวาดก่อนตัวการ์ดเสมอ (อยู่ชั้นล่างสุด ถูกตัวการ์ดทับเกือบหมด เหลือแค่ขอบยื่นออกมาเป็นเงา)
+void DrawPanelShadow(int x1, int y1, int x2, int y2, int r)
+{
+   int off = S(5);
+   FillRoundedRect(x1 + off, y1 + off, x2 + off, y2 + off, r, ColorToARGB(clrBlack, 55));
+}
+
 void DrawCardBG(int x, int y, int w, int h, string title)
 {
-   DashCanvas.FillRectangle(x, y, x + w, y + h, ColorToARGB(C'20,20,34'));
-   DashCanvas.Rectangle(x, y, x + w, y + h, ColorToARGB(C'45,45,65'));
+   int r = S(10);
+   DrawPanelShadow(x, y, x + w, y + h, r);
+   FillRoundedRect(x, y, x + w, y + h, r, ColorToARGB(C'23,23,39'));
+   // กรอบสีม่วงอ่อนด้านบน (โทนเดียวกับแบรนด์ QUANTIX PRO TERMINAL) เข้มกว่าอีก 3 ด้าน เพื่อให้ดู
+   // มีลำดับชั้น (hierarchy) แทนกรอบเทาแบนสีเดียวทั้ง 4 ด้านแบบเดิม
+   DashCanvas.Line(x + r, y,     x + w - r, y,     ColorToARGB(C'96,82,138'));
+   DashCanvas.Line(x + r, y + h, x + w - r, y + h, ColorToARGB(C'52,48,74'));
+   DashCanvas.Line(x,     y + r, x,         y + h - r, ColorToARGB(C'52,48,74'));
+   DashCanvas.Line(x + w, y + r, x + w,     y + h - r, ColorToARGB(C'52,48,74'));
    UIFontSet(SF(17), FW_BOLD);
-   DashCanvas.TextOut(x + S(12), y + S(10), title, ColorToARGB(C'160,160,190'));
+   DashCanvas.TextOut(x + S(13), y + S(13), title, ColorToARGB(C'186,170,224'));
 }
 
 // เกจวงแหวน (donut gauge) ไล่สีเขียว -> ฟ้า ตามสัดส่วน percent (0..1)
@@ -2157,7 +2210,8 @@ void DrawArcGauge(int cx, int cy, int radius, int thickness, double percent)
 
 void DrawEquityCurveChart(int x, int y, int w, int h)
 {
-   DashCanvas.FillRectangle(x, y, x + w, y + h, ColorToARGB(C'14,14,24'));
+   int r = S(6);
+   FillRoundedRect(x, y, x + w, y + h, r, ColorToARGB(C'12,12,22'));
 
    if(EquityHistoryCount < 2)
    {
@@ -2175,12 +2229,29 @@ void DrawEquityCurveChart(int x, int y, int w, int h)
    double range = maxV - minV;
    if(range < 1.0) range = 1.0;
 
-   int prevX = x, prevY = y + h;
+   // พื้นที่ใต้เส้น (filled area) สีฟ้าโปร่งแสงจางๆ ให้ดูเป็นกราฟการเงินสมัยใหม่แทนเส้นเปล่าๆ วาดทีละ
+   // ช่วง (segment) เป็นสี่เหลี่ยมคางหมู 2 สามเหลี่ยม จากเส้นกราฟลงไปจนถึงพื้นล่างของกรอบ
+   int prevX = x + 2, prevY = y + h - 4;
    for(int i = 0; i < EquityHistoryCount; i++)
    {
       int px = x + (int)((double)i / (EquityHistoryCount - 1) * (w - 4)) + 2;
       int py = y + h - 4 - (int)((EquityHistoryBuf[i] - minV) / range * (h - 8));
-      if(i > 0) DashCanvas.LineAA(prevX, prevY, px, py, ColorToARGB(C'59,130,246'));
+      if(i > 0)
+      {
+         DashCanvas.FillTriangle(prevX, prevY, px, py, px, y + h, ColorToARGB(C'59,130,246', 35));
+         DashCanvas.FillTriangle(prevX, prevY, prevX, y + h, px, y + h, ColorToARGB(C'59,130,246', 35));
+      }
+      prevX = px;
+      prevY = py;
+   }
+
+   // เส้นกราฟคมชัด (anti-alias) วาดทับพื้นที่สีอีกที
+   prevX = x + 2; prevY = y + h - 4 - (int)((EquityHistoryBuf[0] - minV) / range * (h - 8));
+   for(int i = 1; i < EquityHistoryCount; i++)
+   {
+      int px = x + (int)((double)i / (EquityHistoryCount - 1) * (w - 4)) + 2;
+      int py = y + h - 4 - (int)((EquityHistoryBuf[i] - minV) / range * (h - 8));
+      DashCanvas.LineAA(prevX, prevY, px, py, ColorToARGB(C'96,165,250'));
       prevX = px;
       prevY = py;
    }
@@ -2341,17 +2412,18 @@ int DrawHeader(int y)
 
    int badgeW = S(145), badgeH = S(30);
    int bx = DASH_W - S(14) - badgeW;
-   DashCanvas.FillRectangle(bx, y, bx + badgeW, y + badgeH, ColorToARGB(C'30,30,48'));
-   DashCanvas.Rectangle(bx, y, bx + badgeW, y + badgeH, ColorToARGB(C'80,80,110'));
+   FillRoundedRect(bx, y, bx + badgeW, y + badgeH, S(15), ColorToARGB(C'34,30,54'));
+   DashCanvas.Line(bx + S(4), y, bx + badgeW - S(4), y, ColorToARGB(C'150,130,200'));
+   DashCanvas.Line(bx + S(4), y + badgeH, bx + badgeW - S(4), y + badgeH, ColorToARGB(C'90,80,120'));
    UIFontSet(SF(15), FW_BOLD);
-   DashCanvas.TextOut(bx + S(12), y + S(6), GetUIString("เรียลไทม์", "UI REAL-TIME"), ColorToARGB(clrWhite));
+   DashCanvas.TextOut(bx + S(14), y + S(6), GetUIString("เรียลไทม์", "UI REAL-TIME"), ColorToARGB(clrWhite));
 
    return y + S(90);
 }
 
 int DrawInfoBar(int y)
 {
-   DashCanvas.FillRectangle(S(14), y, DASH_W - S(14), y + S(36), ColorToARGB(C'16,16,28'));
+   FillRoundedRect(S(14), y, DASH_W - S(14), y + S(36), S(8), ColorToARGB(C'18,18,30'));
    UIFontSet(SF(14), FW_BOLD);
    string txt = StringFormat("%s: %s   |   TIMEFRAME: %s   |   BROKER: %s",
                               GetUIString("สัญลักษณ์", "SYMBOL"), _Symbol, GetTimeframeString(),
@@ -2533,8 +2605,13 @@ int DrawStatsRow(int y)
 {
    int cardW = DASH_W - S(14) * 2;
    int cardH = S(84);
-   DashCanvas.FillRectangle(S(14), y, S(14) + cardW, y + cardH, ColorToARGB(C'20,20,34'));
-   DashCanvas.Rectangle(S(14), y, S(14) + cardW, y + cardH, ColorToARGB(C'45,45,65'));
+   int r = S(10);
+   DrawPanelShadow(S(14), y, S(14) + cardW, y + cardH, r);
+   FillRoundedRect(S(14), y, S(14) + cardW, y + cardH, r, ColorToARGB(C'23,23,39'));
+   DashCanvas.Line(S(14) + r, y,     S(14) + cardW - r, y,     ColorToARGB(C'96,82,138'));
+   DashCanvas.Line(S(14) + r, y + cardH, S(14) + cardW - r, y + cardH, ColorToARGB(C'52,48,74'));
+   DashCanvas.Line(S(14),         y + r, S(14),         y + cardH - r, ColorToARGB(C'52,48,74'));
+   DashCanvas.Line(S(14) + cardW, y + r, S(14) + cardW, y + cardH - r, ColorToARGB(C'52,48,74'));
 
    double winRate = (StatsTotalBaskets > 0) ? (StatsWinCount * 100.0 / StatsTotalBaskets) : 0.0;
    double avgWin   = (StatsWinCount  > 0) ? (StatsSumWinProfit  / StatsWinCount)  : 0.0;
