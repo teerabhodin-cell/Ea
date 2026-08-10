@@ -244,9 +244,9 @@ void CheckForceHedgeOnDD();
 bool TryOpenForceHedgeOrder(string reasonTag, string logDetail);
 void CheckForceHedgeOnTime();
 void LogFilterBlockReason(bool isBuy);
-void ExecuteGridLogic();
+void ExecuteGridLogic(int buyCount, int sellCount, double lastBuyPrice, double lastSellPrice);
 void PlacePendingGridServer();
-void CheckAndExecuteVirtualGrid();
+void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice, double lastSellPrice);
 void DeleteAllPendingOrders();
 void ClearEverythingAsync();
 void DrawVisualTSLine(double tsValue);
@@ -1168,8 +1168,14 @@ void OnTick()
    int    openPositions      = 0;
    int    pendingOrders      = 0;
    double currentProfit      = 0.0;
+   int    buyCount           = 0;
+   int    sellCount          = 0;
+   double lastBuyPrice       = 0.0;
+   double lastSellPrice      = 0.0;
 
-   // 1. Count Open Positions & Profit
+   // 1. Count Open Positions & Profit - PERF: เก็บ buy/sell count + ราคาไม้ล่าสุดแต่ละฝั่งในสแกน
+   // เดียวกันนี้เลย (เดิม CheckAndExecuteVirtualGrid() สแกน PositionsTotal() ซ้ำเองอีกรอบทุก tick
+   // ทั้งที่เป็นข้อมูลชุดเดียวกัน) ส่งต่อเป็น parameter แทน ลดจำนวนสแกนซ้ำต่อ tick ลงครึ่งหนึ่ง
    for(int i = PositionsTotal()-1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
@@ -1180,6 +1186,19 @@ void OnTick()
       openPositions++;
       currentProfit += PositionGetDouble(POSITION_PROFIT);
       currentProfit += PositionGetDouble(POSITION_SWAP);
+
+      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      if(posType == POSITION_TYPE_BUY)
+      {
+         buyCount++;
+         if(openPrice > lastBuyPrice || lastBuyPrice == 0.0) lastBuyPrice = openPrice;
+      }
+      else
+      {
+         sellCount++;
+         if(openPrice < lastSellPrice || lastSellPrice == 0.0) lastSellPrice = openPrice;
+      }
    }
 
    // Count Pending Orders
@@ -1313,7 +1332,7 @@ void OnTick()
    {
       if(!IsClosingState && !equityLocked && !TradingHalted && (MaxBasketProfit < TargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
       {
-         ExecuteGridLogic();
+         ExecuteGridLogic(buyCount, sellCount, lastBuyPrice, lastSellPrice);
       }
    }
    else
@@ -1485,7 +1504,7 @@ int GetDynamicGridDistance()
 //+------------------------------------------------------------------+
 //| Grid Router                                                      |
 //+------------------------------------------------------------------+
-void ExecuteGridLogic()
+void ExecuteGridLogic(int buyCount, int sellCount, double lastBuyPrice, double lastSellPrice)
 {
    if(GridType == GRID_PENDING)
    {
@@ -1493,7 +1512,7 @@ void ExecuteGridLogic()
    }
    else
    {
-      CheckAndExecuteVirtualGrid();
+      CheckAndExecuteVirtualGrid(buyCount, sellCount, lastBuyPrice, lastSellPrice);
    }
 }
 
@@ -1635,7 +1654,11 @@ void PlacePendingGridServer()
 //+------------------------------------------------------------------+
 //| Virtual Grid Execution (Supports 2, 3, 4, 5 Digits)              |
 //+------------------------------------------------------------------+
-void CheckAndExecuteVirtualGrid()
+// PERF: buyCount/sellCount/lastBuyPrice/lastSellPrice ถูกส่งเข้ามาจาก scan เดียวที่ OnTick() ทำไว้แล้ว
+// ("1. Count Open Positions & Profit") แทนที่จะสแกน PositionsTotal() ซ้ำเองอีกรอบทุก tick เหมือนเดิม -
+// ฟังก์ชันนี้ถูกเรียกทุก tick ที่ grid ยังไม่เต็ม เลยลด redundant scan ได้เยอะโดยเฉพาะ backtest แบบ
+// "every tick" ที่มีจำนวน tick เป็นล้านๆ ครั้งตลอดการรัน
+void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice, double lastSellPrice)
 {
    if(IsClosingState) return;
    if(TimeCurrent() - LastOrderSentTime < 1) return;
@@ -1643,35 +1666,6 @@ void CheckAndExecuteVirtualGrid()
    double ask   = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid   = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-
-   double lastBuyPrice  = 0.0;
-   double lastSellPrice = 0.0;
-   int    buyCount      = 0;
-   int    sellCount     = 0;
-
-   for(int i = PositionsTotal()-1; i >= 0; i--)
-   {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket > 0 && PositionSelectByTicket(ticket))
-      {
-         if(PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetInteger(POSITION_MAGIC) == MagicNumber)
-         {
-            ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-            double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
-
-            if(posType == POSITION_TYPE_BUY)
-            {
-               buyCount++;
-               if(openPrice > lastBuyPrice || lastBuyPrice == 0.0) lastBuyPrice = openPrice;
-            }
-            else if(posType == POSITION_TYPE_SELL)
-            {
-               sellCount++;
-               if(openPrice < lastSellPrice || lastSellPrice == 0.0) lastSellPrice = openPrice;
-            }
-         }
-      }
-   }
 
    int stepDistance = (CachedGridDistance > 0) ? CachedGridDistance : GetDynamicGridDistance();
 
