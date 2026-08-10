@@ -289,9 +289,14 @@ void RecalculateBasePrice()
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
    // DIAGNOSTIC: log ทุกครั้งที่ฐานถูกคำนวณใหม่ ทั้งค่าเก่า/ask-bid ที่ใช้/ค่าใหม่ - เอาไว้ตามรอย
-   // บั๊ก "ฐานค้างค่าเก่าหลังเปิด EA กลับมา" ที่ยังหาสาเหตุแน่ชัดไม่ได้จาก static code review อย่างเดียว
-   PrintFormat("🧭 [BASE RECALC] Old=%.5f -> Ask=%.5f Bid=%.5f -> New=%.5f",
-               GridBasePrice, ask, bid, NormalizeDouble((ask + bid) / 2.0, _Digits));
+   // บั๊ก "ฐานค้างค่าเก่าหลังเปิด EA กลับมา" (ปัญหาฝั่งไลฟ์เท่านั้น) ที่ยังหาสาเหตุแน่ชัดไม่ได้จาก
+   // static code review อย่างเดียว - ปิดตอน backtest เพราะฟังก์ชันนี้ถูกเรียกได้บ่อยมากตลอด 4 ปี
+   // (ทุกครั้งที่ราคาห่างจากฐานเกิน 2 เท่าระยะกริดตอนพอร์ตว่าง) การ Print ถี่ๆ แบบนี้หน่วง backtest จริง
+   if(!IsTestingMode)
+   {
+      PrintFormat("🧭 [BASE RECALC] Old=%.5f -> Ask=%.5f Bid=%.5f -> New=%.5f",
+                  GridBasePrice, ask, bid, NormalizeDouble((ask + bid) / 2.0, _Digits));
+   }
 
    GridBasePrice = NormalizeDouble((ask + bid) / 2.0, _Digits);
    GridBasePriceBuy  = GridBasePrice;
@@ -1042,9 +1047,13 @@ int OnInit()
 
    // DIAGNOSTIC: บอกเหตุผลที่ OnInit() ถูกเรียกครั้งนี้ (REASON_REMOVE/CHARTCLOSE/RECOMPILE/
    // PARAMETERS/TEMPLATE/... ) กับค่า GridBasePrice ก่อนจะ reconcile - เอาไว้หาสาเหตุบั๊ก
-   // "ฐานค้างค่าเก่า" ตอนเปิด EA กลับมาหลังปิดกราฟ/สลับ EA
-   PrintFormat("🚀 [ONINIT] UninitReason=%d GridType=%d GridBasePrice(before)=%.5f",
-               UninitializeReason(), GridType, GridBasePrice);
+   // "ฐานค้างค่าเก่า" ตอนเปิด EA กลับมาหลังปิดกราฟ/สลับ EA (ปัญหาฝั่งไลฟ์เท่านั้น) - ปิดตอน backtest
+   // เพราะ Optimization รัน OnInit() ได้เป็นพันๆ รอบ
+   if(!IsTestingMode)
+   {
+      PrintFormat("🚀 [ONINIT] UninitReason=%d GridType=%d GridBasePrice(before)=%.5f",
+                  UninitializeReason(), GridType, GridBasePrice);
+   }
 
    if(GridType == GRID_VIRTUAL) ReconcileGridStateOnInit();
    else RecalculateBasePrice();
