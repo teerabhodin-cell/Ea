@@ -70,6 +70,8 @@ input group "===== 4. Target & Trailing ====="
 input double TargetProfit        = 5.0;    // Target Profit $ (เป้ากำไร)
 input double TrailingStopUSD     = 0.2;    // Trailing Distance $ (ระยะเทรล)
 input double DailyProfitGoal     = 100.0;  // Daily Profit Goal $ (เป้ากำไรรายวัน, ใช้แสดงในเกจ Dashboard)
+input bool   UseDailyLossLimit   = false;  // Use Daily Loss Limit (จำกัดขาดทุนรายวัน)
+input double DailyLossLimit      = 100.0;  // Daily Loss Limit $ (เพดานขาดทุนรายวัน)
 
 input group "===== 5. Trend Filters ====="
 input bool   UseEMAFilter           = false;   // Use EMA Filter (ใช้ EMA)
@@ -223,6 +225,7 @@ datetime LastNewsCheckTime      = 0;     // เวลาที่ตรวจข
 
 bool IsTradingAllowedByTime();
 bool IsNewsBlackout();
+bool IsDailyLossLimitReached();
 bool CheckEMATrend(bool isBuy);
 bool CheckMTFFilter(bool isBuy);
 double GetCalculatedLotSize(int nextLevel);
@@ -460,6 +463,30 @@ bool IsNewsBlackout()
    }
 
    return NewsBlackoutActive;
+}
+
+//+------------------------------------------------------------------+
+//| Daily Loss Limit - นับจากกำไร/ขาดทุนที่ "ปิดรอบแล้วจริง" ของวันนี้เท่านั้น |
+//| (DailyRealizedProfit ตัวเดียวกับที่การ์ด "ผลงานวันนี้" ใช้แสดง) ไม่รวม    |
+//| floating loss ของบาสเก็ตที่ยังเปิดค้างอยู่ - เพราะ Max DD Stop / Total    |
+//| DD Guard / Emergency SL คือกลุ่มที่ดูแลบาสเก็ตเปิดค้างอยู่แล้ว ตัวนี้ป้องกัน  |
+//| คนละเคส: กันเปิด/ปิดบาสเก็ตแพ้ซ้ำๆ สะสมทั้งวันแทน เช็ค day rollover ในตัวเอง|
+//| ด้วย เผื่อ UpdateDashboard/ClearEverythingAsync ยังไม่มีโอกาสเช็คก่อนใน   |
+//| วันใหม่ (backtest ปิด dashboard, ยังไม่มีบาสเก็ตไหนปิดตั้งแต่ข้ามวันมา ฯลฯ)  |
+//+------------------------------------------------------------------+
+bool IsDailyLossLimitReached()
+{
+   if(!UseDailyLossLimit) return false;
+
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   if(dt.day_of_year != DayStartDay)
+   {
+      DayStartDay         = dt.day_of_year;
+      DailyRealizedProfit = 0.0;
+   }
+
+   return (DailyRealizedProfit <= -MathAbs(DailyLossLimit));
 }
 
 //+------------------------------------------------------------------+
@@ -1223,12 +1250,15 @@ void OnTick()
    }
 
    // 3. Grid Logic Execution & Auto-Close on Time Filter
-   bool timeAllowed = IsTradingAllowedByTime();
+   bool timeAllowed      = IsTradingAllowedByTime();
+   bool newsBlocked      = IsNewsBlackout();
+   bool dailyLossBlocked = IsDailyLossLimitReached();
 
-   // News Filter ใช้นโยบายเดียวกับ Time Filter เป๊ะ - แค่ห้ามเปิดไม้ใหม่ ไม่แตะบาสเก็ตที่เปิดอยู่แล้ว
-   // เลยเช็ครวมกับ timeAllowed ตรงนี้จุดเดียว ไม่ต้องแยกเงื่อนไข else ใหม่ (สถานะ OFF-TIME เดิมยัง
-   // ใช้จับ "นอกเวลาเทรด" ได้ถูกต้อง ส่วนสถานะ NEWS PAUSE แยกแสดงเองใน DrawServerTimeRow)
-   if(timeAllowed && !IsNewsBlackout())
+   // News Filter / Daily Loss Limit ใช้นโยบายเดียวกับ Time Filter เป๊ะ - แค่ห้ามเปิดไม้ใหม่
+   // ไม่แตะบาสเก็ตที่เปิดอยู่แล้ว เลยเช็ครวมกับ timeAllowed ตรงนี้จุดเดียว ไม่ต้องแยกเงื่อนไข else ใหม่
+   // (สถานะ OFF-TIME เดิมยังใช้จับ "นอกเวลาเทรด" ได้ถูกต้อง ส่วนสถานะ NEWS PAUSE / DAILY LOSS
+   // แยกแสดงเองใน DrawServerTimeRow)
+   if(timeAllowed && !newsBlocked && !dailyLossBlocked)
    {
       if(!IsClosingState && !equityLocked && !TradingHalted && (MaxBasketProfit < TargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
       {
@@ -1248,7 +1278,7 @@ void OnTick()
          if(openPositions > 0 && currentProfit > 0)
          {
             IsClosingState = true;
-            string blockReason = !timeAllowed ? "Outside trading hours" : "News blackout window";
+            string blockReason = !timeAllowed ? "Outside trading hours" : (newsBlocked ? "News blackout window" : "Daily loss limit reached");
             PrintFormat("⏰ [ENTRY BLOCKED] %s and in profit -> Auto Closing all active positions...", blockReason);
             ClearEverythingAsync();
             DeleteVisualTSLine();
@@ -2463,6 +2493,7 @@ int DrawServerTimeRow(int y, int openPos, int pendingOrders)
    else if(IsClosingState)                        { dotColor = C'251,146,60'; statusTxt = GetUIString("กำลังปิดไม้", "CLOSING"); }
    else if(!timeAllowed)                           { dotColor = C'239,68,68';  statusTxt = GetUIString("นอกเวลาเทรด", "OFF-TIME"); }
    else if(IsNewsBlackout())                       { dotColor = C'168,85,247'; statusTxt = GetUIString("พักช่วงข่าว", "NEWS PAUSE"); }
+   else if(IsDailyLossLimitReached())              { dotColor = C'239,68,68';  statusTxt = GetUIString("ครบขาดทุนวันนี้", "DAILY LOSS HIT"); }
    else if(openPos == 0 && pendingOrders == 0)     { dotColor = C'251,193,7';  statusTxt = GetUIString("พร้อมทำงาน", "STANDBY"); }
 
    int sw   = EstimateTextWidth(statusTxt, SF(15));
