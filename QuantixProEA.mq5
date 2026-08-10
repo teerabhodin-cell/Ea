@@ -70,6 +70,7 @@ input group "===== 4. Target & Trailing ====="
 input double TargetProfit        = 5.0;    // Target Profit $ (เป้ากำไร)
 input double TrailingStopUSD     = 0.2;    // Trailing Distance $ (ระยะเทรล)
 input double DailyProfitGoal     = 100.0;  // Daily Profit Goal $ (เป้ากำไรรายวัน, ใช้แสดงในเกจ Dashboard)
+input bool   UseDailyGoalStop    = false;  // Stop Trading at Daily Goal (หยุดเปิดไม้เมื่อถึงเป้ากำไรวันนี้)
 input bool   UseDailyLossLimit   = false;  // Use Daily Loss Limit (จำกัดขาดทุนรายวัน)
 input double DailyLossLimit      = 100.0;  // Daily Loss Limit $ (เพดานขาดทุนรายวัน)
 
@@ -226,6 +227,7 @@ datetime LastNewsCheckTime      = 0;     // เวลาที่ตรวจข
 bool IsTradingAllowedByTime();
 bool IsNewsBlackout();
 bool IsDailyLossLimitReached();
+bool IsDailyGoalReached();
 bool CheckEMATrend(bool isBuy);
 bool CheckMTFFilter(bool isBuy);
 double GetCalculatedLotSize(int nextLevel);
@@ -492,6 +494,30 @@ bool IsDailyLossLimitReached()
    }
 
    return (DailyRealizedProfit <= -MathAbs(DailyLossLimit));
+}
+
+//+------------------------------------------------------------------+
+//| Daily Goal Stop - ฝั่งตรงข้ามของ Daily Loss Limit ด้านบน: พอกำไรที่ปิด    |
+//| รอบแล้วจริงของวันนี้ (DailyRealizedProfit ตัวเดียวกับเกจ "ผลงานวันนี้")   |
+//| ถึง DailyProfitGoal ก็หยุดเปิดไม้ใหม่แค่วันนั้น เดิม DailyProfitGoal ใช้   |
+//| แสดงผลในเกจอย่างเดียว ไม่เคยบังคับหยุดจริง - ตัวนี้ต้องเปิด UseDailyGoalStop |
+//| เองถึงจะบังคับ ไม่งั้นพฤติกรรมเดิม (โชว์เกจเฉยๆ ไม่หยุด) ยังเหมือนเดิมทุก   |
+//| ประการ เช็ค day rollover ในตัวเองเหมือน Daily Loss Limit                |
+//+------------------------------------------------------------------+
+bool IsDailyGoalReached()
+{
+   if(!UseDailyGoalStop) return false;
+   if(DailyProfitGoal <= 0) return false;
+
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   if(dt.day_of_year != DayStartDay)
+   {
+      DayStartDay         = dt.day_of_year;
+      DailyRealizedProfit = 0.0;
+   }
+
+   return (DailyRealizedProfit >= DailyProfitGoal);
 }
 
 //+------------------------------------------------------------------+
@@ -1281,12 +1307,13 @@ void OnTick()
    bool timeAllowed      = IsTradingAllowedByTime();
    bool newsBlocked      = IsNewsBlackout();
    bool dailyLossBlocked = IsDailyLossLimitReached();
+   bool dailyGoalReached = IsDailyGoalReached();
 
-   // News Filter / Daily Loss Limit ใช้นโยบายเดียวกับ Time Filter เป๊ะ - แค่ห้ามเปิดไม้ใหม่
-   // ไม่แตะบาสเก็ตที่เปิดอยู่แล้ว เลยเช็ครวมกับ timeAllowed ตรงนี้จุดเดียว ไม่ต้องแยกเงื่อนไข else ใหม่
-   // (สถานะ OFF-TIME เดิมยังใช้จับ "นอกเวลาเทรด" ได้ถูกต้อง ส่วนสถานะ NEWS PAUSE / DAILY LOSS
-   // แยกแสดงเองใน DrawServerTimeRow)
-   if(timeAllowed && !newsBlocked && !dailyLossBlocked)
+   // News Filter / Daily Loss Limit / Daily Goal Stop ใช้นโยบายเดียวกับ Time Filter เป๊ะ - แค่ห้าม
+   // เปิดไม้ใหม่ ไม่แตะบาสเก็ตที่เปิดอยู่แล้ว เลยเช็ครวมกับ timeAllowed ตรงนี้จุดเดียว ไม่ต้องแยกเงื่อนไข
+   // else ใหม่ (สถานะ OFF-TIME เดิมยังใช้จับ "นอกเวลาเทรด" ได้ถูกต้อง ส่วนสถานะ NEWS PAUSE / DAILY LOSS /
+   // DAILY GOAL แยกแสดงเองใน DrawServerTimeRow)
+   if(timeAllowed && !newsBlocked && !dailyLossBlocked && !dailyGoalReached)
    {
       if(!IsClosingState && !equityLocked && !TradingHalted && (MaxBasketProfit < TargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
       {
@@ -1306,7 +1333,7 @@ void OnTick()
          if(openPositions > 0 && currentProfit > 0)
          {
             IsClosingState = true;
-            string blockReason = !timeAllowed ? "Outside trading hours" : (newsBlocked ? "News blackout window" : "Daily loss limit reached");
+            string blockReason = !timeAllowed ? "Outside trading hours" : (newsBlocked ? "News blackout window" : (dailyLossBlocked ? "Daily loss limit reached" : "Daily goal reached"));
             PrintFormat("⏰ [ENTRY BLOCKED] %s and in profit -> Auto Closing all active positions...", blockReason);
             ClearEverythingAsync();
             DeleteVisualTSLine();
@@ -2497,6 +2524,7 @@ int DrawServerTimeRow(int y, int openPos, int pendingOrders)
    else if(!timeAllowed)                           { dotColor = C'239,68,68';  statusTxt = GetUIString("นอกเวลาเทรด", "OFF-TIME"); }
    else if(IsNewsBlackout())                       { dotColor = C'168,85,247'; statusTxt = GetUIString("พักช่วงข่าว", "NEWS PAUSE"); }
    else if(IsDailyLossLimitReached())              { dotColor = C'239,68,68';  statusTxt = GetUIString("ครบขาดทุนวันนี้", "DAILY LOSS HIT"); }
+   else if(IsDailyGoalReached())                   { dotColor = C'34,197,94';  statusTxt = GetUIString("ถึงเป้าวันนี้แล้ว", "DAILY GOAL HIT"); }
    else if(openPos == 0 && pendingOrders == 0)     { dotColor = C'251,193,7';  statusTxt = GetUIString("พร้อมทำงาน", "STANDBY"); }
 
    int sw   = EstimateTextWidth(statusTxt, SF(15));
