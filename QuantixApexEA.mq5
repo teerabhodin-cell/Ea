@@ -114,6 +114,10 @@ input color  Dashboard_Green        = clrLimeGreen;
 input color  Dashboard_Red          = clrTomato;
 input color  Dashboard_Yellow       = clrGold;
 
+input group "===== 13. Training Data Logger ====="
+input bool   UseTrainingLogger      = true;    // Log Every Setup + Outcome to CSV (สะสม Dataset สำหรับเทรน ML ทีหลัง)
+input string TrainingLogFileName    = "QuantixApexEA_TrainingLog.csv"; // File in MQL5\Files
+
 //=========================== GLOBALS ================================//
 int hEmaTrend1  = INVALID_HANDLE;
 int hEmaTrend2  = INVALID_HANDLE;
@@ -251,7 +255,12 @@ void OnTick()
    if(score < MinSignalScore) return;
    if(!PassRegimeFilter(g_SetupBias)) return;
 
-   if(OpenTrade(g_SetupBias)) { g_SetupArmed = false; g_LastScore = 0; }
+   if(OpenTrade(g_SetupBias))
+   {
+      LogSetupOpen(g_EntryTicket, g_SetupBias, score, trapConf);
+      g_SetupArmed = false;
+      g_LastScore = 0;
+   }
    // on failure, leave the setup armed - it will retry on the next EntryTF
    // bar, or get cleared naturally by CheckSetupInvalidation()/AgeSetupExpiry()
 }
@@ -440,6 +449,81 @@ double CalcLot(double slDistance)
 
    lot = MathMin(lot, MathMin(MaxLot, volMax));
    return NormalizeDouble(lot, 2);
+}
+
+//=========================== TRAINING DATA LOGGER ================================//
+// Two-row-per-trade CSV (event=OPEN / event=CLOSE, joined by ticket) so a
+// Python pipeline can pair each setup's features with its realized outcome
+// (profit / risk_money = R-multiple) to train an XGBoost model later.
+int OpenTrainingLogFile()
+{
+   bool isNew = !FileIsExist(TrainingLogFileName);
+   int handle = FileOpen(TrainingLogFileName, FILE_READ|FILE_WRITE|FILE_CSV|FILE_ANSI, ',');
+   if(handle==INVALID_HANDLE)
+   {
+      Print("QuantixApexEA: failed to open training log file, err=", GetLastError());
+      return INVALID_HANDLE;
+   }
+   FileSeek(handle, 0, SEEK_END);
+   if(isNew)
+   {
+      FileWrite(handle, "event","ticket","time","symbol","direction","sl_distance","risk_money",
+                "score","ob_quality","volume_score","trap_confidence","has_fibo","has_obfvg",
+                "adx","spread","atr","hour","day_of_week","profit");
+   }
+   return handle;
+}
+
+void LogSetupOpen(ulong ticket, int bias, double score, double trapConf)
+{
+   if(!UseTrainingLogger) return;
+
+   int handle = OpenTrainingLogFile();
+   if(handle==INVALID_HANDLE) return;
+
+   double adxArr[];
+   double adxNow = (CopyBuffer(hADX, 0, 1, 1, adxArr) >= 1) ? adxArr[0] : 0;
+   long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   double atrArr[];
+   double atrNow = (CopyBuffer(hATR_Entry, 0, 1, 1, atrArr) >= 1) ? atrArr[0] : 0;
+   double riskMoney = AccountInfoDouble(ACCOUNT_EQUITY) * RiskPercent / 100.0;
+
+   MqlDateTime tm;
+   TimeToStruct(TimeCurrent(), tm);
+
+   FileWrite(handle, "OPEN", (long)ticket, TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS), _Symbol,
+             bias==1?"BUY":"SELL", g_EntrySLDistance, riskMoney, score, g_ObQualityScore, g_VolumeScore,
+             trapConf, g_HaveFiboZone?1:0, g_HaveOBFVGZone?1:0, adxNow, (long)spread, atrNow,
+             tm.hour, tm.day_of_week, "");
+   FileClose(handle);
+}
+
+void LogTradeClose(ulong ticket)
+{
+   if(!UseTrainingLogger) return;
+   if(!HistorySelectByPosition((long)ticket)) return;
+
+   int total = HistoryDealsTotal();
+   double totalProfit = 0;
+   datetime lastTime = 0;
+   for(int i=0; i<total; i++)
+   {
+      ulong dealTicket = HistoryDealGetTicket(i);
+      if(dealTicket==0) continue;
+      totalProfit += HistoryDealGetDouble(dealTicket, DEAL_PROFIT)
+                   + HistoryDealGetDouble(dealTicket, DEAL_SWAP)
+                   + HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+      datetime dt = (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME);
+      if(dt >= lastTime) lastTime = dt;
+   }
+   if(lastTime==0) lastTime = TimeCurrent();
+
+   int handle = OpenTrainingLogFile();
+   if(handle==INVALID_HANDLE) return;
+
+   FileWrite(handle, "CLOSE", (long)ticket, TimeToString(lastTime, TIME_DATE|TIME_SECONDS), "", "", "", "",
+             "", "", "", "", "", "", "", "", "", "", "", totalProfit);
+   FileClose(handle);
 }
 
 //=========================== TREND / CORRELATION / NEWS ================================//
@@ -806,7 +890,11 @@ void ManageOpenPosition()
 {
    if(!PositionSelectForMagic())
    {
-      if(g_EntryTicket!=0) { g_EntryTicket=0; g_EntrySLDistance=0; g_TP1Done=false; g_TP2Done=false; }
+      if(g_EntryTicket!=0)
+      {
+         LogTradeClose(g_EntryTicket);
+         g_EntryTicket=0; g_EntrySLDistance=0; g_TP1Done=false; g_TP2Done=false;
+      }
       return;
    }
 
