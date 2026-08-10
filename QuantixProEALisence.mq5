@@ -1360,11 +1360,14 @@ void OnTick()
    bool dailyLossBlocked = IsDailyLossLimitReached();
    bool dailyGoalReached = IsDailyGoalReached();
 
-   // News Filter / Daily Loss Limit / Daily Goal Stop ใช้นโยบายเดียวกับ Time Filter เป๊ะ - แค่ห้าม
-   // เปิดไม้ใหม่ ไม่แตะบาสเก็ตที่เปิดอยู่แล้ว เลยเช็ครวมกับ timeAllowed ตรงนี้จุดเดียว ไม่ต้องแยกเงื่อนไข
-   // else ใหม่ (สถานะ OFF-TIME เดิมยังใช้จับ "นอกเวลาเทรด" ได้ถูกต้อง ส่วนสถานะ NEWS PAUSE / DAILY LOSS /
+   // News Filter / Daily Loss Limit ห้ามเปิดไม้ใหม่เด็ดขาด ไม่ว่ามีบาสเก็ตเปิดค้างอยู่หรือไม่ - แต่
+   // Daily Goal Stop ต่างออกไป: ถ้ามีบาสเก็ตเปิดค้างอยู่แล้ว (openPositions > 0) ต้องปล่อยให้ grid เปิด
+   // ไม้ต่อตามปกติ ไม่งั้นบาสเก็ตจะค้างครึ่งๆ กลางๆ ขาดชั้นแก้ไม้ที่ควรมี (เสี่ยงกว่าเดิม) - ถึงเป้ากำไร
+   // วันนี้แล้วแปลว่า "ห้ามเริ่มบาสเก็ตใหม่" เท่านั้น ไม่ใช่ "ทิ้งบาสเก็ตที่กำลังทำอยู่ให้ค้าง"
+   // (สถานะ OFF-TIME เดิมยังใช้จับ "นอกเวลาเทรด" ได้ถูกต้อง ส่วนสถานะ NEWS PAUSE / DAILY LOSS /
    // DAILY GOAL แยกแสดงเองใน DrawServerTimeRow)
-   if(timeAllowed && !newsBlocked && !dailyLossBlocked && !dailyGoalReached)
+   bool dailyGoalBlocksEntry = dailyGoalReached && (openPositions == 0);
+   if(timeAllowed && !newsBlocked && !dailyLossBlocked && !dailyGoalBlocksEntry)
    {
       if(!IsClosingState && !equityLocked && !TradingHalted && (MaxBasketProfit < TargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
       {
