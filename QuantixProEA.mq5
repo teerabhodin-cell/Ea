@@ -285,6 +285,11 @@ void RecalculateBasePrice()
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
+   // DIAGNOSTIC: log ทุกครั้งที่ฐานถูกคำนวณใหม่ ทั้งค่าเก่า/ask-bid ที่ใช้/ค่าใหม่ - เอาไว้ตามรอย
+   // บั๊ก "ฐานค้างค่าเก่าหลังเปิด EA กลับมา" ที่ยังหาสาเหตุแน่ชัดไม่ได้จาก static code review อย่างเดียว
+   PrintFormat("🧭 [BASE RECALC] Old=%.5f -> Ask=%.5f Bid=%.5f -> New=%.5f",
+               GridBasePrice, ask, bid, NormalizeDouble((ask + bid) / 2.0, _Digits));
+
    GridBasePrice = NormalizeDouble((ask + bid) / 2.0, _Digits);
    GridBasePriceBuy  = GridBasePrice;
    GridBasePriceSell = GridBasePrice;
@@ -1007,6 +1012,12 @@ int OnInit()
          return(INIT_FAILED);
       }
    }
+
+   // DIAGNOSTIC: บอกเหตุผลที่ OnInit() ถูกเรียกครั้งนี้ (REASON_REMOVE/CHARTCLOSE/RECOMPILE/
+   // PARAMETERS/TEMPLATE/... ) กับค่า GridBasePrice ก่อนจะ reconcile - เอาไว้หาสาเหตุบั๊ก
+   // "ฐานค้างค่าเก่า" ตอนเปิด EA กลับมาหลังปิดกราฟ/สลับ EA
+   PrintFormat("🚀 [ONINIT] UninitReason=%d GridType=%d GridBasePrice(before)=%.5f",
+               UninitializeReason(), GridType, GridBasePrice);
 
    if(GridType == GRID_VIRTUAL) ReconcileGridStateOnInit();
    else RecalculateBasePrice();
