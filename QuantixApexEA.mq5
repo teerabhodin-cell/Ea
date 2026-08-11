@@ -475,6 +475,7 @@ int OpenTrainingLogFile()
    if(isNew)
    {
       FileWrite(handle, "event","ticket","time","symbol","direction","sl_distance","risk_money",
+                "lot","entry_price","sl_price",
                 "score","ob_quality","volume_score","trap_confidence","has_fibo","has_obfvg",
                 "adx","spread","atr","hour","day_of_week","profit");
    }
@@ -495,11 +496,23 @@ void LogSetupOpen(ulong ticket, int bias, double score, double trapConf)
    double atrNow = (CopyBuffer(hATR_Entry, 0, 1, 1, atrArr) >= 1) ? atrArr[0] : 0;
    double riskMoney = AccountInfoDouble(ACCOUNT_EQUITY) * RiskPercent / 100.0;
 
+   // Pull the actual filled lot/prices straight off the live position rather
+   // than recomputing them, so this row reflects what the broker really did
+   // (catches CalcLot/tick-value mismatches that pure recomputation would hide).
+   double lot=0, entryPrice=0, slPrice=0;
+   if(PositionSelectByTicket(ticket))
+   {
+      lot        = PositionGetDouble(POSITION_VOLUME);
+      entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      slPrice    = PositionGetDouble(POSITION_SL);
+   }
+
    MqlDateTime tm;
    TimeToStruct(TimeCurrent(), tm);
 
    FileWrite(handle, "OPEN", (long)ticket, TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS), _Symbol,
-             bias==1?"BUY":"SELL", g_EntrySLDistance, riskMoney, score, g_ObQualityScore, g_VolumeScore,
+             bias==1?"BUY":"SELL", g_EntrySLDistance, riskMoney, lot, entryPrice, slPrice,
+             score, g_ObQualityScore, g_VolumeScore,
              trapConf, g_HaveFiboZone?1:0, g_HaveOBFVGZone?1:0, adxNow, (long)spread, atrNow,
              tm.hour, tm.day_of_week, "");
    FileClose(handle);
@@ -889,6 +902,8 @@ bool OpenTrade(int bias)
       g_EntrySLDistance = slDistance;
       g_TP1Price=tp1; g_TP2Price=tp2; g_TP3Price=tp3;
       g_TP1Done=false; g_TP2Done=false;
+      Print("QuantixApexEA: opened ", (bias==1?"BUY":"SELL"), " lot=", lot, " price=", price,
+            " sl=", sl, " slDistance=", slDistance, " maxRisk$=", lot*(slDistance/SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE))*SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE));
    }
    return true;
 }
