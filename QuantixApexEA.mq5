@@ -431,17 +431,32 @@ void CheckTotalDDGuard()
    }
 }
 
+// $ P/L for a 1.0 lot position per 1 unit of price move. tickValue/tickSize
+// should equal this for a linear instrument, but backtests proved it reads
+// 10x too low on this broker's XAUUSD (real fill: 1.56pt move on 0.11 lot
+// cost $17.16, i.e. $100/lot/point, while tick-based math gave only $10) -
+// contract size matches the real fills exactly, so use that directly.
+double MoneyPerPriceUnit()
+{
+   double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+   if(contractSize>0) return contractSize;
+
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(tickSize<=0 || tickValue<=0) return 0;
+   return tickValue/tickSize;
+}
+
 double CalcLot(double slDistance)
 {
    if(slDistance<=0) return 0;
 
    double equity    = AccountInfoDouble(ACCOUNT_EQUITY);
    double riskMoney = equity * RiskPercent / 100.0;
-   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   double tickSize  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   if(tickSize<=0 || tickValue<=0) return 0;
+   double moneyPerUnit = MoneyPerPriceUnit();
+   if(moneyPerUnit<=0) return 0;
 
-   double lossPerLot = (slDistance/tickSize) * tickValue;
+   double lossPerLot = slDistance * moneyPerUnit;
    if(lossPerLot<=0) return 0;
 
    double lot = riskMoney / lossPerLot;
@@ -913,7 +928,7 @@ bool OpenTrade(int bias)
    {
       g_EntryTicket = PositionGetInteger(POSITION_TICKET);
       g_EntrySLDistance = slDistance;
-      g_EntryRiskMoney = lot*(slDistance/SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE))*SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
+      g_EntryRiskMoney = lot*slDistance*MoneyPerPriceUnit();
       g_TP1Price=tp1; g_TP2Price=tp2; g_TP3Price=tp3;
       g_TP1Done=false; g_TP2Done=false;
       Print("QuantixApexEA: opened ", (bias==1?"BUY":"SELL"), " lot=", lot, " price=", price,
