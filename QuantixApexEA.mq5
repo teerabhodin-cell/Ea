@@ -564,7 +564,7 @@ void LogTradeClose(ulong ticket)
    if(handle==INVALID_HANDLE) return;
 
    FileWrite(handle, "CLOSE", (long)ticket, TimeToString(lastTime, TIME_DATE|TIME_SECONDS), "", "", "", "",
-             "", "", "", "", "", "", "", "", "", "", "", totalProfit);
+             "", "", "", "", "", "", "", "", "", "", "", "", "", "", totalProfit);
    FileClose(handle);
 }
 
