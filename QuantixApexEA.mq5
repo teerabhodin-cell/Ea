@@ -74,7 +74,7 @@ input bool   UseRegimeFilter        = true;    // Require Trending Market via AD
 input ENUM_TIMEFRAMES RegimeTimeframe = PERIOD_H1; // Regime Timeframe
 input int    ADX_Period             = 14;      // ADX Period
 input double ADX_MinTrendStrength   = 22.0;    // Min ADX to Allow Entries
-input double ADX_MaxTrendStrength   = 32.0;    // Max ADX to Allow Entries (backtest: ADX>30 buckets net LOSE money - trend is already extended/late by then, not a fresh opportunity)
+input double ADX_MaxTrendStrength   = 0;       // Max ADX to Allow Entries, 0=disabled (an ADX 22-32 band tested WORSE in isolation - PF 0.91 on 56 trades vs PF 1.13 on 614 trades unbounded - keeping this off by default)
 input bool   RequireADXDirectionAgreement = false; // Require +DI/-DI to Match Trade Bias (was true - kept the min-strength ADX gate, dropped this stricter add-on)
 input bool   UseSessionFilter       = true;    // Only Trade Within Allowed Hours
 input bool   UseLocalTime           = false;   // Use Local PC Time
