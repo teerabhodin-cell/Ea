@@ -32,9 +32,9 @@ input group "===== 2. Multi-TF Trend Confluence ====="
 input int    EMA_TrendPeriod        = 50;      // EMA Period (both TrendTF1 & TrendTF2 must agree)
 
 input group "===== 3. SMC Structure (Zone Timeframe) ====="
-input int    SwingStrength          = 5;       // Swing Fractal Strength, bars each side
-input double MinDisplacementATRMult = 0.6;     // Min Breakout Candle Body vs ATR - filters weak CHoCH/BOS
-input bool   RequireLiquiditySweep  = true;    // Require Stop Hunt Before CHoCH
+input int    SwingStrength          = 3;       // Swing Fractal Strength, bars each side (lower = more, faster-confirmed swings -> more setups/day)
+input double MinDisplacementATRMult = 0.4;     // Min Breakout Candle Body vs ATR - filters weak CHoCH/BOS
+input bool   RequireLiquiditySweep  = false;   // Require Stop Hunt Before CHoCH (biggest single frequency gate - sweeps are rare; off trades some quality for many more setups)
 input int    SweepExpiryBars        = 10;      // Sweep Validity, bars
 input int    OB_MaxLookbackBars     = 8;       // Max Bars Back to Find Order Block
 input int    SetupExpiryBars        = 15;      // Armed Zone Validity, bars
@@ -45,7 +45,7 @@ input double MinSL_ATRMult          = 1.2;     // Min SL Distance = Entry ATR x 
 input group "===== 4. Volume Confirmation ====="
 input bool   UseVolumeFilter        = true;    // Require Above-Average Volume on the Displacement Candle
 input int    VolumeAvgPeriod        = 20;      // Avg Volume Lookback, bars (ZoneTF)
-input double MinVolumeRatio         = 1.2;     // Min Displacement Volume vs Average
+input double MinVolumeRatio         = 1.0;     // Min Displacement Volume vs Average (was 1.2 - average is enough, don't require above-average)
 
 input group "===== 5. USD Correlation Guard (optional) ====="
 input bool   UseCorrelationFilter   = false;   // Require USD Index Trend to Agree (e.g. XAUUSD vs DXY)
@@ -62,7 +62,7 @@ input group "===== 7. Entry Candle Confirmation ====="
 input double PinBarWickBodyRatio    = 2.0;     // Pin Bar: Wick >= Body x This Ratio
 
 input group "===== 8. Smart Signal Score ====="
-input double MinSignalScore         = 60.0;    // Min Composite Score (0-100) to Trade
+input double MinSignalScore         = 45.0;    // Min Composite Score (0-100) to Trade (was 60 - loosened for more setups/day)
 
 input group "===== 9. Filters ====="
 input int    ATR_Period             = 14;      // ATR Period
@@ -73,7 +73,7 @@ input bool   UseRegimeFilter        = true;    // Require Trending Market via AD
 input ENUM_TIMEFRAMES RegimeTimeframe = PERIOD_H1; // Regime Timeframe
 input int    ADX_Period             = 14;      // ADX Period
 input double ADX_MinTrendStrength   = 22.0;    // Min ADX to Allow Entries
-input bool   RequireADXDirectionAgreement = true; // Require +DI/-DI to Match Trade Bias
+input bool   RequireADXDirectionAgreement = false; // Require +DI/-DI to Match Trade Bias (was true - kept the min-strength ADX gate, dropped this stricter add-on)
 input bool   UseSessionFilter       = true;    // Only Trade Within Allowed Hours
 input bool   UseLocalTime           = false;   // Use Local PC Time
 input int    StartHour              = 2;       // Start Hour
@@ -82,7 +82,7 @@ input int    EndHour                = 22;      // Stop Hour
 input int    EndMinute              = 0;
 
 input group "===== 10. Risk & Money Management ====="
-input double RiskPercent            = 1.0;     // Risk % of Equity per Trade
+input double RiskPercent            = 1.5;     // Risk % of Equity per Trade (was 1.0 - raised so more setups clear the min-lot floor on a small account)
 input double RR_TP1                 = 1.5;     // TP1 = SL Distance x RR (partial close)
 input double RR_TP2                 = 2.5;     // TP2 = SL Distance x RR (partial close)
 input double RR_TP3                 = 4.0;     // TP3 = SL Distance x RR (final target)
