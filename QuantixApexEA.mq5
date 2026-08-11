@@ -40,6 +40,7 @@ input int    OB_MaxLookbackBars     = 8;       // Max Bars Back to Find Order Bl
 input int    SetupExpiryBars        = 15;      // Armed Zone Validity, bars
 input double ZoneBufferPoints       = 0;       // Extra Buffer around Entry Zone, pts
 input double SL_BufferPoints        = 30;      // Extra Buffer beyond Invalidation, pts
+input double MinSL_ATRMult          = 1.2;     // Min SL Distance = Entry ATR x this (invalidation point alone can sit inside normal noise)
 
 input group "===== 4. Volume Confirmation ====="
 input bool   UseVolumeFilter        = true;    // Require Above-Average Volume on the Displacement Candle
@@ -872,6 +873,15 @@ bool OpenTrade(int bias)
 
    long stopsLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
    double minDist = stopsLevel * _Point * 1.1;
+
+   // The structural invalidation point can sit well inside a single average
+   // bar's range (seen down to ~0.8x ATR in backtests) - a stop that tight
+   // gets swept by ordinary noise almost immediately, not real invalidation.
+   // Floor it to a multiple of ATR so the SL reflects real volatility.
+   double atrArr[];
+   double atrNow = (CopyBuffer(hATR_Entry, 0, 1, 1, atrArr) >= 1) ? atrArr[0] : 0;
+   if(atrNow>0) minDist = MathMax(minDist, atrNow*MinSL_ATRMult);
+
    if(slDistance < minDist) slDistance = minDist;
 
    double lot = CalcLot(slDistance);
