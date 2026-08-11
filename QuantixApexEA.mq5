@@ -123,6 +123,11 @@ input group "===== 13. Training Data Logger ====="
 input bool   UseTrainingLogger      = true;    // Log Every Setup + Outcome to CSV (สะสม Dataset สำหรับเทรน ML ทีหลัง)
 input string TrainingLogFileName    = "QuantixApexEA_TrainingLog.csv"; // File in Common\Files (ดูวิธีหาใน Journal ตอน EA เริ่มทำงาน)
 
+input group "===== 14. AI Model (ONNX) ====="
+input bool   UseAIModel             = false;   // Require AI Win-Probability Gate (off by default - trained model's edge is still weak, opt in once it's proven)
+input string AIModelFileName        = "QuantixApexEA_model.onnx"; // File in Common\Files (train with train_quantix_model.py, copy the .onnx here)
+input double MinAIWinProbability    = 0.50;    // Min AI Predicted Win Probability to Allow Entry
+
 //=========================== GLOBALS ================================//
 int hEmaTrend1  = INVALID_HANDLE;
 int hEmaTrend2  = INVALID_HANDLE;
@@ -171,6 +176,8 @@ double   g_TP1Price=0, g_TP2Price=0, g_TP3Price=0;
 bool     g_TP1Done=false, g_TP2Done=false;
 
 double   g_LastScore = 0;
+long     g_OnnxHandle = INVALID_HANDLE;
+double   g_LastAIProbability = -1;   // -1 = not evaluated / model unavailable
 
 const string DashPrefix = "QAPEX_DASH_";
 
@@ -210,6 +217,33 @@ int OnInit()
    if(UseTrainingLogger)
       Print("QuantixApexEA: training log -> ", TerminalInfoString(TERMINAL_COMMONDATA_PATH), "\\Files\\", TrainingLogFileName);
 
+   if(UseAIModel)
+   {
+      g_OnnxHandle = OnnxCreate(AIModelFileName, ONNX_COMMON_FOLDER);
+      if(g_OnnxHandle == INVALID_HANDLE)
+      {
+         Print("QuantixApexEA: failed to load AI model '", AIModelFileName,
+               "' from Common\\Files, err=", GetLastError(), " - AI gate will be skipped");
+      }
+      else
+      {
+         ulong inputShape[]  = {1, 13};
+         ulong labelShape[]  = {1};
+         ulong probShape[]   = {1, 2};
+         bool shapesOk = OnnxSetInputShape(g_OnnxHandle, 0, inputShape)
+                      && OnnxSetOutputShape(g_OnnxHandle, 0, labelShape)
+                      && OnnxSetOutputShape(g_OnnxHandle, 1, probShape);
+         if(!shapesOk)
+         {
+            Print("QuantixApexEA: OnnxSetInputShape/OnnxSetOutputShape failed, err=", GetLastError());
+            OnnxRelease(g_OnnxHandle);
+            g_OnnxHandle = INVALID_HANDLE;
+         }
+         else
+            Print("QuantixApexEA: AI model loaded -> ", AIModelFileName);
+      }
+   }
+
    return INIT_SUCCEEDED;
 }
 
@@ -222,6 +256,7 @@ void OnDeinit(const int reason)
    if(hATR_Zone!=INVALID_HANDLE)  IndicatorRelease(hATR_Zone);
    if(hATR_Entry!=INVALID_HANDLE) IndicatorRelease(hATR_Entry);
    if(hADX!=INVALID_HANDLE)       IndicatorRelease(hADX);
+   if(g_OnnxHandle!=INVALID_HANDLE) OnnxRelease(g_OnnxHandle);
    ObjectsDeleteAll(0, DashPrefix);
 }
 
@@ -263,6 +298,17 @@ void OnTick()
    g_LastScore = score;
    if(score < MinSignalScore) return;
    if(!PassRegimeFilter(g_SetupBias)) return;
+
+   if(UseAIModel)
+   {
+      double curPrice = (g_SetupBias==1) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double estSLDistance = (g_SetupBias==1) ? (curPrice-g_InvalidationPrice) : (g_InvalidationPrice-curPrice);
+      g_LastAIProbability = GetAIWinProbability(g_SetupBias, estSLDistance, score, trapConf);
+      // -1 means the model is unavailable (failed to load / not yet trained) -
+      // fail OPEN, not closed, so a missing model degrades to the proven
+      // rule-based system instead of silently blocking every trade.
+      if(g_LastAIProbability >= 0 && g_LastAIProbability < MinAIWinProbability) return;
+   }
 
    if(OpenTrade(g_SetupBias))
    {
@@ -502,6 +548,51 @@ int OpenTrainingLogFile()
                 "adx","spread","atr","hour","day_of_week","profit");
    }
    return handle;
+}
+
+// Returns predicted win probability [0,1] from the trained ONNX model, or
+// -1 if the model isn't loaded/available (caller should treat -1 as "no
+// opinion", not "predicted loss"). Feature order MUST match FEATURE_COLS +
+// ["direction_num"] in train_quantix_model.py exactly:
+// sl_distance, score, ob_quality, volume_score, trap_confidence, has_fibo,
+// has_obfvg, adx, spread, atr, hour, day_of_week, direction_num.
+double GetAIWinProbability(int bias, double slDistance, double score, double trapConf)
+{
+   if(g_OnnxHandle == INVALID_HANDLE) return -1;
+
+   double adxArr[];
+   double adxNow = (CopyBuffer(hADX, 0, 1, 1, adxArr) >= 1) ? adxArr[0] : 0;
+   long   spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   double atrArr[];
+   double atrNow = (CopyBuffer(hATR_Entry, 0, 1, 1, atrArr) >= 1) ? atrArr[0] : 0;
+
+   MqlDateTime tm;
+   TimeToStruct(TimeCurrent(), tm);
+
+   float input[13];
+   input[0]  = (float)slDistance;
+   input[1]  = (float)score;
+   input[2]  = (float)g_ObQualityScore;
+   input[3]  = (float)g_VolumeScore;
+   input[4]  = (float)trapConf;
+   input[5]  = g_HaveFiboZone  ? 1.0f : 0.0f;
+   input[6]  = g_HaveOBFVGZone ? 1.0f : 0.0f;
+   input[7]  = (float)adxNow;
+   input[8]  = (float)spread;
+   input[9]  = (float)atrNow;
+   input[10] = (float)tm.hour;
+   input[11] = (float)tm.day_of_week;
+   input[12] = (bias==1) ? 1.0f : 0.0f;
+
+   long  labelOut[1];
+   float probOut[2];
+
+   if(!OnnxRun(g_OnnxHandle, ONNX_DEFAULT, input, labelOut, probOut))
+   {
+      Print("QuantixApexEA: OnnxRun failed, err=", GetLastError());
+      return -1;
+   }
+   return (double)probOut[1]; // P(class=1) = P(win)
 }
 
 void LogSetupOpen(ulong ticket, int bias, double score, double trapConf)
@@ -1113,6 +1204,14 @@ void UpdateDashboard()
 
    DashLabel("score", StringFormat("%s: %.0f / %.0f", (Language==LNG_TH?"คะแนนล่าสุด":"Last Score"), g_LastScore, MinSignalScore),
              x, y, g_LastScore>=MinSignalScore?Dashboard_Green:Dashboard_Text); y+=rh;
+
+   if(UseAIModel)
+   {
+      string aiTxt = (g_LastAIProbability<0)
+         ? (Language==LNG_TH?"AI: ยังไม่ประเมิน":"AI: not evaluated")
+         : StringFormat("%s: %.0f%% / %.0f%%", (Language==LNG_TH?"AI ชนะ":"AI Win Prob"), g_LastAIProbability*100, MinAIWinProbability*100);
+      DashLabel("ai", aiTxt, x, y, g_LastAIProbability>=MinAIWinProbability?Dashboard_Green:Dashboard_Text); y+=rh;
+   }
 
    bool hasPos = PositionSelectForMagic();
    string posTxt; color posClr = Dashboard_Text;
