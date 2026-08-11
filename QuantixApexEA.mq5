@@ -569,25 +569,25 @@ double GetAIWinProbability(int bias, double slDistance, double score, double tra
    MqlDateTime tm;
    TimeToStruct(TimeCurrent(), tm);
 
-   float input[13];
-   input[0]  = (float)slDistance;
-   input[1]  = (float)score;
-   input[2]  = (float)g_ObQualityScore;
-   input[3]  = (float)g_VolumeScore;
-   input[4]  = (float)trapConf;
-   input[5]  = g_HaveFiboZone  ? 1.0f : 0.0f;
-   input[6]  = g_HaveOBFVGZone ? 1.0f : 0.0f;
-   input[7]  = (float)adxNow;
-   input[8]  = (float)spread;
-   input[9]  = (float)atrNow;
-   input[10] = (float)tm.hour;
-   input[11] = (float)tm.day_of_week;
-   input[12] = (bias==1) ? 1.0f : 0.0f;
+   float featVec[13];
+   featVec[0]  = (float)slDistance;
+   featVec[1]  = (float)score;
+   featVec[2]  = (float)g_ObQualityScore;
+   featVec[3]  = (float)g_VolumeScore;
+   featVec[4]  = (float)trapConf;
+   featVec[5]  = g_HaveFiboZone  ? 1.0f : 0.0f;
+   featVec[6]  = g_HaveOBFVGZone ? 1.0f : 0.0f;
+   featVec[7]  = (float)adxNow;
+   featVec[8]  = (float)spread;
+   featVec[9]  = (float)atrNow;
+   featVec[10] = (float)tm.hour;
+   featVec[11] = (float)tm.day_of_week;
+   featVec[12] = (bias==1) ? 1.0f : 0.0f;
 
    long  labelOut[1];
    float probOut[2];
 
-   if(!OnnxRun(g_OnnxHandle, ONNX_DEFAULT, input, labelOut, probOut))
+   if(!OnnxRun(g_OnnxHandle, ONNX_DEFAULT, featVec, labelOut, probOut))
    {
       Print("QuantixApexEA: OnnxRun failed, err=", GetLastError());
       return -1;
