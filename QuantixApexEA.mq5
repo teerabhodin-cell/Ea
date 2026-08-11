@@ -90,6 +90,8 @@ input double TP2_ClosePercent       = 40.0;    // % of Remaining Position to Clo
 input bool   UseBreakeven           = true;    // Move SL to Breakeven Before TP1 (ป้องกันไม้ที่เคยกำไรเยอะแต่ย้อนชน SL)
 input double BreakevenTriggerRR     = 1.2;     // Breakeven Trigger = SL Distance x RR (ใกล้ RR_TP1 พอให้ไม้มีที่วิ่ง)
 input double BreakevenLockPoints    = 20;      // Lock Points Beyond Entry (ใช้ทั้ง Breakeven เร็วและหลัง TP1)
+input bool   UseEmergencyLossGuard  = true;    // Force-close if floating loss blows past intended SL risk (gap/spike protection)
+input double MaxLossMultiplier      = 2.0;     // Emergency close if loss > Risk_Money x this multiple
 input double MinLot                 = 0.01;    // Min Lot Cap
 input double MaxLot                 = 5.0;     // Max Lot Cap
 input int    Slippage               = 20;      // Max Slippage, pts
@@ -161,6 +163,7 @@ double   g_VolumeScore    = 0;
 // --- open position TP ladder ---
 ulong    g_EntryTicket = 0;
 double   g_EntrySLDistance = 0;
+double   g_EntryRiskMoney = 0;   // intended max $ loss at the time this trade was opened
 double   g_TP1Price=0, g_TP2Price=0, g_TP3Price=0;
 bool     g_TP1Done=false, g_TP2Done=false;
 
@@ -900,10 +903,11 @@ bool OpenTrade(int bias)
    {
       g_EntryTicket = PositionGetInteger(POSITION_TICKET);
       g_EntrySLDistance = slDistance;
+      g_EntryRiskMoney = lot*(slDistance/SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE))*SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
       g_TP1Price=tp1; g_TP2Price=tp2; g_TP3Price=tp3;
       g_TP1Done=false; g_TP2Done=false;
       Print("QuantixApexEA: opened ", (bias==1?"BUY":"SELL"), " lot=", lot, " price=", price,
-            " sl=", sl, " slDistance=", slDistance, " maxRisk$=", lot*(slDistance/SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE))*SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE));
+            " sl=", sl, " slDistance=", slDistance, " maxRisk$=", g_EntryRiskMoney);
    }
    return true;
 }
@@ -915,7 +919,7 @@ void ManageOpenPosition()
       if(g_EntryTicket!=0)
       {
          LogTradeClose(g_EntryTicket);
-         g_EntryTicket=0; g_EntrySLDistance=0; g_TP1Done=false; g_TP2Done=false;
+         g_EntryTicket=0; g_EntrySLDistance=0; g_EntryRiskMoney=0; g_TP1Done=false; g_TP2Done=false;
       }
       return;
    }
@@ -931,6 +935,24 @@ void ManageOpenPosition()
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double volMin  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+
+   // Backtests have shown individual trades losing 8-10x the intended
+   // risk_money despite a normal SL being attached - almost certainly a
+   // gap/spike blowing straight through the stop rather than a sizing bug
+   // (verified: filled lot consistently matches CalcLot's 1%-risk math).
+   // This is a hard circuit breaker against exactly that failure mode,
+   // independent of whatever causes the gap.
+   if(UseEmergencyLossGuard && g_EntryRiskMoney>0)
+   {
+      double floatingPL = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+      if(floatingPL <= -g_EntryRiskMoney*MaxLossMultiplier)
+      {
+         Print("QuantixApexEA: EMERGENCY CLOSE - floating loss ", floatingPL,
+               " exceeded ", MaxLossMultiplier, "x intended risk (", g_EntryRiskMoney, ")");
+         trade.PositionClose(ticket);
+         return;
+      }
+   }
 
    // Breakeven fires at a lower R-multiple than TP1, so a trade that runs
    // deep in profit and then reverses without ever quite touching TP1 still
