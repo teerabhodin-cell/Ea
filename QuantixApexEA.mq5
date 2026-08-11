@@ -88,8 +88,8 @@ input double RR_TP3                 = 4.0;     // TP3 = SL Distance x RR (final 
 input double TP1_ClosePercent       = 40.0;    // % of Position to Close at TP1
 input double TP2_ClosePercent       = 40.0;    // % of Remaining Position to Close at TP2
 input bool   UseBreakeven           = true;    // Move SL to Breakeven Before TP1 (ป้องกันไม้ที่เคยกำไรเยอะแต่ย้อนชน SL)
-input double BreakevenTriggerRR     = 0.7;     // Breakeven Trigger = SL Distance x RR (ควรน้อยกว่า RR_TP1)
-input double BreakevenLockPoints    = 10;      // Lock Points Beyond Entry (ใช้ทั้ง Breakeven เร็วและหลัง TP1)
+input double BreakevenTriggerRR     = 1.2;     // Breakeven Trigger = SL Distance x RR (ใกล้ RR_TP1 พอให้ไม้มีที่วิ่ง)
+input double BreakevenLockPoints    = 20;      // Lock Points Beyond Entry (ใช้ทั้ง Breakeven เร็วและหลัง TP1)
 input double MinLot                 = 0.01;    // Min Lot Cap
 input double MaxLot                 = 5.0;     // Max Lot Cap
 input int    Slippage               = 20;      // Max Slippage, pts
@@ -116,7 +116,7 @@ input color  Dashboard_Yellow       = clrGold;
 
 input group "===== 13. Training Data Logger ====="
 input bool   UseTrainingLogger      = true;    // Log Every Setup + Outcome to CSV (สะสม Dataset สำหรับเทรน ML ทีหลัง)
-input string TrainingLogFileName    = "QuantixApexEA_TrainingLog.csv"; // File in MQL5\Files
+input string TrainingLogFileName    = "QuantixApexEA_TrainingLog.csv"; // File in Common\Files (ดูวิธีหาใน Journal ตอน EA เริ่มทำงาน)
 
 //=========================== GLOBALS ================================//
 int hEmaTrend1  = INVALID_HANDLE;
@@ -200,6 +200,9 @@ int OnInit()
    currentDay     = DayStart(TimeCurrent());
 
    if(EffectiveShowDashboard()) CreateDashboard();
+
+   if(UseTrainingLogger)
+      Print("QuantixApexEA: training log -> ", TerminalInfoString(TERMINAL_COMMONDATA_PATH), "\\Files\\", TrainingLogFileName);
 
    return INIT_SUCCEEDED;
 }
@@ -457,8 +460,12 @@ double CalcLot(double slDistance)
 // (profit / risk_money = R-multiple) to train an XGBoost model later.
 int OpenTrainingLogFile()
 {
-   bool isNew = !FileIsExist(TrainingLogFileName);
-   int handle = FileOpen(TrainingLogFileName, FILE_READ|FILE_WRITE|FILE_CSV|FILE_ANSI, ',');
+   // FILE_COMMON writes to the shared Common\Files folder (same path for
+   // every terminal/tester agent on this machine), so the log is always in
+   // one predictable place instead of buried inside a per-agent Tester
+   // sandbox folder that's hard to find after a backtest.
+   bool isNew = !FileIsExist(TrainingLogFileName, FILE_COMMON);
+   int handle = FileOpen(TrainingLogFileName, FILE_READ|FILE_WRITE|FILE_CSV|FILE_ANSI|FILE_COMMON, ',');
    if(handle==INVALID_HANDLE)
    {
       Print("QuantixApexEA: failed to open training log file, err=", GetLastError());
