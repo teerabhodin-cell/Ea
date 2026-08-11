@@ -35,6 +35,7 @@ input group "===== 3. SMC Structure (Zone Timeframe) ====="
 input int    SwingStrength          = 3;       // Swing Fractal Strength, bars each side (lower = more, faster-confirmed swings -> more setups/day)
 input double MinDisplacementATRMult = 0.4;     // Min Breakout Candle Body vs ATR - filters weak CHoCH/BOS
 input bool   RequireLiquiditySweep  = false;   // Require Stop Hunt Before CHoCH (biggest single frequency gate - sweeps are rare; off trades some quality for many more setups)
+input bool   AllowContinuationSetups = true;   // Also arm on further breaks in an already-established trend, not just the first flip (a real CHoCH-only gate goes fully silent for years during one long sustained trend - confirmed in backtests)
 input int    SweepExpiryBars        = 10;      // Sweep Validity, bars
 input int    OB_MaxLookbackBars     = 8;       // Max Bars Back to Find Order Block
 input int    SetupExpiryBars        = 15;      // Armed Zone Validity, bars
@@ -679,7 +680,7 @@ void UpdateStructureAndSweeps()
    {
       bool wasNotBullish = (g_StructureBias <= 0);
       g_StructureBias = 1;
-      if(wasNotBullish && (!RequireLiquiditySweep || g_SweepLowActive) && trendBias==1)
+      if((wasNotBullish || AllowContinuationSetups) && (!RequireLiquiditySweep || g_SweepLowActive) && trendBias==1)
       {
          double invalidation = (RequireLiquiditySweep && g_SweepLowActive) ? g_SweepLowPrice : refLow;
          double dispRatio = (atrVal>0) ? MathAbs(c1-o1)/atrVal : 0;
@@ -692,7 +693,7 @@ void UpdateStructureAndSweeps()
    {
       bool wasNotBearish = (g_StructureBias >= 0);
       g_StructureBias = -1;
-      if(wasNotBearish && (!RequireLiquiditySweep || g_SweepHighActive) && trendBias==-1)
+      if((wasNotBearish || AllowContinuationSetups) && (!RequireLiquiditySweep || g_SweepHighActive) && trendBias==-1)
       {
          double invalidation = (RequireLiquiditySweep && g_SweepHighActive) ? g_SweepHighPrice : refHigh;
          double dispRatio = (atrVal>0) ? MathAbs(c1-o1)/atrVal : 0;
