@@ -23,8 +23,8 @@ enum ENUM_LANGUAGE
 //=========================== INPUT ================================//
 input group "===== 1. Language & Timeframes ====="
 input ENUM_LANGUAGE Language        = LNG_TH;  // Select Language (default: Thai)
-input ENUM_TIMEFRAMES ZoneTF        = PERIOD_M15; // Structure / Zone Timeframe
-input ENUM_TIMEFRAMES EntryTF       = PERIOD_M5;  // Entry Trigger Timeframe
+input ENUM_TIMEFRAMES ZoneTF        = PERIOD_M5;  // Structure / Zone Timeframe (was M15 - lower TF re-evaluates structure far more often, biggest remaining frequency lever)
+input ENUM_TIMEFRAMES EntryTF       = PERIOD_M1;  // Entry Trigger Timeframe (was M5, dropped a step to stay below ZoneTF)
 input ENUM_TIMEFRAMES TrendTF1      = PERIOD_H1;  // Trend Confluence Timeframe 1
 input ENUM_TIMEFRAMES TrendTF2      = PERIOD_H4;  // Trend Confluence Timeframe 2
 
@@ -32,13 +32,13 @@ input group "===== 2. Multi-TF Trend Confluence ====="
 input int    EMA_TrendPeriod        = 50;      // EMA Period (both TrendTF1 & TrendTF2 must agree)
 
 input group "===== 3. SMC Structure (Zone Timeframe) ====="
-input int    SwingStrength          = 3;       // Swing Fractal Strength, bars each side (lower = more, faster-confirmed swings -> more setups/day)
+input int    SwingStrength          = 2;       // Swing Fractal Strength, bars each side (lower = more, faster-confirmed swings -> more setups/day)
 input double MinDisplacementATRMult = 0.4;     // Min Breakout Candle Body vs ATR - filters weak CHoCH/BOS
 input bool   RequireLiquiditySweep  = false;   // Require Stop Hunt Before CHoCH (biggest single frequency gate - sweeps are rare; off trades some quality for many more setups)
 input bool   AllowContinuationSetups = true;   // Also arm on further breaks in an already-established trend, not just the first flip (a real CHoCH-only gate goes fully silent for years during one long sustained trend - confirmed in backtests)
 input int    SweepExpiryBars        = 10;      // Sweep Validity, bars
 input int    OB_MaxLookbackBars     = 8;       // Max Bars Back to Find Order Block
-input int    SetupExpiryBars        = 15;      // Armed Zone Validity, bars
+input int    SetupExpiryBars        = 25;      // Armed Zone Validity, bars (raised alongside the lower ZoneTF so an armed setup still gets a comparable amount of real time to trigger)
 input double ZoneBufferPoints       = 0;       // Extra Buffer around Entry Zone, pts
 input double SL_BufferPoints        = 30;      // Extra Buffer beyond Invalidation, pts
 input double MinSL_ATRMult          = 1.2;     // Min SL Distance = Entry ATR x this (invalidation point alone can sit inside normal noise)
@@ -63,7 +63,7 @@ input group "===== 7. Entry Candle Confirmation ====="
 input double PinBarWickBodyRatio    = 2.0;     // Pin Bar: Wick >= Body x This Ratio
 
 input group "===== 8. Smart Signal Score ====="
-input double MinSignalScore         = 45.0;    // Min Composite Score (0-100) to Trade (was 60 - loosened for more setups/day)
+input double MinSignalScore         = 40.0;    // Min Composite Score (0-100) to Trade (was 60 -> 45 -> 40, loosened progressively for more setups/day)
 
 input group "===== 9. Filters ====="
 input int    ATR_Period             = 14;      // ATR Period
