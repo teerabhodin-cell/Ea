@@ -19,8 +19,9 @@ enum ENUM_LANGUAGE
 
 enum ENUM_GRID_TYPE
 {
-   GRID_VIRTUAL, // Virtual Grid (ซ่อน Pending ในโค้ด + ล็อค Slippage)
-   GRID_PENDING  // Pending Order (ตั้ง Buy Stop / Sell Stop บน Server)
+   GRID_VIRTUAL,       // Virtual Grid - Breakout (ซ่อน Pending ในโค้ด, Buy ตอนราคาขึ้น/Sell ตอนราคาลง)
+   GRID_PENDING,       // Pending Order (ตั้ง Buy Stop / Sell Stop บน Server)
+   GRID_VIRTUAL_LIMIT  // Virtual Grid - Limit (ซ่อน Pending ในโค้ด, Buy ตอนราคาลง/Sell ตอนราคาขึ้น)
 };
 
 enum ENUM_LOT_TYPE
@@ -50,6 +51,8 @@ input bool   UseEquityLock          = false;   // Equity Lock (ล็อคพ�
 input double MinEquityLimit         = 4000.0;  // Min Equity Limit
 input bool   UseAutoReduceLot       = false;   // Auto Reduce Lot on DD (ลด Lot อัตโนมัติ)
 input double ReduceLotThresholdDD   = 20.0;    // Reduce Lot DD Trigger %
+input bool   UseMaxLotCap           = false;   // Use Max Lot Cap (จำกัด Lot สูงสุด)
+input double MaxLotCap              = 5.0;     // Max Lot Cap (Lot สูงสุดต่อไม้)
 
 input group "===== 3. Grid ====="
 input ENUM_GRID_TYPE GridType       = GRID_VIRTUAL; // Grid Type (รูปแบบ Grid)
@@ -345,6 +348,10 @@ void ReconcileGridStateOnInit()
    // ไม้ล่าสุด/ชั้นสูงสุด) ใช้ย้อนกลับไปหาว่าฐานเดิม (GridBasePrice) ตอนบาสเก็ตนี้เริ่มคือราคาไหน
    double firstBuyPrice = 0.0, firstSellPrice = 0.0;
 
+   // GRID_VIRTUAL_LIMIT ราคาวิ่งกลับทิศ (Buy ไล่ราคาลง, Sell ไล่ราคาขึ้น) เลยต้องกลับขั้วเลือก
+   // "สุดขั้ว"/"ใกล้ฐานสุด" ของแต่ละฝั่งด้วย - dir ตัวเดียวกับใน CheckAndExecuteVirtualGrid()
+   int dir = (GridType == GRID_VIRTUAL_LIMIT) ? -1 : 1;
+
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
@@ -355,14 +362,18 @@ void ReconcileGridStateOnInit()
       if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
       {
          buyCount++;
-         if(openPrice > lastBuyPrice  || lastBuyPrice  == 0.0) lastBuyPrice  = openPrice;
-         if(openPrice < firstBuyPrice || firstBuyPrice == 0.0) firstBuyPrice = openPrice;
+         bool takeLast  = (dir > 0) ? (openPrice > lastBuyPrice  || lastBuyPrice  == 0.0) : (openPrice < lastBuyPrice  || lastBuyPrice  == 0.0);
+         bool takeFirst = (dir > 0) ? (openPrice < firstBuyPrice || firstBuyPrice == 0.0) : (openPrice > firstBuyPrice || firstBuyPrice == 0.0);
+         if(takeLast)  lastBuyPrice  = openPrice;
+         if(takeFirst) firstBuyPrice = openPrice;
       }
       else
       {
          sellCount++;
-         if(openPrice < lastSellPrice  || lastSellPrice  == 0.0) lastSellPrice  = openPrice;
-         if(openPrice > firstSellPrice || firstSellPrice == 0.0) firstSellPrice = openPrice;
+         bool takeLast  = (dir > 0) ? (openPrice < lastSellPrice  || lastSellPrice  == 0.0) : (openPrice > lastSellPrice  || lastSellPrice  == 0.0);
+         bool takeFirst = (dir > 0) ? (openPrice > firstSellPrice || firstSellPrice == 0.0) : (openPrice < firstSellPrice || firstSellPrice == 0.0);
+         if(takeLast)  lastSellPrice  = openPrice;
+         if(takeFirst) firstSellPrice = openPrice;
       }
    }
 
@@ -385,11 +396,11 @@ void ReconcileGridStateOnInit()
    // การ pin ระหว่างทาง ซึ่งตอนนี้ปิดไปแล้วในโหมด Fixed/ATR ปกติ)
    double estimatedBase;
    if(buyCount > 0 && sellCount > 0)
-      estimatedBase = NormalizeDouble(((firstBuyPrice - distPrice) + (firstSellPrice + distPrice)) / 2.0, _Digits);
+      estimatedBase = NormalizeDouble(((firstBuyPrice - dir * distPrice) + (firstSellPrice + dir * distPrice)) / 2.0, _Digits);
    else if(buyCount > 0)
-      estimatedBase = NormalizeDouble(firstBuyPrice - distPrice, _Digits);
+      estimatedBase = NormalizeDouble(firstBuyPrice - dir * distPrice, _Digits);
    else
-      estimatedBase = NormalizeDouble(firstSellPrice + distPrice, _Digits);
+      estimatedBase = NormalizeDouble(firstSellPrice + dir * distPrice, _Digits);
 
    GridBasePrice = estimatedBase;
 
@@ -700,6 +711,8 @@ double GetCalculatedLotSize(int nextLevel)
 
    lot = MathMax(0.01, lot);
 
+   if(UseMaxLotCap && MaxLotCap > 0 && lot > MaxLotCap) lot = MaxLotCap;
+
    double minVol  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double maxVol  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
    double stepVol = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
@@ -861,6 +874,8 @@ bool TryOpenForceHedgeOrder(string reasonTag, string logDetail)
       }
    }
    double lot = baseLot * MathPow(LotMultiplier, neededSideCount) * ForceHedgeLotMultiplier;
+
+   if(UseMaxLotCap && MaxLotCap > 0 && lot > MaxLotCap) lot = MaxLotCap;
 
    double minVol  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double maxVol  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
@@ -1112,10 +1127,10 @@ int OnInit()
                   UninitializeReason(), GridType, GridBasePrice);
    }
 
-   if(GridType == GRID_VIRTUAL) ReconcileGridStateOnInit();
+   if(GridType == GRID_VIRTUAL || GridType == GRID_VIRTUAL_LIMIT) ReconcileGridStateOnInit();
    else RecalculateBasePrice();
 
-   if(GridType == GRID_VIRTUAL)
+   if(GridType == GRID_VIRTUAL || GridType == GRID_VIRTUAL_LIMIT)
    {
       DeleteAllPendingOrders();
    }
@@ -1191,6 +1206,12 @@ void OnTick()
    // 1. Count Open Positions & Profit - PERF: เก็บ buy/sell count + ราคาไม้ล่าสุดแต่ละฝั่งในสแกน
    // เดียวกันนี้เลย (เดิม CheckAndExecuteVirtualGrid() สแกน PositionsTotal() ซ้ำเองอีกรอบทุก tick
    // ทั้งที่เป็นข้อมูลชุดเดียวกัน) ส่งต่อเป็น parameter แทน ลดจำนวนสแกนซ้ำต่อ tick ลงครึ่งหนึ่ง
+   //
+   // GRID_VIRTUAL_LIMIT flips which extreme counts as "last" price: breakout mode
+   // (default) climbs, so the highest Buy fill / lowest Sell fill is the anchor to
+   // extend further; limit mode falls to trigger Buy / rises to trigger Sell, so it's
+   // the opposite extreme - lowest Buy fill / highest Sell fill.
+   bool isVirtualLimitMode = (GridType == GRID_VIRTUAL_LIMIT);
    for(int i = PositionsTotal()-1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
@@ -1207,12 +1228,16 @@ void OnTick()
       if(posType == POSITION_TYPE_BUY)
       {
          buyCount++;
-         if(openPrice > lastBuyPrice || lastBuyPrice == 0.0) lastBuyPrice = openPrice;
+         bool takeBuy = isVirtualLimitMode ? (openPrice < lastBuyPrice || lastBuyPrice == 0.0)
+                                            : (openPrice > lastBuyPrice || lastBuyPrice == 0.0);
+         if(takeBuy) lastBuyPrice = openPrice;
       }
       else
       {
          sellCount++;
-         if(openPrice < lastSellPrice || lastSellPrice == 0.0) lastSellPrice = openPrice;
+         bool takeSell = isVirtualLimitMode ? (openPrice > lastSellPrice || lastSellPrice == 0.0)
+                                             : (openPrice < lastSellPrice || lastSellPrice == 0.0);
+         if(takeSell) lastSellPrice = openPrice;
       }
    }
 
@@ -1705,6 +1730,13 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
    int buyStepDistance  = IsPerSideDistanceActive() ? ((BuyGridDistance  > 0) ? BuyGridDistance  : GetDynamicGridDistance()) : stepDistance;
    int sellStepDistance = IsPerSideDistanceActive() ? ((SellGridDistance > 0) ? SellGridDistance : GetDynamicGridDistance()) : stepDistance;
 
+   // GRID_VIRTUAL_LIMIT flips the trigger direction for both sides: Buy enters on
+   // price falling to base-distance (Buy Limit style) instead of rising to
+   // base+distance (Buy Stop / breakout style, the GRID_VIRTUAL default), and Sell
+   // mirrors it (enters on price rising to base+distance instead of falling to
+   // base-distance). dir=-1 flips every target/gap formula below for both sides at once.
+   int dir = (GridType == GRID_VIRTUAL_LIMIT) ? -1 : 1;
+
    MqlTradeRequest request;
    MqlTradeResult  result;
    ENUM_ORDER_TYPE_FILLING fillMode = GetBestFillingMode();
@@ -1737,16 +1769,24 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
       // lastBuyPrice is a LOCAL variable recomputed every call from real filled
       // positions - re-anchoring it in the gap branch below does NOT persist to
       // the next tick. BuyGapAnchor is the persistent override that actually
-      // survives across ticks for the buyCount>0 case.
-      double effectiveLastBuy = MathMax(lastBuyPrice, BuyGapAnchor);
+      // survives across ticks for the buyCount>0 case. Breakout mode (dir=1) wants
+      // the HIGHER of the two (price only moves the target up); Limit mode (dir=-1)
+      // wants the LOWER of the two, and must ignore BuyGapAnchor while it's unset
+      // (0.0) or MathMin would wrongly latch onto it.
+      double effectiveLastBuy = (dir > 0)
+         ? MathMax(lastBuyPrice, BuyGapAnchor)
+         : ((BuyGapAnchor > 0 && BuyGapAnchor < lastBuyPrice) ? BuyGapAnchor : lastBuyPrice);
 
       double targetPrice = 0.0;
       if(buyCount == 0)
-         targetPrice = NormalizeDouble(GridBasePriceBuy + (buyStepDistance * point), _Digits);
+         targetPrice = NormalizeDouble(GridBasePriceBuy + dir * (buyStepDistance * point), _Digits);
       else
-         targetPrice = NormalizeDouble(effectiveLastBuy + (buyStepDistance * point), _Digits);
+         targetPrice = NormalizeDouble(effectiveLastBuy + dir * (buyStepDistance * point), _Digits);
 
-      double diffPoints = (ask - targetPrice) / point;
+      // Signed so it stays "positive = triggered/overshot in the intended entry
+      // direction" for both modes: breakout (dir=1) wants ask above target,
+      // limit (dir=-1) wants ask below target.
+      double diffPoints = dir * (ask - targetPrice) / point;
 
       // เป็น Gap "จริง" ก็ต่อเมื่อระยะเกิน adjGapLimit *และ* ไม่มีทิคเข้ามาเลยนานเกิน
       // GapDetectionSeconds (เช่น ข้ามคืน/สุดสัปดาห์) - ถ้าทิคยังเข้ามาต่อเนื่อง (แค่ตลาดวิ่งแรง)
@@ -1754,7 +1794,7 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
       // เทรนด์แรงต่อเนื่องจะโดน re-anchor วนไปเรื่อยๆ ทุกทิคโดยไม่มีวันเปิดไม้ต่อได้เลย
       bool isGenuineGap = (UseGapProtection && diffPoints > adjGapLimit && SecondsSinceLastTick >= GapDetectionSeconds);
 
-      bool canSendBuy = (ask >= targetPrice) && !isGenuineGap;
+      bool canSendBuy = (diffPoints >= 0) && !isGenuineGap;
 
       if(canSendBuy)
       {
@@ -1812,7 +1852,7 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
          // local variable rebuilt from real filled positions on every call, so it
          // reverted right back on the next tick and repeated the identical stale
          // target forever. BuyGapAnchor is a persistent global that actually
-         // sticks, and effectiveLastBuy (MathMax above) picks it up next tick.
+         // sticks, and effectiveLastBuy (above) picks it up next tick.
          if(buyCount == 0) GridBasePriceBuy = ask;
          else BuyGapAnchor = ask;
          if(TimeCurrent() - lastGapLogTime >= 5)
@@ -1829,23 +1869,30 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
    {
       // Same persistence issue as the Buy side, mirrored: lastSellPrice is local
       // and rebuilt from real positions every call, so SellGapAnchor is the
-      // persistent override for the sellCount>0 case. Sell targets move DOWN, so
-      // we want the lower of the two (0.0 means "unset").
-      double effectiveLastSell = (SellGapAnchor > 0 && SellGapAnchor < lastSellPrice) ? SellGapAnchor : lastSellPrice;
+      // persistent override for the sellCount>0 case. Breakout mode (dir=1) wants
+      // the LOWER of the two (Sell targets move down); Limit mode (dir=-1) wants
+      // the HIGHER, and can use plain MathMax since an unset anchor (0.0) always
+      // loses to a real price there.
+      double effectiveLastSell = (dir > 0)
+         ? ((SellGapAnchor > 0 && SellGapAnchor < lastSellPrice) ? SellGapAnchor : lastSellPrice)
+         : MathMax(lastSellPrice, SellGapAnchor);
 
       double targetPrice = 0.0;
       if(sellCount == 0)
-         targetPrice = NormalizeDouble(GridBasePriceSell - (sellStepDistance * point), _Digits);
+         targetPrice = NormalizeDouble(GridBasePriceSell - dir * (sellStepDistance * point), _Digits);
       else
-         targetPrice = NormalizeDouble(effectiveLastSell - (sellStepDistance * point), _Digits);
+         targetPrice = NormalizeDouble(effectiveLastSell - dir * (sellStepDistance * point), _Digits);
 
-      double diffPoints = (targetPrice - bid) / point;
+      // Signed so it stays "positive = triggered/overshot in the intended entry
+      // direction" for both modes: breakout (dir=1) wants bid below target,
+      // limit (dir=-1) wants bid above target.
+      double diffPoints = dir * (targetPrice - bid) / point;
 
       // เป็น Gap "จริง" ก็ต่อเมื่อระยะเกิน adjGapLimit *และ* ไม่มีทิคเข้ามาเลยนานเกิน
       // GapDetectionSeconds - เหตุผลเดียวกับฝั่ง Buy ด้านบน
       bool isGenuineGap = (UseGapProtection && diffPoints > adjGapLimit && SecondsSinceLastTick >= GapDetectionSeconds);
 
-      bool canSendSell = (bid <= targetPrice) && !isGenuineGap;
+      bool canSendSell = (diffPoints >= 0) && !isGenuineGap;
 
       if(canSendSell)
       {
@@ -2444,6 +2491,8 @@ double GetNextGridTargetPrice(bool isBuy)
    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
    int    buyCount = 0, sellCount = 0;
    double lastBuyPrice = 0.0, lastSellPrice = 0.0;
+   bool   isVirtualLimitMode = (GridType == GRID_VIRTUAL_LIMIT);
+   int    dir = isVirtualLimitMode ? -1 : 1;
 
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
@@ -2455,12 +2504,16 @@ double GetNextGridTargetPrice(bool isBuy)
       if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
       {
          buyCount++;
-         if(openPrice > lastBuyPrice || lastBuyPrice == 0.0) lastBuyPrice = openPrice;
+         bool takeBuy = isVirtualLimitMode ? (openPrice < lastBuyPrice || lastBuyPrice == 0.0)
+                                            : (openPrice > lastBuyPrice || lastBuyPrice == 0.0);
+         if(takeBuy) lastBuyPrice = openPrice;
       }
       else
       {
          sellCount++;
-         if(openPrice < lastSellPrice || lastSellPrice == 0.0) lastSellPrice = openPrice;
+         bool takeSell = isVirtualLimitMode ? (openPrice > lastSellPrice || lastSellPrice == 0.0)
+                                             : (openPrice < lastSellPrice || lastSellPrice == 0.0);
+         if(takeSell) lastSellPrice = openPrice;
       }
    }
 
@@ -2480,20 +2533,24 @@ double GetNextGridTargetPrice(bool isBuy)
    // ทั้งที่ราคาที่จะ trigger จริงเปลี่ยนไปไกลแล้ว
    if(isBuy)
    {
-      double effectiveLastBuy = MathMax(lastBuyPrice, BuyGapAnchor);
-      if(buyCount > 0) return NormalizeDouble(effectiveLastBuy + (buyStepDistance * point), _Digits);
+      double effectiveLastBuy = (dir > 0)
+         ? MathMax(lastBuyPrice, BuyGapAnchor)
+         : ((BuyGapAnchor > 0 && BuyGapAnchor < lastBuyPrice) ? BuyGapAnchor : lastBuyPrice);
+      if(buyCount > 0) return NormalizeDouble(effectiveLastBuy + dir * (buyStepDistance * point), _Digits);
       // Fixed/non-per-side โหมด: อ้างอิงจาก GridBasePrice (ราคาศูนย์กลางจริง) ตรงๆ เท่านั้น -
       // ห้ามใช้ GridBasePriceBuy เพราะตัวแปรนั้นอาจถูก "pin" ไปที่ราคาตอนอีกฝั่ง fill ครั้งแรก
       // (คนละกลไกกับที่นี่ ใช้กันไม้ครั้งแรกหลัง gap) ทำให้ค่าที่โชว์เพี้ยนไปจากฐานจริง
-      if(!dynamicTarget) return NormalizeDouble(GridBasePrice + (buyStepDistance * point), _Digits);
-      return NormalizeDouble(GridBasePriceBuy + (buyStepDistance * point), _Digits);
+      if(!dynamicTarget) return NormalizeDouble(GridBasePrice + dir * (buyStepDistance * point), _Digits);
+      return NormalizeDouble(GridBasePriceBuy + dir * (buyStepDistance * point), _Digits);
    }
    else
    {
-      double effectiveLastSell = (SellGapAnchor > 0 && SellGapAnchor < lastSellPrice) ? SellGapAnchor : lastSellPrice;
-      if(sellCount > 0) return NormalizeDouble(effectiveLastSell - (sellStepDistance * point), _Digits);
-      if(!dynamicTarget) return NormalizeDouble(GridBasePrice - (sellStepDistance * point), _Digits);
-      return NormalizeDouble(GridBasePriceSell - (sellStepDistance * point), _Digits);
+      double effectiveLastSell = (dir > 0)
+         ? ((SellGapAnchor > 0 && SellGapAnchor < lastSellPrice) ? SellGapAnchor : lastSellPrice)
+         : MathMax(lastSellPrice, SellGapAnchor);
+      if(sellCount > 0) return NormalizeDouble(effectiveLastSell - dir * (sellStepDistance * point), _Digits);
+      if(!dynamicTarget) return NormalizeDouble(GridBasePrice - dir * (sellStepDistance * point), _Digits);
+      return NormalizeDouble(GridBasePriceSell - dir * (sellStepDistance * point), _Digits);
    }
 }
 
@@ -2671,7 +2728,8 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    cx += cardW + gap;
    DrawCardBG(cx, y, cardW, cardH, "⚙️ " + GetUIString("กริด", "GRID"));
    ry = y + S(44);
-   DrawKV(cx + S(12), ry, innerW, GetUIString("โหมด", "Mode"), (GridType == GRID_VIRTUAL ? "VIRTUAL" : "PENDING"), C'160,160,180', C'251,193,7'); ry += rowStep;
+   string gridModeLabel = (GridType == GRID_VIRTUAL) ? "VIRTUAL" : (GridType == GRID_VIRTUAL_LIMIT ? "VIRTUAL LIMIT" : "PENDING");
+   DrawKV(cx + S(12), ry, innerW, GetUIString("โหมด", "Mode"), gridModeLabel, C'160,160,180', C'251,193,7'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ชั้น", "Levels"), IntegerToString(curLevel) + " / " + IntegerToString(TotalLevels), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ระยะถัดไป", "Next Dist"), IntegerToString(nextDist) + " P", C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ราคาฐาน", "Base Price"), DoubleToString(GridBasePrice, _Digits), C'160,160,180', clrWhite); ry += rowStep;
@@ -2723,7 +2781,10 @@ int DrawEquityFeatureRow(int y)
    int row1Y = y + S(46);
    int row2Y = row1Y + S(104);
 
-   DrawFeatureIcon(fx + S(10) + cellW * 0, cellW, row1Y, "🕸️", "GRID เสมือน", "VIRTUAL GRID", GridType == GRID_VIRTUAL);
+   bool   isVirtualMode      = (GridType == GRID_VIRTUAL || GridType == GRID_VIRTUAL_LIMIT);
+   string virtualIconLabelTH = (GridType == GRID_VIRTUAL_LIMIT) ? "GRID เสมือน (Limit)" : "GRID เสมือน";
+   string virtualIconLabelEN = (GridType == GRID_VIRTUAL_LIMIT) ? "VIRTUAL LIMIT" : "VIRTUAL GRID";
+   DrawFeatureIcon(fx + S(10) + cellW * 0, cellW, row1Y, "🕸️", virtualIconLabelTH, virtualIconLabelEN, isVirtualMode);
    DrawFeatureIcon(fx + S(10) + cellW * 1, cellW, row1Y, "🧺", "เครื่องยนต์", "BASKET ENGINE", true);
    DrawFeatureIcon(fx + S(10) + cellW * 2, cellW, row1Y, "📉", "เทรลลิ่งสต็อป", "TRAILING STOP", true);
    DrawFeatureIcon(fx + S(10) + cellW * 3, cellW, row1Y, "🔒", "ล็อกคุ้มทุน", "BREAKEVEN LOCK", UseBasketBreakeven);
