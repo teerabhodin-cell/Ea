@@ -248,7 +248,7 @@ void ClearEverythingAsync();
 void DrawVisualTSLine(double tsValue);
 void DeleteVisualTSLine();
 
-void UpdateDrawdownTracker();
+void UpdateDrawdownTracker(int openPositions);
 
 int GetDynamicGridDistance();
 bool IsPerSideDistanceActive();
@@ -1379,7 +1379,7 @@ void OnTick()
    }
 
    // 4. Update Drawdown Tracker & HUD UI (Throttled Update: ทุกๆ 500ms)
-   UpdateDrawdownTracker();
+   UpdateDrawdownTracker(openPositions);
    CheckForceHedgeOnDD();
    CheckForceHedgeOnTime();
 
@@ -1395,10 +1395,20 @@ void OnTick()
 //+------------------------------------------------------------------+
 //| Update Max Drawdown Calculation                                 |
 //+------------------------------------------------------------------+
-void UpdateDrawdownTracker()
+void UpdateDrawdownTracker(int openPositions)
 {
    double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
    double currentEquity  = AccountInfoDouble(ACCOUNT_EQUITY);
+
+   // FIXED: PeakBalanceForDD เดิมเป็น all-time-high ของยอดเงิน ไม่เคยขยับลงมาเทียบกับจุดเริ่ม
+   // บาสเก็ตปัจจุบันเลย (นอกจากตอน Max DD Stop ยิง) ถ้าบาสเก็ตก่อนหน้าปิดกำไรแต่ไม่ทันไล่ทันพีคเก่า
+   // (เช่น บัญชีเคยขาดทุนสะสมจากหลายรอบก่อนหน้า) บาสเก็ตใหม่จะเริ่มต้นด้วย DD% ที่ไม่ใช่ศูนย์ทันที
+   // ทำให้ Force Hedge on DD (และ Max DD Stop) ยิงทันทีทั้งที่บาสเก็ตใหม่ยังไม่เกิดขาดทุนอะไรเลย -
+   // ตอนพอร์ตว่างสนิท (ไม่มีไม้เปิดเลย) ปักหมุด peak ใหม่เท่ากับยอดเงินปัจจุบันเสมอ เพื่อให้ DD% ที่ใช้
+   // คำนวณ Force Hedge/Max DD Stop วัดจาก "จุดเริ่มบาสเก็ตนี้" เท่านั้น ไม่ลากยาวข้ามหลายบาสเก็ต
+   // (ตัวที่ตั้งใจให้สะสมข้ามบาสเก็ตจริงๆ คือ AccountPeakBalanceAllTime ของ Total DD Guard ด้านล่าง
+   // ไม่ใช่ตัวนี้ - ไม่แตะ AccountPeakBalanceAllTime เลย)
+   if(openPositions == 0) PeakBalanceForDD = currentBalance;
 
    if(currentBalance > PeakBalanceForDD) PeakBalanceForDD = currentBalance;
 
