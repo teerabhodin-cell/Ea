@@ -1043,6 +1043,42 @@ bool OpenTrade(int bias)
    return true;
 }
 
+// Broker rejects any SL that lands closer to the current price than
+// SYMBOL_TRADE_STOPS_LEVEL allows ("[invalid stops]"). Blindly resending the
+// exact same rejected price every tick - which the old code did - retries
+// forever and never succeeds, since neither the price nor the request
+// changes. Clamp the target to the closest distance the broker will accept
+// before sending, so the modify actually goes through (at a slightly less
+// ideal but valid level) instead of looping.
+bool TrySetSL(ulong ticket, long type, double desiredSL, double curTP)
+{
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   long   stopsLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double minDist = stopsLevel * _Point * 1.1;
+
+   double sl = desiredSL;
+   if(type==POSITION_TYPE_BUY)
+   {
+      double maxAllowedSL = bid - minDist;
+      if(sl > maxAllowedSL) sl = maxAllowedSL;
+   }
+   else
+   {
+      double minAllowedSL = ask + minDist;
+      if(sl < minAllowedSL) sl = minAllowedSL;
+   }
+   sl = NormalizeDouble(sl, _Digits);
+
+   if(!trade.PositionModify(_Symbol, sl, curTP))
+   {
+      Print("QuantixApexEA: PositionModify failed for #", ticket, " sl=", sl,
+            " retcode=", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
+      return false;
+   }
+   return true;
+}
+
 void ManageOpenPosition()
 {
    if(!PositionSelectForMagic())
@@ -1095,11 +1131,8 @@ void ManageOpenPosition()
       {
          double beSL = (type==POSITION_TYPE_BUY) ? openPrice+BreakevenLockPoints*_Point : openPrice-BreakevenLockPoints*_Point;
          bool needMove = (type==POSITION_TYPE_BUY) ? (curSL<beSL) : (curSL==0 || curSL>beSL);
-         if(needMove)
-         {
-            trade.PositionModify(_Symbol, NormalizeDouble(beSL,_Digits), curTP);
+         if(needMove && TrySetSL(ticket, type, beSL, curTP))
             curSL = beSL;
-         }
       }
    }
 
@@ -1117,7 +1150,7 @@ void ManageOpenPosition()
          double newSL = (type==POSITION_TYPE_BUY) ? openPrice+BreakevenLockPoints*_Point : openPrice-BreakevenLockPoints*_Point;
          bool needMove = (type==POSITION_TYPE_BUY) ? (curSL<newSL) : (curSL==0 || curSL>newSL);
          if(needMove && PositionSelectForMagic())
-            trade.PositionModify(_Symbol, NormalizeDouble(newSL,_Digits), curTP);
+            TrySetSL(ticket, type, newSL, curTP);
          return;
       }
    }
