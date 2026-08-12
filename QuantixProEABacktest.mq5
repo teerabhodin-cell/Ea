@@ -66,6 +66,8 @@ input bool   UseAdaptiveBBGrid      = false;   // Per-Side BB Distance (แย�
 input int    DistancePoints         = 250;     // Fixed Distance, pts (ระยะคงที่)
 input bool   UseMinVolatilityFilter = false;   // Use Min Volatility Filter (กรองความผันผวนขั้นต่ำ)
 input int    MinVolatilityPoints    = 50;      // Min ATR/BB Distance, pts (ต่ำกว่านี้ไม่เปิดไม้ใหม่)
+input bool   UseMaxVolatilityFilter = false;   // Use Max Volatility Filter (กรองความผันผวนสูงสุด)
+input int    MaxVolatilityPoints    = 500;     // Max ATR/BB Distance, pts (สูงกว่านี้ไม่เปิดไม้ใหม่)
 input ulong  MagicNumber            = 112233;
 
 input group "===== 4. Target & Trailing ====="
@@ -231,6 +233,7 @@ bool IsNewsBlackout();
 bool IsDailyLossLimitReached();
 bool IsDailyGoalReached();
 bool IsVolatilityTooLow();
+bool IsVolatilityTooHigh();
 bool CheckEMATrend(bool isBuy);
 bool CheckMTFFilter(bool isBuy);
 double GetCalculatedLotSize(int nextLevel);
@@ -534,6 +537,18 @@ bool IsVolatilityTooLow()
 {
    if(!UseMinVolatilityFilter) return false;
    return (GetDynamicGridDistance() < MinVolatilityPoints);
+}
+
+//+------------------------------------------------------------------+
+//| Max Volatility Filter - ฝั่งตรงข้ามของ Min Volatility Filter ด้านบน:    |
+//| ถ้าตลาดผันผวนแรงเกินไป (ระยะ ATR/BB/Fixed ที่คำนวณได้ ณ ตอนนี้ สูงกว่า    |
+//| MaxVolatilityPoints ที่ตั้งไว้ เช่นช่วงข่าวแรง/ราคาวิ่งพรวด) ห้ามเปิดไม้ใหม่ |
+//| ทั้งหมดเช่นกัน - กันเปิดไม้ระยะห่างกว้างผิดปกติที่ risk/lot คำนวณไว้ไม่รองรับ |
+//+------------------------------------------------------------------+
+bool IsVolatilityTooHigh()
+{
+   if(!UseMaxVolatilityFilter) return false;
+   return (GetDynamicGridDistance() > MaxVolatilityPoints);
 }
 
 //+------------------------------------------------------------------+
@@ -1336,15 +1351,16 @@ void OnTick()
    bool dailyLossBlocked = IsDailyLossLimitReached();
    bool dailyGoalReached = IsDailyGoalReached();
    bool lowVolatility    = IsVolatilityTooLow();
+   bool highVolatility   = IsVolatilityTooHigh();
 
-   // News Filter / Daily Loss Limit / Min Volatility Filter ห้ามเปิดไม้ใหม่เด็ดขาด ไม่ว่ามีบาสเก็ต
-   // เปิดค้างอยู่หรือไม่ - แต่ Daily Goal Stop ต่างออกไป: ถ้ามีบาสเก็ตเปิดค้างอยู่แล้ว (openPositions > 0)
-   // ต้องปล่อยให้ grid เปิดไม้ต่อตามปกติ ไม่งั้นบาสเก็ตจะค้างครึ่งๆ กลางๆ ขาดชั้นแก้ไม้ที่ควรมี (เสี่ยงกว่าเดิม)
+   // News Filter / Daily Loss Limit / Min & Max Volatility Filter ห้ามเปิดไม้ใหม่เด็ดขาด ไม่ว่ามี
+   // บาสเก็ตเปิดค้างอยู่หรือไม่ - แต่ Daily Goal Stop ต่างออกไป: ถ้ามีบาสเก็ตเปิดค้างอยู่แล้ว (openPositions
+   // > 0) ต้องปล่อยให้ grid เปิดไม้ต่อตามปกติ ไม่งั้นบาสเก็ตจะค้างครึ่งๆ กลางๆ ขาดชั้นแก้ไม้ที่ควรมี (เสี่ยงกว่าเดิม)
    // ถึงเป้ากำไรวันนี้แล้วแปลว่า "ห้ามเริ่มบาสเก็ตใหม่" เท่านั้น ไม่ใช่ "ทิ้งบาสเก็ตที่กำลังทำอยู่ให้ค้าง"
-   // (สถานะ OFF-TIME เดิมยังใช้จับ "นอกเวลาเทรด" ได้ถูกต้อง ส่วนสถานะ NEWS PAUSE / DAILY LOSS /
-   // DAILY GOAL / LOW VOLATILITY แยกแสดงเองใน DrawServerTimeRow)
+   // (สถานะ OFF-TIME เดิมยังใช้จับ "นอกเวลาเทรด" ได้ถูกต้อง ส่วนสถานะ NEWS PAUSE / DAILY LOSS / DAILY GOAL /
+   // LOW VOLATILITY / HIGH VOLATILITY แยกแสดงเองใน DrawServerTimeRow)
    bool dailyGoalBlocksEntry = dailyGoalReached && (openPositions == 0);
-   if(timeAllowed && !newsBlocked && !dailyLossBlocked && !dailyGoalBlocksEntry && !lowVolatility)
+   if(timeAllowed && !newsBlocked && !dailyLossBlocked && !dailyGoalBlocksEntry && !lowVolatility && !highVolatility)
    {
       if(!IsClosingState && !equityLocked && !TradingHalted && (MaxBasketProfit < TargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
       {
@@ -1364,7 +1380,7 @@ void OnTick()
          if(openPositions > 0 && currentProfit > 0)
          {
             IsClosingState = true;
-            string blockReason = !timeAllowed ? "Outside trading hours" : (newsBlocked ? "News blackout window" : (dailyLossBlocked ? "Daily loss limit reached" : (dailyGoalBlocksEntry ? "Daily goal reached" : "Volatility too low")));
+            string blockReason = !timeAllowed ? "Outside trading hours" : (newsBlocked ? "News blackout window" : (dailyLossBlocked ? "Daily loss limit reached" : (dailyGoalBlocksEntry ? "Daily goal reached" : (lowVolatility ? "Volatility too low" : "Volatility too high"))));
             PrintFormat("⏰ [ENTRY BLOCKED] %s and in profit -> Auto Closing all active positions...", blockReason);
             ClearEverythingAsync();
             DeleteVisualTSLine();
@@ -2567,6 +2583,7 @@ int DrawServerTimeRow(int y, int openPos, int pendingOrders)
    else if(IsDailyLossLimitReached())              { dotColor = C'239,68,68';  statusTxt = GetUIString("ครบขาดทุนวันนี้", "DAILY LOSS HIT"); }
    else if(IsDailyGoalReached())                   { dotColor = C'34,197,94';  statusTxt = GetUIString("ถึงเป้าวันนี้แล้ว", "DAILY GOAL HIT"); }
    else if(IsVolatilityTooLow())                   { dotColor = C'251,146,60'; statusTxt = GetUIString("ตลาดนิ่งเกินไป", "LOW VOLATILITY"); }
+   else if(IsVolatilityTooHigh())                  { dotColor = C'239,68,68';  statusTxt = GetUIString("ตลาดผันผวนสูงเกินไป", "HIGH VOLATILITY"); }
    else if(openPos == 0 && pendingOrders == 0)     { dotColor = C'251,193,7';  statusTxt = GetUIString("พร้อมทำงาน", "STANDBY"); }
 
    int sw   = EstimateTextWidth(statusTxt, SF(15));
@@ -2653,9 +2670,11 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    // แสดงระยะกริด "ปัจจุบันจริง" ที่คำนวณสด (ตัวเดียวกับที่ Min Volatility Filter เทียบ) แทนที่จะ
    // โชว์แค่ DistancePoints (ค่า Fixed คงที่) เฉยๆ เพราะถ้าเปิด ATR/BB Distance อยู่ เลขที่โชว์เดิม
    // จะไม่ตรงกับระยะที่ระบบใช้จริงเลย ทำให้ตั้งค่า MinVolatilityPoints ได้ถูกต้องเพราะเห็นเลขจริง
-   int liveDistNow = GetDynamicGridDistance();
-   bool liveDistLow = (UseMinVolatilityFilter && liveDistNow < MinVolatilityPoints);
-   DrawKV(cx + S(12), ry, innerW, GetUIString("ระยะ Grid ปัจจุบัน", "Current Distance"), IntegerToString(liveDistNow) + " P", C'160,160,180', liveDistLow ? C'251,146,60' : clrWhite); ry += rowStep;
+   int liveDistNow  = GetDynamicGridDistance();
+   bool liveDistLow  = (UseMinVolatilityFilter && liveDistNow < MinVolatilityPoints);
+   bool liveDistHigh = (UseMaxVolatilityFilter && liveDistNow > MaxVolatilityPoints);
+   color liveDistClr = liveDistHigh ? C'239,68,68' : (liveDistLow ? C'251,146,60' : clrWhite);
+   DrawKV(cx + S(12), ry, innerW, GetUIString("ระยะ Grid ปัจจุบัน", "Current Distance"), IntegerToString(liveDistNow) + " P", C'160,160,180', liveDistClr); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, "ATR", (UseATRDistance ? IntegerToString(GetCurrentATRPoints()) + " P" : "—"), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("สเปรด", "Spread"), IntegerToString(adjSpread) + " P", C'160,160,180', adjSpread > MaxSpreadAllowed * m_multiplier ? C'239,68,68' : clrWhite);
 
