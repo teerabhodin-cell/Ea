@@ -23,8 +23,8 @@ enum ENUM_LANGUAGE
 //=========================== INPUT ================================//
 input group "===== 1. Language & Timeframes ====="
 input ENUM_LANGUAGE Language        = LNG_TH;  // Select Language (default: Thai)
-input ENUM_TIMEFRAMES ZoneTF        = PERIOD_M5;  // Structure / Zone Timeframe (was M15 - lower TF re-evaluates structure far more often, biggest remaining frequency lever)
-input ENUM_TIMEFRAMES EntryTF       = PERIOD_M1;  // Entry Trigger Timeframe (was M5, dropped a step to stay below ZoneTF)
+input ENUM_TIMEFRAMES ZoneTF        = PERIOD_M15; // Structure / Zone Timeframe (QUALITY BASELINE: M5/M1 tested worse - PF 0.88 net loss vs M15/M5's PF 1.125 profitable every year 2021-2025)
+input ENUM_TIMEFRAMES EntryTF       = PERIOD_M5;  // Entry Trigger Timeframe
 input ENUM_TIMEFRAMES TrendTF1      = PERIOD_H1;  // Trend Confluence Timeframe 1
 input ENUM_TIMEFRAMES TrendTF2      = PERIOD_H4;  // Trend Confluence Timeframe 2
 
@@ -32,19 +32,19 @@ input group "===== 2. Multi-TF Trend Confluence ====="
 input int    EMA_TrendPeriod        = 50;      // EMA Period (both TrendTF1 & TrendTF2 must agree)
 
 input group "===== 3. SMC Structure (Zone Timeframe) ====="
-input int    SwingStrength          = 1;       // Swing Fractal Strength, bars each side (lower = more, faster-confirmed swings -> more setups/day)
-input double MinDisplacementATRMult = 0.2;     // Min Breakout Candle Body vs ATR - filters weak CHoCH/BOS
+input int    SwingStrength          = 3;       // Swing Fractal Strength, bars each side
+input double MinDisplacementATRMult = 0.4;     // Min Breakout Candle Body vs ATR - filters weak CHoCH/BOS
 input bool   RequireLiquiditySweep  = false;   // Require Stop Hunt Before CHoCH (biggest single frequency gate - sweeps are rare; off trades some quality for many more setups)
 input bool   AllowContinuationSetups = true;   // Also arm on further breaks in an already-established trend, not just the first flip (a real CHoCH-only gate goes fully silent for years during one long sustained trend - confirmed in backtests)
 input int    SweepExpiryBars        = 10;      // Sweep Validity, bars
 input int    OB_MaxLookbackBars     = 8;       // Max Bars Back to Find Order Block
-input int    SetupExpiryBars        = 50;      // Armed Zone Validity, bars (raised alongside the lower ZoneTF so an armed setup still gets a comparable amount of real time to trigger)
+input int    SetupExpiryBars        = 15;      // Armed Zone Validity, bars
 input double ZoneBufferPoints       = 0;       // Extra Buffer around Entry Zone, pts
 input double SL_BufferPoints        = 30;      // Extra Buffer beyond Invalidation, pts
-input double MinSL_ATRMult          = 1.0;     // Min SL Distance = Entry ATR x this (invalidation point alone can sit inside normal noise)
+input double MinSL_ATRMult          = 1.2;     // Min SL Distance = Entry ATR x this (invalidation point alone can sit inside normal noise)
 
 input group "===== 4. Volume Confirmation ====="
-input bool   UseVolumeFilter        = false;   // Require Above-Average Volume on the Displacement Candle
+input bool   UseVolumeFilter        = true;    // Require Above-Average Volume on the Displacement Candle
 input int    VolumeAvgPeriod        = 20;      // Avg Volume Lookback, bars (ZoneTF)
 input double MinVolumeRatio         = 1.0;     // Min Displacement Volume vs Average (was 1.2 - average is enough, don't require above-average)
 
@@ -54,7 +54,7 @@ input string CorrelationSymbol      = "";      // USD Index Symbol Name on this 
 input int    CorrelationEMAPeriod   = 50;      // EMA Period on the Correlation Symbol (TrendTF1)
 
 input group "===== 6. News Guard ====="
-input bool   UseNewsFilter          = false;   // Block Entries Near High-Impact News
+input bool   UseNewsFilter          = true;    // Block Entries Near High-Impact News
 input string NewsCurrencyCode       = "USD";   // Currency to Watch (blank = all)
 input int    NewsMinutesBefore      = 30;      // Block Entries N Min Before Event
 input int    NewsMinutesAfter       = 30;      // Block Entries N Min After Event
@@ -63,28 +63,28 @@ input group "===== 7. Entry Candle Confirmation ====="
 input double PinBarWickBodyRatio    = 2.0;     // Pin Bar: Wick >= Body x This Ratio
 
 input group "===== 8. Smart Signal Score ====="
-input double MinSignalScore         = 0.0;     // Min Composite Score (0-100) to Trade (0 = DATA-COLLECTION MODE: logs every setup, good and bad, for ML training - raise before live/demo trading)
+input double MinSignalScore         = 45.0;    // Min Composite Score (0-100) to Trade
 
 input group "===== 9. Filters ====="
 input int    ATR_Period             = 14;      // ATR Period
-input double ATR_MinPoints          = 0;       // Min ATR (EntryTF), pts - avoid dead market (0 = off, data-collection mode)
-input double ATR_MaxPoints          = 999999;  // Max ATR (EntryTF), pts - avoid news spikes (data-collection mode)
-input int    MaxSpreadPoints        = 999999;  // Max Allowed Spread, pts (data-collection mode)
-input bool   UseRegimeFilter        = false;   // Require Trending Market via ADX (กันเทรดตอนตลาด Sideway) - off for data-collection mode
+input double ATR_MinPoints          = 250;     // Min ATR (EntryTF), pts - avoid dead market
+input double ATR_MaxPoints          = 3000;    // Max ATR (EntryTF), pts - avoid news spikes
+input int    MaxSpreadPoints        = 250;     // Max Allowed Spread, pts
+input bool   UseRegimeFilter        = true;    // Require Trending Market via ADX (กันเทรดตอนตลาด Sideway)
 input ENUM_TIMEFRAMES RegimeTimeframe = PERIOD_H1; // Regime Timeframe
 input int    ADX_Period             = 14;      // ADX Period
-input double ADX_MinTrendStrength   = 0;       // Min ADX to Allow Entries (data-collection mode; use 22 for live/demo)
+input double ADX_MinTrendStrength   = 22.0;    // Min ADX to Allow Entries
 input double ADX_MaxTrendStrength   = 0;       // Max ADX to Allow Entries, 0=disabled (an ADX 22-32 band tested WORSE in isolation - PF 0.91 on 56 trades vs PF 1.13 on 614 trades unbounded - keeping this off by default)
-input bool   RequireADXDirectionAgreement = false; // Require +DI/-DI to Match Trade Bias (was true - kept the min-strength ADX gate, dropped this stricter add-on)
-input bool   UseSessionFilter       = false;   // Only Trade Within Allowed Hours - off for data-collection mode
+input bool   RequireADXDirectionAgreement = false; // Require +DI/-DI to Match Trade Bias (kept the min-strength ADX gate, dropped this stricter add-on)
+input bool   UseSessionFilter       = true;    // Only Trade Within Allowed Hours
 input bool   UseLocalTime           = false;   // Use Local PC Time
-input int    StartHour              = 0;       // Start Hour
+input int    StartHour              = 2;       // Start Hour
 input int    StartMinute            = 0;
-input int    EndHour                = 23;      // Stop Hour
-input int    EndMinute              = 59;
+input int    EndHour                = 22;      // Stop Hour
+input int    EndMinute              = 0;
 
 input group "===== 10. Risk & Money Management ====="
-input double RiskPercent            = 2.0;     // Risk % of Equity per Trade (was 1.0 -> 1.5 -> 2.0, raised so more setups clear the min-lot floor on a small account)
+input double RiskPercent            = 1.5;     // Risk % of Equity per Trade
 input double RR_TP1                 = 1.5;     // TP1 = SL Distance x RR (partial close)
 input double RR_TP2                 = 2.5;     // TP2 = SL Distance x RR (partial close)
 input double RR_TP3                 = 4.0;     // TP3 = SL Distance x RR (final target)
@@ -93,19 +93,19 @@ input double TP2_ClosePercent       = 40.0;    // % of Remaining Position to Clo
 input bool   UseBreakeven           = true;    // Move SL to Breakeven Before TP1 (ป้องกันไม้ที่เคยกำไรเยอะแต่ย้อนชน SL)
 input double BreakevenTriggerRR     = 1.2;     // Breakeven Trigger = SL Distance x RR (ใกล้ RR_TP1 พอให้ไม้มีที่วิ่ง)
 input double BreakevenLockPoints    = 20;      // Lock Points Beyond Entry (ใช้ทั้ง Breakeven เร็วและหลัง TP1)
-input bool   UseEmergencyLossGuard  = false;   // Force-close if floating loss blows past intended SL risk (gap/spike protection) - off for data-collection mode, turn back on for live/demo
+input bool   UseEmergencyLossGuard  = true;    // Force-close if floating loss blows past intended SL risk (gap/spike protection)
 input double MaxLossMultiplier      = 2.0;     // Emergency close if loss > Risk_Money x this multiple
 input double MinLot                 = 0.01;    // Min Lot Cap
 input double MaxLot                 = 5.0;     // Max Lot Cap
 input int    Slippage               = 20;      // Max Slippage, pts
 input ulong  MagicNumber            = 773311;
 
-input group "===== 11. Drawdown Protection (Kill Switch) - DATA-COLLECTION MODE: all OFF so a backtest never halts early and every setup across the full period gets logged. MUST turn these back ON before any live or demo run. ====="
-input bool   UseDailyLossLimit      = false;   // Daily Loss Limit - re-enable for live/demo
+input group "===== 11. Drawdown Protection (Kill Switch) ====="
+input bool   UseDailyLossLimit      = true;    // Daily Loss Limit
 input double MaxDailyLossPercent    = 3.0;     // Max Daily Loss %
-input bool   UseTotalDDGuard        = false;   // Total Drawdown Guard (Kill Switch) - re-enable for live/demo
+input bool   UseTotalDDGuard        = true;    // Total Drawdown Guard (Kill Switch)
 input double MaxTotalDDPercent      = 10.0;    // Max Total DD % (from Equity Peak)
-input bool   UseEquityLock          = false;   // Equity Floor Lock - re-enable for live/demo
+input bool   UseEquityLock          = true;    // Equity Floor Lock
 input double MinEquityLimit         = 0.0;     // Min Equity Floor (0 = off)
 
 input group "===== 12. Dashboard ====="
