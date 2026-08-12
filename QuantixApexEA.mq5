@@ -96,6 +96,7 @@ input double BreakevenLockPoints    = 20;      // Lock Points Beyond Entry (เนเ
 input bool   UseEmergencyLossGuard  = true;    // Force-close if floating loss blows past intended SL risk (gap/spike protection)
 input double MaxLossMultiplier      = 2.0;     // Emergency close if loss > Risk_Money x this multiple
 input double MinLot                 = 0.01;    // Min Lot Cap
+input bool   AllowMinLotOverride    = true;    // Open at MinLot instead of skipping when the risk-sized lot rounds below it (SL stays at the real structural distance; actual $ risk on these trades will exceed RiskPercent - accepted trade-off for not missing setups)
 input double MaxLot                 = 5.0;     // Max Lot Cap
 input int    Slippage               = 20;      // Max Slippage, pts
 input ulong  MagicNumber            = 773311;
@@ -516,7 +517,18 @@ double CalcLot(double slDistance)
    double minLotAllowed = MathMax(MinLot, volMin);
 
    if(lotStep>0) lot = MathFloor(lot/lotStep) * lotStep;
-   if(lot < minLotAllowed) return 0; // SL too wide for target risk at min lot - skip rather than over-risk
+   if(lot < minLotAllowed)
+   {
+      if(!AllowMinLotOverride) return 0; // SL too wide for target risk at min lot - skip rather than over-risk
+      // Open at MinLot anyway rather than miss the setup - SL keeps the real
+      // structural distance (never widened just to make the lot fit), so
+      // the actual $ risk on this specific trade exceeds RiskPercent. Log it
+      // so the size of that overshoot is visible, not silent.
+      double actualRisk = minLotAllowed * lossPerLot;
+      Print("QuantixApexEA: min-lot override - risk-sized lot rounded to 0, opening at MinLot=", minLotAllowed,
+            " instead (actual risk $", DoubleToString(actualRisk,2), " vs target $", DoubleToString(riskMoney,2), ")");
+      lot = minLotAllowed;
+   }
 
    lot = MathMin(lot, MathMin(MaxLot, volMax));
    return NormalizeDouble(lot, 2);
