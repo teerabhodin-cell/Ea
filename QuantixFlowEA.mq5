@@ -70,6 +70,7 @@ input int    Dashboard_Y            = 20;
 
 //=========================== GLOBALS ================================//
 long   g_OnnxHandle = INVALID_HANDLE;
+int    g_TrainingLogHandle = INVALID_HANDLE;
 
 int    g_BufferSize;
 double g_midBuf[];
@@ -143,7 +144,17 @@ int OnInit()
    if(EffectiveShowDashboard()) CreateDashboard();
 
    if(UseTrainingLogger)
-      Print("QuantixFlowEA: training log -> ", TerminalInfoString(TERMINAL_COMMONDATA_PATH), "\\Files\\", TrainingLogFileName);
+   {
+      // Opened once and kept open for the EA's lifetime - this file used to be
+      // FileOpen()'d and FileClose()'d on every single maturing log row (every
+      // ~LogSampleEveryNTicks ticks, for the entire backtest), which is disk
+      // I/O on every tick and was the main reason the tester ran so slowly.
+      g_TrainingLogHandle = OpenTrainingLogFile();
+      if(g_TrainingLogHandle == INVALID_HANDLE)
+         Print("QuantixFlowEA: training log disabled for this run (failed to open)");
+      else
+         Print("QuantixFlowEA: training log -> ", TerminalInfoString(TERMINAL_COMMONDATA_PATH), "\\Files\\", TrainingLogFileName);
+   }
 
    if(UseAIModel)
    {
@@ -178,6 +189,7 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    if(g_OnnxHandle != INVALID_HANDLE) OnnxRelease(g_OnnxHandle);
+   if(g_TrainingLogHandle != INVALID_HANDLE) FileClose(g_TrainingLogHandle);
    ObjectsDeleteAll(0, DashPrefix);
 }
 
@@ -377,14 +389,12 @@ void UpdateTrainingLogger(double midNow, double tick_velocity, double price_velo
       if(g_pending[i].age >= LabelLookaheadTicks)
       {
          double forwardReturn = (midNow - g_pending[i].refMid) / _Point;
-         int handle = OpenTrainingLogFile();
-         if(handle != INVALID_HANDLE)
+         if(g_TrainingLogHandle != INVALID_HANDLE)
          {
-            FileWrite(handle, TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS),
+            FileWrite(g_TrainingLogHandle, TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS),
                       g_pending[i].tick_velocity, g_pending[i].price_velocity, g_pending[i].price_acceleration,
                       g_pending[i].spread_zscore, g_pending[i].tick_direction_ratio, g_pending[i].micro_volatility,
                       forwardReturn);
-            FileClose(handle);
          }
          // Order doesn't matter here, so swap-remove instead of shifting the array.
          g_pending[i] = g_pending[g_pendingCount-1];
