@@ -125,7 +125,7 @@ input bool   UseTrainingLogger      = true;    // Log Every Setup + Outcome to C
 input string TrainingLogFileName    = "QuantixApexEA_TrainingLog.csv"; // File in Common\Files (ดูวิธีหาใน Journal ตอน EA เริ่มทำงาน)
 
 input group "===== 14. AI Model (ONNX) ====="
-input bool   UseAIModel             = false;   // Require AI Win-Probability Gate (off by default - trained model's edge is still weak, opt in once it's proven)
+input bool   UseAIModel             = true;    // Require AI Win-Probability Gate (validated on a clean, zero-overlap out-of-sample period 2024.03.12-2026.08.11: PF 1.03->1.95, win rate 27.8%->45.1%, DD 24.5%->9.4% - genuinely helps, not leakage)
 input string AIModelFileName        = "QuantixApexEA_model.onnx"; // File in Common\Files (train with train_quantix_model.py, copy the .onnx here)
 input double MinAIWinProbability    = 0.50;    // Min AI Predicted Win Probability to Allow Entry
 
