@@ -80,16 +80,11 @@ input bool   UseMinVolatilityFilter = false;   // Use Min Volatility Filter (ก
 input int    MinVolatilityPoints    = 50;      // Min ATR/BB Distance, pts (ต่ำกว่านี้ไม่เปิดไม้ใหม่)
 input bool   UseMaxVolatilityFilter = false;   // Use Max Volatility Filter (กรองความผันผวนสูงสุด)
 input int    MaxVolatilityPoints    = 500;     // Max ATR/BB Distance, pts (สูงกว่านี้ไม่เปิดไม้ใหม่)
-input bool   UseLimitModeDistance    = false;  // Use Separate Distance for Virtual Limit (แยกระยะกริด Virtual Limit)
-input int    LimitModeDistancePoints = 150;    // Virtual Limit Distance, pts (ระยะกริดเฉพาะโหมด Virtual Limit)
 input ulong  MagicNumber            = 112233;
 
 input group "===== 4. Target & Trailing ====="
 input double TargetProfit        = 5.0;    // Target Profit $ (เป้ากำไร)
 input double TrailingStopUSD     = 0.2;    // Trailing Distance $ (ระยะเทรล)
-input bool   UseLimitModeTarget       = false; // Use Separate TP/Trailing for Virtual Limit (แยก TP/Trailing Virtual Limit)
-input double LimitModeTargetProfit    = 5.0;   // Virtual Limit Target Profit $ (เป้ากำไรเฉพาะโหมด Virtual Limit)
-input double LimitModeTrailingStopUSD = 0.2;   // Virtual Limit Trailing Distance $ (ระยะเทรลเฉพาะโหมด Virtual Limit)
 input double DailyProfitGoal     = 100.0;  // Daily Profit Goal $ (เป้ากำไรรายวัน, ใช้แสดงในเกจ Dashboard)
 input bool   UseDailyGoalStop    = false;  // Stop Trading at Daily Goal (หยุดเปิดไม้เมื่อถึงเป้ากำไรวันนี้)
 input bool   UseDailyLossLimit   = false;  // Use Daily Loss Limit (จำกัดขาดทุนรายวัน)
@@ -149,6 +144,20 @@ input bool   UseNewsFilter          = false;                       // Use News F
 input ENUM_CALENDAR_EVENT_IMPORTANCE NewsMinImportance = CALENDAR_IMPORTANCE_HIGH; // Min News Importance (ระดับข่าวขั้นต่ำ)
 input int    NewsMinutesBefore      = 15;                          // Minutes Before News (นาทีก่อนข่าว)
 input int    NewsMinutesAfter       = 15;                          // Minutes After News (นาทีหลังข่าว)
+
+// รวมทุกพารามิเตอร์ที่มีผลเฉพาะตอน Grid Type = Virtual Limit ไว้ในหมวดเดียว (เดิมกระจายอยู่ทั้งหมวด
+// Grid และ Target & Trailing) ให้หาง่ายขึ้น เพราะทั้งหมดนี้เป็น "ค่าทับ" ที่ไม่มีผลเลยตอนใช้ Virtual
+// Grid (Breakout) หรือ Pending Order
+input group "===== 12. Virtual Limit Mode ====="
+input bool   UseLimitModeDistance     = false; // Use Separate Distance (แยกระยะกริด Virtual Limit)
+input int    LimitModeDistancePoints  = 150;   // Virtual Limit Distance, pts (ระยะกริดเฉพาะโหมด Virtual Limit)
+input bool   UseLimitModeTarget       = false; // Use Separate TP/Trailing (แยก TP/Trailing Virtual Limit)
+input double LimitModeTargetProfit    = 5.0;   // Virtual Limit Target Profit $ (เป้ากำไรเฉพาะโหมด Virtual Limit)
+input double LimitModeTrailingStopUSD = 0.2;   // Virtual Limit Trailing Distance $ (ระยะเทรลเฉพาะโหมด Virtual Limit)
+input bool   UseRSIFilter             = false; // Use RSI Filter (กรองด้วย RSI ก่อนเข้า - เฉพาะ Virtual Limit)
+input int    RSI_Period               = 14;    // RSI Period
+input double RSI_Oversold             = 30.0;  // RSI Oversold Level (Buy ได้ก็ต่อเมื่อ RSI <= ค่านี้)
+input double RSI_Overbought           = 70.0;  // RSI Overbought Level (Sell ได้ก็ต่อเมื่อ RSI >= ค่านี้)
 
 //=========================== GLOBAL ===============================//
 
@@ -229,6 +238,7 @@ int      atrHandle       = INVALID_HANDLE;
 int      emaHandle       = INVALID_HANDLE;
 int      mtfEmaHandle    = INVALID_HANDLE;
 int      bbHandle        = INVALID_HANDLE;
+int      rsiHandle       = INVALID_HANDLE;
 
 // --- [ UI OPTIMIZATION GLOBAL VARS ] ---
 uint     lastUIUpdateTime = 0;
@@ -253,6 +263,7 @@ bool IsVolatilityTooLow();
 bool IsVolatilityTooHigh();
 bool CheckEMATrend(bool isBuy);
 bool CheckMTFFilter(bool isBuy);
+bool CheckRSIFilter(bool isBuy);
 double GetCalculatedLotSize(int nextLevel);
 double CalcEmergencySL(bool isBuy, double entryPrice, double point);
 void ApplyBasketBreakevenAndPartial(double currentProfit);
@@ -621,6 +632,27 @@ bool CheckMTFFilter(bool isBuy)
 }
 
 //+------------------------------------------------------------------+
+//| RSI Confirmation Filter - Virtual Limit mode only                |
+//| Limit mode buys dips / sells rallies (mean-reversion), so it's   |
+//| the direction that actually benefits from an oversold/overbought |
+//| confirmation before committing. Breakout/Pending entries chase   |
+//| momentum instead, where the same RSI reading would mean the      |
+//| opposite thing - so this filter is a no-op outside Virtual Limit.|
+//+------------------------------------------------------------------+
+bool CheckRSIFilter(bool isBuy)
+{
+   if(!UseRSIFilter || rsiHandle == INVALID_HANDLE) return true;
+   if(GridType != GRID_VIRTUAL_LIMIT) return true;
+
+   double rsiValues[];
+   ArraySetAsSeries(rsiValues, true);
+   if(CopyBuffer(rsiHandle, 0, 1, 1, rsiValues) <= 0) return true;
+
+   if(isBuy) return (rsiValues[0] <= RSI_Oversold);
+   else      return (rsiValues[0] >= RSI_Overbought);
+}
+
+//+------------------------------------------------------------------+
 //| Diagnostic: which filter(s) are blocking Buy/Sell right now      |
 //| Without this, "why doesn't it open a position" is unanswerable   |
 //| from the dashboard alone - the entry gate is a silent AND of up  |
@@ -649,6 +681,7 @@ void LogFilterBlockReason(bool isBuy)
       }
    }
    if(UseMTFFilter && !CheckMTFFilter(isBuy)) blockers += "MTF ";
+   if(UseRSIFilter && !CheckRSIFilter(isBuy)) blockers += "RSI ";
 
    if(blockers == "") return; // nothing actually blocked it - price just hasn't reached the target yet
 
@@ -1159,6 +1192,16 @@ int OnInit()
       }
    }
 
+   if(UseRSIFilter)
+   {
+      rsiHandle = iRSI(_Symbol, _Period, RSI_Period, PRICE_CLOSE);
+      if(rsiHandle == INVALID_HANDLE)
+      {
+         Print("Failed to create RSI indicator handle.");
+         return(INIT_FAILED);
+      }
+   }
+
    // DIAGNOSTIC: บอกเหตุผลที่ OnInit() ถูกเรียกครั้งนี้ (REASON_REMOVE/CHARTCLOSE/RECOMPILE/
    // PARAMETERS/TEMPLATE/... ) กับค่า GridBasePrice ก่อนจะ reconcile - เอาไว้หาสาเหตุบั๊ก
    // "ฐานค้างค่าเก่า" ตอนเปิด EA กลับมาหลังปิดกราฟ/สลับ EA (ปัญหาฝั่งไลฟ์เท่านั้น) - ปิดตอน backtest
@@ -1195,6 +1238,7 @@ void OnDeinit(const int reason)
    if(emaHandle != INVALID_HANDLE) IndicatorRelease(emaHandle);
    if(mtfEmaHandle != INVALID_HANDLE) IndicatorRelease(mtfEmaHandle);
    if(bbHandle != INVALID_HANDLE) IndicatorRelease(bbHandle);
+   if(rsiHandle != INVALID_HANDLE) IndicatorRelease(rsiHandle);
    DeleteVisualTSLine();
    DeleteDashboard();
 }
@@ -1816,8 +1860,8 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
    int adjGapLimit = MaxAllowedGapPoints * m_multiplier;
    int adjSpread   = MaxSpreadAllowed * m_multiplier;
 
-   bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true);
-   bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false);
+   bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true)  && CheckRSIFilter(true);
+   bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false) && CheckRSIFilter(false);
 
    // Level Unlock: once BOTH sides have filled every configured TotalLevels
    // (neither side has any more room, and the basket still isn't profitable),
