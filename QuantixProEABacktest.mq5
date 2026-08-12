@@ -71,11 +71,16 @@ input bool   UseMinVolatilityFilter = false;   // Use Min Volatility Filter (ก
 input int    MinVolatilityPoints    = 50;      // Min ATR/BB Distance, pts (ต่ำกว่านี้ไม่เปิดไม้ใหม่)
 input bool   UseMaxVolatilityFilter = false;   // Use Max Volatility Filter (กรองความผันผวนสูงสุด)
 input int    MaxVolatilityPoints    = 500;     // Max ATR/BB Distance, pts (สูงกว่านี้ไม่เปิดไม้ใหม่)
+input bool   UseLimitModeDistance    = false;  // Use Separate Distance for Virtual Limit (แยกระยะกริด Virtual Limit)
+input int    LimitModeDistancePoints = 150;    // Virtual Limit Distance, pts (ระยะกริดเฉพาะโหมด Virtual Limit)
 input ulong  MagicNumber            = 112233;
 
 input group "===== 4. Target & Trailing ====="
 input double TargetProfit        = 5.0;    // Target Profit $ (เป้ากำไร)
 input double TrailingStopUSD     = 0.2;    // Trailing Distance $ (ระยะเทรล)
+input bool   UseLimitModeTarget       = false; // Use Separate TP/Trailing for Virtual Limit (แยก TP/Trailing Virtual Limit)
+input double LimitModeTargetProfit    = 5.0;   // Virtual Limit Target Profit $ (เป้ากำไรเฉพาะโหมด Virtual Limit)
+input double LimitModeTrailingStopUSD = 0.2;   // Virtual Limit Trailing Distance $ (ระยะเทรลเฉพาะโหมด Virtual Limit)
 input double DailyProfitGoal     = 100.0;  // Daily Profit Goal $ (เป้ากำไรรายวัน, ใช้แสดงในเกจ Dashboard)
 input bool   UseDailyGoalStop    = false;  // Stop Trading at Daily Goal (หยุดเปิดไม้เมื่อถึงเป้ากำไรวันนี้)
 input bool   UseDailyLossLimit   = false;  // Use Daily Loss Limit (จำกัดขาดทุนรายวัน)
@@ -1314,6 +1319,15 @@ void OnTick()
       }
    }
 
+   // Virtual Limit mode can run its own Target Profit / Trailing Distance,
+   // independent of Breakout's - mean-reversion baskets often want a tighter/
+   // wider profit target than trend-following ones. Falls back to the shared
+   // TargetProfit/TrailingStopUSD whenever the override is off or GridType
+   // isn't Virtual Limit.
+   bool   useLimitTarget    = (GridType == GRID_VIRTUAL_LIMIT && UseLimitModeTarget);
+   double effTargetProfit   = useLimitTarget ? LimitModeTargetProfit    : TargetProfit;
+   double effTrailingStopUSD = useLimitTarget ? LimitModeTrailingStopUSD : TrailingStopUSD;
+
    // 2. Visual Basket Trailing Stop
    if(openPositions > 0 && !IsClosingState)
    {
@@ -1335,14 +1349,14 @@ void OnTick()
       // been recorded, every subsequent tick keeps checking the floor regardless
       // of where currentProfit currently sits, so a crash like that gets caught
       // and closed on the very next tick instead of being silently abandoned.
-      if(MaxBasketProfit >= TargetProfit || currentProfit >= TargetProfit)
+      if(MaxBasketProfit >= effTargetProfit || currentProfit >= effTargetProfit)
       {
          if(currentProfit > MaxBasketProfit)
          {
             MaxBasketProfit = currentProfit;
          }
 
-         double tsTriggerLine = MaxBasketProfit - TrailingStopUSD;
+         double tsTriggerLine = MaxBasketProfit - effTrailingStopUSD;
 
          DrawVisualTSLine(tsTriggerLine);
 
@@ -1387,7 +1401,7 @@ void OnTick()
    bool dailyGoalBlocksEntry = dailyGoalReached && (openPositions == 0);
    if(timeAllowed && !newsBlocked && !dailyLossBlocked && !dailyGoalBlocksEntry && !lowVolatility && !highVolatility)
    {
-      if(!IsClosingState && !equityLocked && !TradingHalted && (MaxBasketProfit < TargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
+      if(!IsClosingState && !equityLocked && !TradingHalted && (MaxBasketProfit < effTargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
       {
          ExecuteGridLogic(buyCount, sellCount, lastBuyPrice, lastSellPrice);
       }
@@ -1427,7 +1441,7 @@ void OnTick()
    uint now = GetTickCount();
    if(now - lastUIUpdateTime >= 500)
    {
-      double currentTS = (MaxBasketProfit >= TargetProfit) ? (MaxBasketProfit - TrailingStopUSD) : 0.0;
+      double currentTS = (MaxBasketProfit >= effTargetProfit) ? (MaxBasketProfit - effTrailingStopUSD) : 0.0;
       UpdateDashboard(currentProfit, MaxBasketProfit, currentTS, openPositions, pendingOrders);
       lastUIUpdateTime = now;
    }
@@ -1531,6 +1545,13 @@ bool IsPerSideDistanceActive()
 //+------------------------------------------------------------------+
 int GetDynamicGridDistance()
 {
+   // Virtual Limit mode can run on its own fixed distance, independent of the
+   // Breakout mode's Fixed/ATR/BB settings above - lets the two modes be tuned
+   // separately instead of sharing one distance config that has to compromise
+   // between trend-following (Breakout) and counter-trend (Limit) spacing needs.
+   if(GridType == GRID_VIRTUAL_LIMIT && UseLimitModeDistance)
+      return LimitModeDistancePoints * m_multiplier;
+
    if(UseBBDistance && bbHandle != INVALID_HANDLE)
    {
       double upperBuf[], lowerBuf[];
