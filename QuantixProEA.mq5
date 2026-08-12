@@ -2629,7 +2629,12 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    DrawKV(cx + S(12), ry, innerW, GetUIString("ไม้ Sell", "Sell"), IntegerToString(sellCount), C'160,160,180', C'239,68,68'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("รวม", "Total"), IntegerToString(totalOrders), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ล็อตรวม", "Lots"), DoubleToString(totalLots, 2), C'160,160,180', clrWhite); ry += rowStep;
-   DrawKV(cx + S(12), ry, innerW, GetUIString("ระยะ Grid", "Distance"), IntegerToString(DistancePoints) + " P", C'160,160,180', clrWhite); ry += rowStep;
+   // แสดงระยะกริด "ปัจจุบันจริง" ที่คำนวณสด (ตัวเดียวกับที่ Min Volatility Filter เทียบ) แทนที่จะ
+   // โชว์แค่ DistancePoints (ค่า Fixed คงที่) เฉยๆ เพราะถ้าเปิด ATR/BB Distance อยู่ เลขที่โชว์เดิม
+   // จะไม่ตรงกับระยะที่ระบบใช้จริงเลย ทำให้ตั้งค่า MinVolatilityPoints ได้ถูกต้องเพราะเห็นเลขจริง
+   int liveDistNow = GetDynamicGridDistance();
+   bool liveDistLow = (UseMinVolatilityFilter && liveDistNow < MinVolatilityPoints);
+   DrawKV(cx + S(12), ry, innerW, GetUIString("ระยะ Grid ปัจจุบัน", "Current Distance"), IntegerToString(liveDistNow) + " P", C'160,160,180', liveDistLow ? C'251,146,60' : clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, "ATR", (UseATRDistance ? IntegerToString(GetCurrentATRPoints()) + " P" : "—"), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("สเปรด", "Spread"), IntegerToString(adjSpread) + " P", C'160,160,180', adjSpread > MaxSpreadAllowed * m_multiplier ? C'239,68,68' : clrWhite);
 
