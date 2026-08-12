@@ -73,6 +73,8 @@ input double BB_Deviation           = 2.0;     // BB Deviation
 input double BB_Multiplier          = 1.0;     // BB Width Multiplier
 input bool   UseAdaptiveBBGrid      = false;   // Per-Side BB Distance (แยกระยะต่อฝั่งตาม BB)
 input int    DistancePoints         = 250;     // Fixed Distance, pts (ระยะคงที่)
+input bool   UseMinVolatilityFilter = false;   // Use Min Volatility Filter (กรองความผันผวนขั้นต่ำ)
+input int    MinVolatilityPoints    = 50;      // Min ATR/BB Distance, pts (ต่ำกว่านี้ไม่เปิดไม้ใหม่)
 input ulong  MagicNumber            = 112233;
 
 input group "===== 4. Target & Trailing ====="
@@ -237,6 +239,7 @@ bool IsTradingAllowedByTime();
 bool IsNewsBlackout();
 bool IsDailyLossLimitReached();
 bool IsDailyGoalReached();
+bool IsVolatilityTooLow();
 bool CheckEMATrend(bool isBuy);
 bool CheckMTFFilter(bool isBuy);
 double GetCalculatedLotSize(int nextLevel);
@@ -528,6 +531,19 @@ bool IsDailyGoalReached()
    }
 
    return (DailyRealizedProfit >= DailyProfitGoal);
+}
+
+//+------------------------------------------------------------------+
+//| Min Volatility Filter - ถ้าตลาดนิ่งเกินไป (ระยะ ATR/BB/Fixed ที่คำนวณ  |
+//| ได้ ณ ตอนนี้ ต่ำกว่า MinVolatilityPoints ที่ตั้งไว้) ห้ามเปิดไม้ใหม่ทั้งหมด  |
+//| เหมือน Time Filter/News Filter/Daily Loss Limit - ไม่แตะบาสเก็ตที่เปิด   |
+//| อยู่แล้ว เรียก GetDynamicGridDistance() สดทุกครั้ง (ไม่ใช้ CachedGridDistance |
+//| ที่อาจค้างจากตอนบาสเก็ตเริ่ม) เพื่อให้ได้ค่าความผันผวนปัจจุบันจริงๆ         |
+//+------------------------------------------------------------------+
+bool IsVolatilityTooLow()
+{
+   if(!UseMinVolatilityFilter) return false;
+   return (GetDynamicGridDistance() < MinVolatilityPoints);
 }
 
 //+------------------------------------------------------------------+
@@ -1359,15 +1375,16 @@ void OnTick()
    bool newsBlocked      = IsNewsBlackout();
    bool dailyLossBlocked = IsDailyLossLimitReached();
    bool dailyGoalReached = IsDailyGoalReached();
+   bool lowVolatility    = IsVolatilityTooLow();
 
-   // News Filter / Daily Loss Limit ห้ามเปิดไม้ใหม่เด็ดขาด ไม่ว่ามีบาสเก็ตเปิดค้างอยู่หรือไม่ - แต่
-   // Daily Goal Stop ต่างออกไป: ถ้ามีบาสเก็ตเปิดค้างอยู่แล้ว (openPositions > 0) ต้องปล่อยให้ grid เปิด
-   // ไม้ต่อตามปกติ ไม่งั้นบาสเก็ตจะค้างครึ่งๆ กลางๆ ขาดชั้นแก้ไม้ที่ควรมี (เสี่ยงกว่าเดิม) - ถึงเป้ากำไร
-   // วันนี้แล้วแปลว่า "ห้ามเริ่มบาสเก็ตใหม่" เท่านั้น ไม่ใช่ "ทิ้งบาสเก็ตที่กำลังทำอยู่ให้ค้าง"
+   // News Filter / Daily Loss Limit / Min Volatility Filter ห้ามเปิดไม้ใหม่เด็ดขาด ไม่ว่ามีบาสเก็ต
+   // เปิดค้างอยู่หรือไม่ - แต่ Daily Goal Stop ต่างออกไป: ถ้ามีบาสเก็ตเปิดค้างอยู่แล้ว (openPositions > 0)
+   // ต้องปล่อยให้ grid เปิดไม้ต่อตามปกติ ไม่งั้นบาสเก็ตจะค้างครึ่งๆ กลางๆ ขาดชั้นแก้ไม้ที่ควรมี (เสี่ยงกว่าเดิม)
+   // ถึงเป้ากำไรวันนี้แล้วแปลว่า "ห้ามเริ่มบาสเก็ตใหม่" เท่านั้น ไม่ใช่ "ทิ้งบาสเก็ตที่กำลังทำอยู่ให้ค้าง"
    // (สถานะ OFF-TIME เดิมยังใช้จับ "นอกเวลาเทรด" ได้ถูกต้อง ส่วนสถานะ NEWS PAUSE / DAILY LOSS /
-   // DAILY GOAL แยกแสดงเองใน DrawServerTimeRow)
+   // DAILY GOAL / LOW VOLATILITY แยกแสดงเองใน DrawServerTimeRow)
    bool dailyGoalBlocksEntry = dailyGoalReached && (openPositions == 0);
-   if(timeAllowed && !newsBlocked && !dailyLossBlocked && !dailyGoalBlocksEntry)
+   if(timeAllowed && !newsBlocked && !dailyLossBlocked && !dailyGoalBlocksEntry && !lowVolatility)
    {
       if(!IsClosingState && !equityLocked && !TradingHalted && (MaxBasketProfit < TargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
       {
@@ -1387,7 +1404,7 @@ void OnTick()
          if(openPositions > 0 && currentProfit > 0)
          {
             IsClosingState = true;
-            string blockReason = !timeAllowed ? "Outside trading hours" : (newsBlocked ? "News blackout window" : (dailyLossBlocked ? "Daily loss limit reached" : "Daily goal reached"));
+            string blockReason = !timeAllowed ? "Outside trading hours" : (newsBlocked ? "News blackout window" : (dailyLossBlocked ? "Daily loss limit reached" : (dailyGoalBlocksEntry ? "Daily goal reached" : "Volatility too low")));
             PrintFormat("⏰ [ENTRY BLOCKED] %s and in profit -> Auto Closing all active positions...", blockReason);
             ClearEverythingAsync();
             DeleteVisualTSLine();
@@ -2579,6 +2596,7 @@ int DrawServerTimeRow(int y, int openPos, int pendingOrders)
    else if(IsNewsBlackout())                       { dotColor = C'168,85,247'; statusTxt = GetUIString("พักช่วงข่าว", "NEWS PAUSE"); }
    else if(IsDailyLossLimitReached())              { dotColor = C'239,68,68';  statusTxt = GetUIString("ครบขาดทุนวันนี้", "DAILY LOSS HIT"); }
    else if(IsDailyGoalReached())                   { dotColor = C'34,197,94';  statusTxt = GetUIString("ถึงเป้าวันนี้แล้ว", "DAILY GOAL HIT"); }
+   else if(IsVolatilityTooLow())                   { dotColor = C'251,146,60'; statusTxt = GetUIString("ตลาดนิ่งเกินไป", "LOW VOLATILITY"); }
    else if(openPos == 0 && pendingOrders == 0)     { dotColor = C'251,193,7';  statusTxt = GetUIString("พร้อมทำงาน", "STANDBY"); }
 
    int sw   = EstimateTextWidth(statusTxt, SF(15));
