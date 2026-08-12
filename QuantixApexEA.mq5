@@ -63,7 +63,7 @@ input group "===== 7. Entry Candle Confirmation ====="
 input double PinBarWickBodyRatio    = 2.0;     // Pin Bar: Wick >= Body x This Ratio
 
 input group "===== 8. Smart Signal Score ====="
-input double MinSignalScore         = 45.0;    // Min Composite Score (0-100) to Trade
+input double MinSignalScore         = 15.0;    // Min Composite Score (0-100) to Trade (user A/B tested 45 vs 15 head-to-head: PF 2.17/359 trades vs PF 2.14/375 trades - basically the same quality, 15 gets more setups for free)
 
 input group "===== 9. Filters ====="
 input int    ATR_Period             = 14;      // ATR Period
