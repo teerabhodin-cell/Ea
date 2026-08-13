@@ -1426,18 +1426,19 @@ void OnTick()
    bool highVolatility   = IsVolatilityTooHigh();
 
    // News Filter / Daily Loss Limit ห้ามเปิดไม้ใหม่เด็ดขาด ไม่ว่ามีบาสเก็ตเปิดค้างอยู่หรือไม่ (เป็นกลไก
-   // ป้องกันความเสี่ยง ต่อไม้เพิ่มระหว่างที่ทริกเกอร์อยู่ขัดกับจุดประสงค์ของมันเอง) - แต่ Daily Goal Stop
-   // และ Min/Max Volatility Filter ต่างออกไป: ถ้ามีบาสเก็ตเปิดค้างอยู่แล้ว (openPositions > 0) ต้องปล่อยให้
-   // grid เปิดไม้ต่อตามปกติ ไม่งั้นบาสเก็ตจะค้างครึ่งๆ กลางๆ ขาดชั้นแก้ไม้ที่ควรมี (เสี่ยงกว่าเดิม) - ทั้งคู่เป็น
-   // ตัวกรอง "จังหวะเริ่มไม้ใหม่" ไม่ใช่ตัวจำกัดความเสี่ยงแบบ News/Daily Loss เลยไม่ควรมาห้ามบาสเก็ตที่เริ่ม
-   // ไปแล้วจากเปิดไม้แก้ต่อ ถึงเป้ากำไรวันนี้/ตลาดนิ่งหรือแรงเกินไปแปลว่า "ห้ามเริ่มบาสเก็ตใหม่" เท่านั้น
-   // ไม่ใช่ "ทิ้งบาสเก็ตที่กำลังทำอยู่ให้ค้าง"
+   // ป้องกันความเสี่ยง ต่อไม้เพิ่มระหว่างที่ทริกเกอร์อยู่ขัดกับจุดประสงค์ของมันเอง) - แต่ Time Filter /
+   // Daily Goal Stop / Min & Max Volatility Filter ต่างออกไป: ถ้ามีบาสเก็ตเปิดค้างอยู่แล้ว (openPositions
+   // > 0) ต้องปล่อยให้ grid เปิดไม้ต่อตามปกติ ไม่งั้นบาสเก็ตจะค้างครึ่งๆ กลางๆ ขาดชั้นแก้ไม้ที่ควรมี (เสี่ยงกว่าเดิม)
+   // - ทั้งสามเป็นตัวกรอง "จังหวะเริ่มไม้ใหม่" ไม่ใช่ตัวจำกัดความเสี่ยงแบบ News/Daily Loss เลยไม่ควรมาห้าม
+   // บาสเก็ตที่เริ่มไปแล้วจากเปิดไม้แก้ต่อ นอกเวลาเทรด/ถึงเป้ากำไรวันนี้/ตลาดนิ่งหรือแรงเกินไปแปลว่า "ห้าม
+   // เริ่มบาสเก็ตใหม่" เท่านั้น ไม่ใช่ "ทิ้งบาสเก็ตที่กำลังทำอยู่ให้ค้าง"
    // (สถานะ OFF-TIME เดิมยังใช้จับ "นอกเวลาเทรด" ได้ถูกต้อง ส่วนสถานะ NEWS PAUSE / DAILY LOSS / DAILY GOAL /
    // LOW VOLATILITY / HIGH VOLATILITY แยกแสดงเองใน DrawServerTimeRow)
+   bool timeBlocksEntry      = !timeAllowed     && (openPositions == 0);
    bool dailyGoalBlocksEntry = dailyGoalReached && (openPositions == 0);
    bool lowVolBlocksEntry    = lowVolatility    && (openPositions == 0);
    bool highVolBlocksEntry   = highVolatility   && (openPositions == 0);
-   if(timeAllowed && !newsBlocked && !dailyLossBlocked && !dailyGoalBlocksEntry && !lowVolBlocksEntry && !highVolBlocksEntry)
+   if(!timeBlocksEntry && !newsBlocked && !dailyLossBlocked && !dailyGoalBlocksEntry && !lowVolBlocksEntry && !highVolBlocksEntry)
    {
       if(!IsClosingState && !equityLocked && !TradingHalted && (MaxBasketProfit < effTargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
       {
@@ -1457,7 +1458,7 @@ void OnTick()
          if(openPositions > 0 && currentProfit > 0)
          {
             IsClosingState = true;
-            string blockReason = !timeAllowed ? "Outside trading hours" : (newsBlocked ? "News blackout window" : (dailyLossBlocked ? "Daily loss limit reached" : (dailyGoalBlocksEntry ? "Daily goal reached" : (lowVolBlocksEntry ? "Volatility too low" : "Volatility too high"))));
+            string blockReason = timeBlocksEntry ? "Outside trading hours" : (newsBlocked ? "News blackout window" : (dailyLossBlocked ? "Daily loss limit reached" : (dailyGoalBlocksEntry ? "Daily goal reached" : (lowVolBlocksEntry ? "Volatility too low" : "Volatility too high"))));
             PrintFormat("⏰ [ENTRY BLOCKED] %s and in profit -> Auto Closing all active positions...", blockReason);
             ClearEverythingAsync();
             DeleteVisualTSLine();
