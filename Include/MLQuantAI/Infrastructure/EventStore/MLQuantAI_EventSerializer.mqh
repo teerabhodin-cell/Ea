@@ -41,16 +41,39 @@ string EventSerializer_Escape(string s)
    return out;
 }
 
-// "key":"value"  ->  value (quoted string values only)
+// "key":"value"  ->  value (quoted string values only). Walks char by
+// char and decodes \", \\, \n, \r rather than jumping to the first
+// unescaped-or-not '"' - a naive StringFind() for the closing quote would
+// stop early on an escaped quote inside the value (e.g. a message like
+// `broker said \"invalid stops\"`) and silently truncate it. Must mirror
+// EventSerializer_Escape() exactly, in reverse.
 string EventSerializer_GetStr(string json, string key)
 {
    string needle = "\"" + key + "\":\"";
    int p = StringFind(json, needle);
    if(p < 0) return "";
-   int start = p + StringLen(needle);
-   int end = StringFind(json, "\"", start);
-   if(end < 0) return "";
-   return StringSubstr(json, start, end - start);
+   int i = p + StringLen(needle);
+   int len = StringLen(json);
+   string out = "";
+   while(i < len)
+   {
+      ushort ch = StringGetCharacter(json, i);
+      if(ch == '\\' && i + 1 < len)
+      {
+         ushort next = StringGetCharacter(json, i + 1);
+         if(next == 'n')      out += "\n";
+         else if(next == 'r') out += "\r";
+         else if(next == '"') out += "\"";
+         else if(next == '\\') out += "\\";
+         else out += CharToString((uchar)next); // unknown escape - pass the literal char through
+         i += 2;
+         continue;
+      }
+      if(ch == '"') break; // real, unescaped closing quote
+      out += CharToString((uchar)ch);
+      i++;
+   }
+   return out;
 }
 
 // "key":123  or  "key":123.45  (unquoted numeric values)
@@ -86,6 +109,7 @@ bool   EventSerializer_HasKey(string json, string key)
 string EventSerializer_ToJson(const LifecycleEvent &e)
 {
    string s = "{";
+   s += "\"schema_version\":\""     + MLQUANTAI_SCHEMA_VERSION + "\",";
    s += "\"log_event_id\":\""       + EventSerializer_Escape(e.base.log_event_id) + "\",";
    s += "\"session_id\":\""         + EventSerializer_Escape(e.base.runtime_session_id) + "\",";
    s += "\"seq\":"                  + IntegerToString(e.base.sequence_number) + ",";
@@ -141,6 +165,7 @@ bool EventSerializer_ParseLifecycle(string line, LifecycleEvent &out)
 string EventSerializer_ToJson(const SystemEvent &e)
 {
    string s = "{";
+   s += "\"schema_version\":\"" + MLQUANTAI_SCHEMA_VERSION + "\",";
    s += "\"log_event_id\":\"" + EventSerializer_Escape(e.base.log_event_id) + "\",";
    s += "\"session_id\":\""   + EventSerializer_Escape(e.base.runtime_session_id) + "\",";
    s += "\"seq\":"            + IntegerToString(e.base.sequence_number) + ",";
@@ -175,6 +200,7 @@ bool EventSerializer_ParseSystem(string line, SystemEvent &out)
 string EventSerializer_ToJson(const ExecutionEvent &e)
 {
    string s = "{";
+   s += "\"schema_version\":\""   + MLQUANTAI_SCHEMA_VERSION + "\",";
    s += "\"log_event_id\":\""   + EventSerializer_Escape(e.base.log_event_id) + "\",";
    s += "\"session_id\":\""     + EventSerializer_Escape(e.base.runtime_session_id) + "\",";
    s += "\"seq\":"              + IntegerToString(e.base.sequence_number) + ",";

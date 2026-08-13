@@ -45,12 +45,20 @@ void OnStart()
 {
    Print("=== MLQuantAI Test: Replay Integrity (Phase A) ===");
 
+   // Isolation: start every run from a clean file - otherwise leftover
+   // events from a previous run would still be in the file and get
+   // replayed too, which doesn't break the specific assertions below
+   // (candidate ids are deterministic but include TimeCurrent(), so they
+   // won't collide across runs) but does mean the file grows unbounded.
+   FileDelete(TEST_FILE, FILE_COMMON);
+
    // ---- Phase 1: write a fresh, varied event stream ----
    if(!EventStore_Open(TEST_FILE))
    {
       Print("Could not open the event store - aborting.");
       return;
    }
+   string writeSessionId = EventStore_SessionId();
    EventStore_LogSystem("SYSTEM_STARTED", "replay integrity test");
 
    TradeCandidate cExecuted = MakeAndLogCandidate("TREND", STRAT_TREND, 3350.10);
@@ -96,6 +104,15 @@ void OnStart()
    Check(g_Proj_RuntimeState.candidates_rejected == 1, "projected RuntimeState counted 1 rejected");
    Check(g_Proj_RuntimeState.candidates_merged == 1, "projected RuntimeState counted 1 merged");
    Check(g_Proj_RuntimeState.candidates_expired == 1, "projected RuntimeState counted 1 expired");
+
+   // RuntimeState itself (session identity, not just candidate counters)
+   // must also come back from SystemEvent replay, not just LifecycleEvents.
+   Check(rr.system_events_total == 2 && rr.system_events_applied == 2,
+         "both SYSTEM_STARTED and SYSTEM_STOPPED were replayed");
+   Check(g_Proj_RuntimeState.runtime_session_id == writeSessionId,
+         "replayed RuntimeState.runtime_session_id matches the original write session (from SYSTEM_STARTED)");
+   Check(g_Proj_RuntimeState.session_start_time > 0,
+         "replayed RuntimeState.session_start_time was reconstructed from SYSTEM_STARTED");
 
    Print("=== Result: ", g_TestsPassed, "/", g_TestsRun, " checks passed ===");
    if(g_TestsPassed == g_TestsRun)

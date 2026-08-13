@@ -63,6 +63,8 @@ void OnStart()
 {
    Print("=== MLQuantAI Test: Broker Reconciliation contract (Phase A, simulated broker state) ===");
 
+   FileDelete(TEST_FILE, FILE_COMMON); // isolation: start every run from a clean file
+
    // ---- Build a small replayed state: one EXECUTED candidate, one REJECTED ----
    if(!EventStore_Open(TEST_FILE))
    {

@@ -41,6 +41,12 @@ void OnStart()
 {
    Print("=== MLQuantAI Test: Dummy Lifecycle (Phase A) ===");
 
+   // Isolation: start every run from a clean file, or leftover events from
+   // a previous run (different session_id, but same file) would still get
+   // read back by anything that later inspects this file, and the file
+   // would grow unbounded across repeated test runs.
+   FileDelete("MLQuantAI_Test_DummyLifecycle.jsonl", FILE_COMMON);
+
    if(!EventStore_Open("MLQuantAI_Test_DummyLifecycle.jsonl"))
    {
       Print("Could not open the event store - aborting.");

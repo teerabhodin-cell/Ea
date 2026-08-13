@@ -16,6 +16,7 @@
 #define __MLQUANTAI_EVENTSTORE_MQH__
 
 #include "MLQuantAI_EventSerializer.mqh"
+#include "MLQuantAI_SafeModeState.mqh"
 #include "../../Core/MLQuantAI_Ids.mqh"
 #include "../../Core/MLQuantAI_TradeCandidate.mqh"
 #include "../../Logging/MLQuantAI_SystemLogger.mqh"
@@ -61,58 +62,80 @@ string EventStore_BuildLogEventId(long seq)
    return g_EventStore_SessionId + "#" + IntegerToString(seq);
 }
 
-void EventStore_WriteLine(string jsonLine)
+// Returns false if the write did not durably succeed. Callers MUST NOT
+// commit any in-memory state change (candidate.state, etc.) unless this
+// returns true - the event log is the source of truth, so in-memory state
+// must never get ahead of what's actually been written and flushed.
+bool EventStore_WriteLine(string jsonLine)
 {
-   if(g_EventStore_Handle == INVALID_HANDLE) return;
-   FileWriteString(g_EventStore_Handle, jsonLine + "\r\n");
+   if(g_EventStore_Handle == INVALID_HANDLE) return false;
+
+   ResetLastError();
+   uint written = FileWriteString(g_EventStore_Handle, jsonLine + "\r\n");
+   int err = GetLastError();
+   if(written == 0 || err != 0)
+   {
+      LogError(StringFormat("EventStore: FileWriteString failed (written=%d, err=%d)", written, err));
+      return false;
+   }
+
+   ResetLastError();
    FileFlush(g_EventStore_Handle);
+   err = GetLastError();
+   if(err != 0)
+   {
+      LogError(StringFormat("EventStore: FileFlush failed, err=%d", err));
+      return false;
+   }
+   return true;
 }
 
 //---------------------------------------------------------------------
 // Typed append helpers - fill in the envelope (session/seq/log_event_id/
 // ts) and write. Callers only need to fill in the category-specific
-// fields before calling.
+// fields before calling. All return false (write not durable) if the
+// underlying FileWriteString/FileFlush failed.
 //---------------------------------------------------------------------
 
-void EventStore_AppendLifecycle(LifecycleEvent &e)
+bool EventStore_AppendLifecycle(LifecycleEvent &e)
 {
    e.base.sequence_number    = EventStore_NextSequence();
    e.base.runtime_session_id = g_EventStore_SessionId;
    e.base.log_event_id       = EventStore_BuildLogEventId(e.base.sequence_number);
    e.base.ts                 = TimeCurrent();
    e.base.category            = EVENT_CAT_LIFECYCLE;
-   EventStore_WriteLine(EventSerializer_ToJson(e));
+   return EventStore_WriteLine(EventSerializer_ToJson(e));
 }
 
-void EventStore_AppendExecution(ExecutionEvent &e)
+bool EventStore_AppendExecution(ExecutionEvent &e)
 {
    e.base.sequence_number    = EventStore_NextSequence();
    e.base.runtime_session_id = g_EventStore_SessionId;
    e.base.log_event_id       = EventStore_BuildLogEventId(e.base.sequence_number);
    e.base.ts                 = TimeCurrent();
    e.base.category            = EVENT_CAT_EXECUTION;
-   EventStore_WriteLine(EventSerializer_ToJson(e));
+   return EventStore_WriteLine(EventSerializer_ToJson(e));
 }
 
-void EventStore_AppendSystem(SystemEvent &e)
+bool EventStore_AppendSystem(SystemEvent &e)
 {
    e.base.sequence_number    = EventStore_NextSequence();
    e.base.runtime_session_id = g_EventStore_SessionId;
    e.base.log_event_id       = EventStore_BuildLogEventId(e.base.sequence_number);
    e.base.ts                 = TimeCurrent();
    e.base.category            = EVENT_CAT_SYSTEM;
-   EventStore_WriteLine(EventSerializer_ToJson(e));
+   return EventStore_WriteLine(EventSerializer_ToJson(e));
 }
 
 // Convenience: builds + appends a system event in one call.
-void EventStore_LogSystem(string eventType, string message, string extraJson="")
+bool EventStore_LogSystem(string eventType, string message, string extraJson="")
 {
    SystemEvent e;
    SystemEvent_Init(e);
    e.base.event_type = eventType;
    e.message = message;
    e.extra_json = extraJson;
-   EventStore_AppendSystem(e);
+   return EventStore_AppendSystem(e);
 }
 
 // Logs the candidate's birth: a CANDIDATE_CREATED event with
@@ -121,8 +144,10 @@ void EventStore_LogSystem(string eventType, string message, string extraJson="")
 // before any EventStore_LogTransition call - the StateProjector uses this
 // exact from==to==CREATED shape to distinguish "this candidate is being
 // born" from "this candidate looped back to CREATED" (which the state
-// machine itself never allows anyway).
-void EventStore_LogCandidateCreated(const TradeCandidate &c)
+// machine itself never allows anyway). Returns false if the birth event
+// could not be durably written - callers should treat the candidate as
+// not safely usable in that case.
+bool EventStore_LogCandidateCreated(const TradeCandidate &c)
 {
    LifecycleEvent e;
    LifecycleEvent_Init(e);
@@ -134,21 +159,32 @@ void EventStore_LogCandidateCreated(const TradeCandidate &c)
    e.to_state           = CANDIDATE_CREATED;
    e.reason             = REASON_NONE;
    e.base.event_type   = "CANDIDATE_CREATED";
-   EventStore_AppendLifecycle(e);
+   if(!EventStore_AppendLifecycle(e))
+   {
+      SafeMode_Trip(StringFormat("failed to durably write CANDIDATE_CREATED for %s", c.candidate_id));
+      return false;
+   }
+   return true;
 }
 
-// Transitions the candidate through the state machine AND appends the
-// corresponding lifecycle line in one call - structurally impossible to
-// log a transition the state machine itself rejected.
+// Validates the transition, WRITES the event, and only commits the
+// in-memory state change (c.state/c.last_reason) after the write is
+// confirmed durable. This ordering is deliberate and load-bearing: if the
+// write fails, the candidate MUST stay at its old state in memory,
+// because the event log - not the in-memory struct - is what replay and
+// every other consumer treats as the truth. A candidate that silently
+// "moved on" in memory while the log never recorded it would make replay
+// diverge from what actually happened.
 bool EventStore_LogTransition(TradeCandidate &c, ENUM_CANDIDATE_STATE to, ENUM_REASON_CODE reason, string extraJson="")
 {
    ENUM_CANDIDATE_STATE from = c.state;
-   if(!TradeCandidate_Transition(c, to, reason))
+   if(!StateMachine_CanTransition(from, to))
    {
       LogWarn(StringFormat("EventStore: illegal candidate transition blocked: %s  %s -> %s",
               c.candidate_id, CandidateStateToString(from), CandidateStateToString(to)));
       return false;
    }
+
    LifecycleEvent e;
    LifecycleEvent_Init(e);
    e.candidate_id   = c.candidate_id;
@@ -160,7 +196,19 @@ bool EventStore_LogTransition(TradeCandidate &c, ENUM_CANDIDATE_STATE to, ENUM_R
    e.reason          = reason;
    e.extra_json       = extraJson;
    e.base.event_type = "CANDIDATE_" + CandidateStateToString(to);
-   EventStore_AppendLifecycle(e);
+
+   if(!EventStore_AppendLifecycle(e))
+   {
+      SafeMode_Trip(StringFormat("failed to durably write lifecycle event for %s (%s -> %s) - "
+                                  "in-memory state left at %s, NOT advanced to %s",
+                                  c.candidate_id, CandidateStateToString(from), CandidateStateToString(to),
+                                  CandidateStateToString(from), CandidateStateToString(to)));
+      return false;
+   }
+
+   // Only now, with the event durably on disk, commit the in-memory change.
+   c.state = to;
+   c.last_reason = reason;
    return true;
 }
 

@@ -70,6 +70,23 @@ EventStoreValidationReport EventStoreValidator_ValidateLines(const string &lines
          continue;
       }
 
+      string schemaVersion = EventSerializer_GetStr(line, "schema_version");
+      if(schemaVersion != MLQUANTAI_SCHEMA_VERSION)
+      {
+         // Phase A only ever writes MLQUANTAI_SCHEMA_VERSION - a missing or
+         // different value means either a truncated/corrupted line (the
+         // field got cut off) or a genuinely unrecognized future/past
+         // schema this build doesn't know how to interpret. Either way,
+         // Phase A has no migration logic yet, so treat it as malformed
+         // rather than guessing at how to read it.
+         report.lines_malformed++;
+         report.ok = false;
+         if(report.first_error == "")
+            report.first_error = StringFormat("line %d: schema_version '%s' != expected '%s'",
+                                               i, schemaVersion, MLQUANTAI_SCHEMA_VERSION);
+         continue;
+      }
+
       report.lines_parsed_ok++;
 
       int idx = -1;

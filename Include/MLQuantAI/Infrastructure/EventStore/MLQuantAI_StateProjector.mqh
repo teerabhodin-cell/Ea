@@ -11,6 +11,7 @@
 #define __MLQUANTAI_STATEPROJECTOR_MQH__
 
 #include "MLQuantAI_LifecycleEvent.mqh"
+#include "MLQuantAI_SystemEvent.mqh"
 #include "../../Core/MLQuantAI_RuntimeState.mqh"
 
 struct ProjectedCandidate
@@ -57,6 +58,7 @@ bool StateProjector_TryGetState(string candidateId, ENUM_CANDIDATE_STATE &outSta
 bool StateProjector_Apply(const LifecycleEvent &e, string &outError)
 {
    outError = "";
+   g_Proj_RuntimeState.last_sequence_number = e.base.sequence_number;
    int idx = StateProjector_FindIndex(e.candidate_id);
 
    bool isGenesis = (e.from_state == CANDIDATE_CREATED && e.to_state == CANDIDATE_CREATED);
@@ -117,6 +119,37 @@ bool StateProjector_Apply(const LifecycleEvent &e, string &outError)
       default: break;
    }
 
+   return true;
+}
+
+// Folds SystemEvents into RuntimeState - session identity, session start
+// time, and Safe Mode status all live here, not on any single candidate.
+// Phase A only emits SYSTEM_STARTED/SAFE_MODE_ENGAGED/SAFE_MODE_CLEARED
+// today (nothing produces SYSTEM_STOPPED-driven state changes beyond the
+// log line itself); unrecognized event_type values are accepted as a
+// no-op rather than an error, since SystemEvent is meant to grow new
+// types over time without every old build's projector treating an
+// unknown one as corruption.
+bool StateProjector_ApplySystem(const SystemEvent &e, string &outError)
+{
+   outError = "";
+   g_Proj_RuntimeState.last_sequence_number = e.base.sequence_number;
+
+   if(e.base.event_type == "SYSTEM_STARTED")
+   {
+      g_Proj_RuntimeState.runtime_session_id = e.base.runtime_session_id;
+      g_Proj_RuntimeState.session_start_time = e.base.ts;
+   }
+   else if(e.base.event_type == "SAFE_MODE_ENGAGED")
+   {
+      g_Proj_RuntimeState.safe_mode = true;
+      g_Proj_RuntimeState.safe_mode_reason = e.message;
+   }
+   else if(e.base.event_type == "SAFE_MODE_CLEARED")
+   {
+      g_Proj_RuntimeState.safe_mode = false;
+      g_Proj_RuntimeState.safe_mode_reason = "";
+   }
    return true;
 }
 

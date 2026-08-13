@@ -47,6 +47,11 @@ void OnStart()
 {
    Print("=== MLQuantAI Test: Event Store Recovery / Safe Mode (Phase A) ===");
 
+   // Isolation: BASE_FILE is opened in append mode, so a leftover file from
+   // a previous run would add an extra session's worth of lines the "n==5"
+   // assertion below doesn't expect.
+   FileDelete(BASE_FILE, FILE_COMMON);
+
    // ---- Build one small, valid base store (5 lines) ----
    if(!EventStore_Open(BASE_FILE))
    {
