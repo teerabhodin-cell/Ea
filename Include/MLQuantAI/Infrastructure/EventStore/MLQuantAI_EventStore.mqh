@@ -22,6 +22,7 @@
 #include "../../Logging/MLQuantAI_SystemLogger.mqh"
 
 int    g_EventStore_Handle    = INVALID_HANDLE;
+string g_EventStore_FileName  = "";
 string g_EventStore_SessionId = "";
 long   g_EventStore_NextSeq   = 1;
 
@@ -34,6 +35,7 @@ bool EventStore_Open(string fileName)
       return false;
    }
    FileSeek(g_EventStore_Handle, 0, SEEK_END);
+   g_EventStore_FileName  = fileName;
    g_EventStore_SessionId = Ids_NewRuntimeSessionId();
    g_EventStore_NextSeq = 1;
    return true;
@@ -46,6 +48,7 @@ void EventStore_Close()
       FileClose(g_EventStore_Handle);
       g_EventStore_Handle = INVALID_HANDLE;
    }
+   g_EventStore_FileName = "";
 }
 
 string EventStore_SessionId() { return g_EventStore_SessionId; }
@@ -217,17 +220,34 @@ bool EventStore_LogTransition(TradeCandidate &c, ENUM_CANDIDATE_STATE to, ENUM_R
 // in the file, not just the ones this session appended.
 //---------------------------------------------------------------------
 
-// Reads every line from fileName into outLines[]. Opens its own
-// short-lived handle (separate from g_EventStore_Handle) so this can be
-// called on a store this same run has open for writing, or on a totally
-// different file (e.g. a corrupted copy in EventStoreRecoveryTest)
-// without disturbing the live write handle.
+// Reads every line from fileName into outLines[].
+//
+// If fileName is the file this session already has open for writing
+// (g_EventStore_FileName), reuses g_EventStore_Handle instead of opening
+// a second handle on the same path - opening a second handle concurrently
+// failed silently in practice (FileOpen returned INVALID_HANDLE, so this
+// returned 0 with no error), which is exactly what happens the first time
+// OnInit replays the store right after opening it for the session, before
+// ever closing it - none of the Tests/ scripts hit this because they all
+// close the store first to simulate a restart. Reusing the handle means
+// seeking to 0, reading everything, then seeking back to the end so
+// appends continue working correctly afterward.
+//
+// For any other file (e.g. a different/corrupted copy in
+// MLQuantAI_Test_EventStoreRecovery.mq5), opens its own short-lived
+// handle as before.
 int EventStore_ReadAllLines(string fileName, string &outLines[])
 {
    ArrayResize(outLines, 0);
-   int handle = FileOpen(fileName, FILE_READ|FILE_TXT|FILE_ANSI|FILE_COMMON);
+
+   bool reuseOpenHandle = (g_EventStore_Handle != INVALID_HANDLE && fileName == g_EventStore_FileName);
+   int handle = reuseOpenHandle ? g_EventStore_Handle
+                                 : FileOpen(fileName, FILE_READ|FILE_TXT|FILE_ANSI|FILE_COMMON);
    if(handle == INVALID_HANDLE)
       return 0;
+
+   if(reuseOpenHandle)
+      FileSeek(handle, 0, SEEK_SET);
 
    int count = 0;
    while(!FileIsEnding(handle))
@@ -238,7 +258,12 @@ int EventStore_ReadAllLines(string fileName, string &outLines[])
       outLines[count] = line;
       count++;
    }
-   FileClose(handle);
+
+   if(reuseOpenHandle)
+      FileSeek(handle, 0, SEEK_END); // restore append position
+   else
+      FileClose(handle);
+
    return count;
 }
 
