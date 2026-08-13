@@ -46,6 +46,26 @@ string CandidateStateToString(ENUM_CANDIDATE_STATE s)
    return "UNKNOWN";
 }
 
+// Reverse of CandidateStateToString - used by EventSerializer when parsing
+// a stored line back into a LifecycleEvent. An unrecognized/corrupted
+// string maps to CANDIDATE_ERROR rather than silently defaulting to
+// CREATED, so a malformed state string can never be mistaken for a real
+// "freshly created" candidate during replay.
+ENUM_CANDIDATE_STATE CandidateStateFromString(string s)
+{
+   if(s == "CREATED")                 return CANDIDATE_CREATED;
+   if(s == "ROUTED_OUT")              return CANDIDATE_ROUTED_OUT;
+   if(s == "MERGED")                  return CANDIDATE_MERGED;
+   if(s == "REJECTED_BY_ARBITRATOR")  return CANDIDATE_REJECTED_BY_ARBITRATOR;
+   if(s == "REJECTED_BY_AI")          return CANDIDATE_REJECTED_BY_AI;
+   if(s == "REJECTED_BY_RISK")        return CANDIDATE_REJECTED_BY_RISK;
+   if(s == "EXPIRED")                 return CANDIDATE_EXPIRED;
+   if(s == "SUBMITTED")               return CANDIDATE_SUBMITTED;
+   if(s == "EXECUTED")                return CANDIDATE_EXECUTED;
+   if(s == "REJECTED_BY_BROKER")      return CANDIDATE_REJECTED_BY_BROKER;
+   return CANDIDATE_ERROR;
+}
+
 // Terminal = no further transition is ever valid from this state.
 bool StateMachine_IsTerminal(ENUM_CANDIDATE_STATE s)
 {

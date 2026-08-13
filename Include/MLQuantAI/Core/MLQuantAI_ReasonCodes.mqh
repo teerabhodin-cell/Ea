@@ -86,4 +86,40 @@ string ReasonCodeToString(ENUM_REASON_CODE r)
    return "UNKNOWN";
 }
 
+// Reverse of ReasonCodeToString, for parsing stored lines back. An
+// unrecognized string maps to REASON_NONE (not an error state itself -
+// the state machine's own CANDIDATE_ERROR/CandidateStateFromString is
+// what flags a corrupted line, this just avoids inventing a fake reason).
+ENUM_REASON_CODE ReasonCodeFromString(string s)
+{
+   if(s == "NONE")                       return REASON_NONE;
+   if(s == "REGIME_MISMATCH")            return REASON_REGIME_MISMATCH;
+   if(s == "EXPIRED")                    return REASON_EXPIRED;
+   if(s == "DUPLICATE_EVENT")            return REASON_DUPLICATE_EVENT;
+   if(s == "MERGED_INTO_OTHER")          return REASON_MERGED_INTO_OTHER;
+   if(s == "CONFLICTING_DIRECTION")      return REASON_CONFLICTING_DIRECTION;
+   if(s == "LOW_SCORE")                  return REASON_LOW_SCORE;
+   if(s == "MAX_CANDIDATES_EXCEEDED")    return REASON_MAX_CANDIDATES_EXCEEDED;
+   if(s == "AI_LOW_CONFIDENCE")          return REASON_AI_LOW_CONFIDENCE;
+   if(s == "AI_HIGH_UNCERTAINTY")        return REASON_AI_HIGH_UNCERTAINTY;
+   if(s == "AI_REJECT")                  return REASON_AI_REJECT;
+   if(s == "RISK_DAILY_LOSS_LIMIT")      return REASON_RISK_DAILY_LOSS_LIMIT;
+   if(s == "RISK_MAX_DRAWDOWN")          return REASON_RISK_MAX_DRAWDOWN;
+   if(s == "RISK_MAX_TOTAL_EXPOSURE")    return REASON_RISK_MAX_TOTAL_EXPOSURE;
+   if(s == "RISK_MAX_PER_TRADE")         return REASON_RISK_MAX_PER_TRADE;
+   if(s == "RISK_MARGIN")                return REASON_RISK_MARGIN;
+   if(s == "RISK_SPREAD_TOO_WIDE")       return REASON_RISK_SPREAD_TOO_WIDE;
+   if(s == "RISK_NEWS_BLOCK")            return REASON_RISK_NEWS_BLOCK;
+   if(s == "RISK_MAX_OPEN_POSITIONS")    return REASON_RISK_MAX_OPEN_POSITIONS;
+   if(s == "RISK_CIRCUIT_BREAKER")       return REASON_RISK_CIRCUIT_BREAKER;
+   if(s == "BROKER_REJECT")              return REASON_BROKER_REJECT;
+   if(s == "INVALID_STOPS")              return REASON_INVALID_STOPS;
+   if(s == "INSUFFICIENT_MARGIN")        return REASON_INSUFFICIENT_MARGIN;
+   if(s == "REQUOTE")                    return REASON_REQUOTE;
+   if(s == "ERROR_INTERNAL")             return REASON_ERROR_INTERNAL;
+   if(s == "SUBMITTED_OK")               return REASON_SUBMITTED_OK;
+   if(s == "EXECUTED_OK")                return REASON_EXECUTED_OK;
+   return REASON_NONE;
+}
+
 #endif // __MLQUANTAI_REASONCODES_MQH__

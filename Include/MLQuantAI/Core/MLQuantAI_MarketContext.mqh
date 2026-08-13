@@ -13,7 +13,7 @@
 
 #include "MLQuantAI_Enums.mqh"
 #include "MLQuantAI_AccountSnapshot.mqh"
-#include "MLQuantAI_AlternativeDataSnapshot.mqh"
+#include "MLQuantAI_ExternalContext.mqh"
 #include "MLQuantAI_VersionRegistry.mqh"
 
 struct MarketContext
@@ -48,8 +48,8 @@ struct MarketContext
    ENUM_MARKET_REGIME regime;
    string              regime_rules_version;
 
-   AccountSnapshot           account;
-   AlternativeDataSnapshot   alt_data;
+   AccountSnapshot     account;
+   ExternalContext     external;
 };
 
 void MarketContext_Init(MarketContext &c)
@@ -69,7 +69,7 @@ void MarketContext_Init(MarketContext &c)
    c.regime = REGIME_TRANSITION;
    c.regime_rules_version = MLQUANTAI_REGIME_RULES_VER;
    AccountSnapshot_Init(c.account);
-   AlternativeDataSnapshot_Init(c.alt_data);
+   ExternalContext_Init(c.external);
 }
 
 #endif // __MLQUANTAI_MARKETCONTEXT_MQH__
