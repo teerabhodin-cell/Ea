@@ -89,16 +89,26 @@ string Ids_CorrelationId(string candidateId, int submitAttempt=1)
    return Ids_Deterministic("CORR", key);
 }
 
+int g_Ids_SessionCounter = 0;
+
 // runtime_session_id: identifies one EA run. Deliberately NOT deterministic
 // - two runs at the same instant on the same account should still get
-// different session ids, which is why this mixes in GetTickCount()/MathRand()
-// rather than just account+time.
+// different session ids. Uniqueness is guaranteed by g_Ids_SessionCounter
+// (always increments, in-process), not by the time/random components -
+// an earlier version reseeded MathRand() via MathSrand((int)GetTickCount())
+// on every call, but GetTickCount() only has millisecond resolution, so two
+// calls microseconds apart (e.g. back-to-back in a test) could reseed with
+// the identical value and produce the identical "random" number, defeating
+// the whole point. GetMicrosecondCount() and MathRand() are still mixed in
+// as extra salt, but the counter is what actually guarantees no collision.
 string Ids_NewRuntimeSessionId()
 {
-   MathSrand((int)GetTickCount());
+   g_Ids_SessionCounter++;
    string key = IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "|" +
                 TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS) + "|" +
-                IntegerToString((int)GetTickCount()) + "|" + IntegerToString(MathRand());
+                IntegerToString((int)GetMicrosecondCount()) + "|" +
+                IntegerToString(g_Ids_SessionCounter) + "|" +
+                IntegerToString(MathRand());
    return "SESS_" + StringSubstr(Ids_Sha256Hex(key), 0, 12);
 }
 
