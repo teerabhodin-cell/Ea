@@ -18,7 +18,7 @@
 
 struct MarketContext
 {
-   string   schema_version;   // MLQUANTAI_SCHEMA_VERSION at build time
+   string   schema_version;   // MLQUANTAI_CONTEXT_SCHEMA_VERSION at build time
    string   symbol;
    datetime bar_time;
 
@@ -54,7 +54,7 @@ struct MarketContext
 
 void MarketContext_Init(MarketContext &c)
 {
-   c.schema_version = MLQUANTAI_SCHEMA_VERSION;
+   c.schema_version = MLQUANTAI_CONTEXT_SCHEMA_VERSION;
    c.symbol = "";
    c.bar_time = 0;
    c.bid = 0; c.ask = 0; c.spread_points = 0;
@@ -67,7 +67,7 @@ void MarketContext_Init(MarketContext &c)
    c.in_newyork_killzone = false;
    c.high_impact_news_near = false;
    c.regime = REGIME_TRANSITION;
-   c.regime_rules_version = MLQUANTAI_REGIME_RULES_VER;
+   c.regime_rules_version = MLQUANTAI_REGIME_SCHEMA_VERSION;
    AccountSnapshot_Init(c.account);
    ExternalContext_Init(c.external);
 }

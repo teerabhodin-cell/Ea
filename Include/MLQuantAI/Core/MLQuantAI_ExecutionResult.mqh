@@ -11,6 +11,7 @@
 #define __MLQUANTAI_EXECUTIONRESULT_MQH__
 
 #include "MLQuantAI_ReasonCodes.mqh"
+#include "MLQuantAI_VersionRegistry.mqh"
 
 struct ExecutionResult
 {
@@ -21,6 +22,7 @@ struct ExecutionResult
    double              fill_price;       // 0 until reconciled via OnTradeTransaction
    double              slippage_points;  // 0 until reconciled
    ENUM_REASON_CODE    reason;
+   string              execution_schema_version; // MLQUANTAI_EXECUTION_SCHEMA_VERSION
 };
 
 void ExecutionResult_Init(ExecutionResult &e)
@@ -32,6 +34,7 @@ void ExecutionResult_Init(ExecutionResult &e)
    e.fill_price = 0;
    e.slippage_points = 0;
    e.reason = REASON_NONE;
+   e.execution_schema_version = MLQUANTAI_EXECUTION_SCHEMA_VERSION;
 }
 
 #endif // __MLQUANTAI_EXECUTIONRESULT_MQH__

@@ -9,9 +9,40 @@
 #ifndef __MLQUANTAI_VERSIONREGISTRY_MQH__
 #define __MLQUANTAI_VERSIONREGISTRY_MQH__
 
-#define MLQUANTAI_SCHEMA_VERSION     "1"
-#define MLQUANTAI_EA_VERSION         "0.1.0-sprint1"
-#define MLQUANTAI_REGIME_RULES_VER   "REGIME_RULES_V1"
-#define MLQUANTAI_ROUTER_RULES_VER   "ROUTER_RULES_V1"
+#define MLQUANTAI_EA_NAME                  "MLQuantAI"
+#define MLQUANTAI_EA_VERSION               "0.1.0"
+
+#define MLQUANTAI_EVENT_SCHEMA_VERSION     "EVENTS_V1"
+#define MLQUANTAI_CONTEXT_SCHEMA_VERSION   "CONTEXT_V1"
+#define MLQUANTAI_FEATURE_SCHEMA_VERSION   "FEATURES_V1"
+#define MLQUANTAI_LABEL_SCHEMA_VERSION     "TBM_V1"
+#define MLQUANTAI_REGIME_SCHEMA_VERSION    "REGIME_RULES_V1"
+#define MLQUANTAI_ROUTER_SCHEMA_VERSION    "ROUTER_RULES_V1"
+#define MLQUANTAI_RISK_SCHEMA_VERSION      "RISK_V1"
+#define MLQUANTAI_EXECUTION_SCHEMA_VERSION "EXECUTION_V1"
+#define MLQUANTAI_AI_MODEL_VERSION         "NONE"
+
+// Builds the version registry as a JSON fragment (no surrounding braces)
+// suitable for passing as the extraJson argument to
+// EventStore_LogSystem("SYSTEM_STARTED", ...) - every version constant
+// above should be visible in that one event, so replaying the log alone
+// tells you exactly which rule sets were active for a given session,
+// without cross-referencing source code.
+string VersionRegistry_AsJsonFragment()
+{
+   string s = "";
+   s += "\"ea_name\":\""                  + MLQUANTAI_EA_NAME + "\",";
+   s += "\"ea_version\":\""               + MLQUANTAI_EA_VERSION + "\",";
+   s += "\"event_schema_version\":\""     + MLQUANTAI_EVENT_SCHEMA_VERSION + "\",";
+   s += "\"context_schema_version\":\""   + MLQUANTAI_CONTEXT_SCHEMA_VERSION + "\",";
+   s += "\"feature_schema_version\":\""   + MLQUANTAI_FEATURE_SCHEMA_VERSION + "\",";
+   s += "\"label_schema_version\":\""     + MLQUANTAI_LABEL_SCHEMA_VERSION + "\",";
+   s += "\"regime_schema_version\":\""    + MLQUANTAI_REGIME_SCHEMA_VERSION + "\",";
+   s += "\"router_schema_version\":\""    + MLQUANTAI_ROUTER_SCHEMA_VERSION + "\",";
+   s += "\"risk_schema_version\":\""      + MLQUANTAI_RISK_SCHEMA_VERSION + "\",";
+   s += "\"execution_schema_version\":\"" + MLQUANTAI_EXECUTION_SCHEMA_VERSION + "\",";
+   s += "\"ai_model_version\":\""         + MLQUANTAI_AI_MODEL_VERSION + "\"";
+   return s;
+}
 
 #endif // __MLQUANTAI_VERSIONREGISTRY_MQH__

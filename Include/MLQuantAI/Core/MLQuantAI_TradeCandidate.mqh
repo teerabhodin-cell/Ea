@@ -100,4 +100,27 @@ bool TradeCandidate_Transition(TradeCandidate &c, ENUM_CANDIDATE_STATE to, ENUM_
    return true;
 }
 
+// Maps a candidate state to its ENUM_EVENT_TYPE - one per state, used when
+// logging a lifecycle transition so the event_type string always comes
+// from the enum (EventTypeToString) instead of ad-hoc string
+// concatenation scattered across callers.
+ENUM_EVENT_TYPE EventTypeForCandidateState(ENUM_CANDIDATE_STATE s)
+{
+   switch(s)
+   {
+      case CANDIDATE_CREATED:                return EVENT_TYPE_CANDIDATE_CREATED;
+      case CANDIDATE_ROUTED_OUT:              return EVENT_TYPE_CANDIDATE_ROUTED_OUT;
+      case CANDIDATE_MERGED:                  return EVENT_TYPE_CANDIDATE_MERGED;
+      case CANDIDATE_REJECTED_BY_ARBITRATOR:  return EVENT_TYPE_CANDIDATE_REJECTED_BY_ARBITRATOR;
+      case CANDIDATE_REJECTED_BY_AI:          return EVENT_TYPE_CANDIDATE_REJECTED_BY_AI;
+      case CANDIDATE_REJECTED_BY_RISK:        return EVENT_TYPE_CANDIDATE_REJECTED_BY_RISK;
+      case CANDIDATE_EXPIRED:                 return EVENT_TYPE_CANDIDATE_EXPIRED;
+      case CANDIDATE_SUBMITTED:               return EVENT_TYPE_CANDIDATE_SUBMITTED;
+      case CANDIDATE_EXECUTED:                return EVENT_TYPE_CANDIDATE_EXECUTED;
+      case CANDIDATE_REJECTED_BY_BROKER:      return EVENT_TYPE_CANDIDATE_REJECTED_BY_BROKER;
+      case CANDIDATE_ERROR:                   return EVENT_TYPE_CANDIDATE_ERROR;
+   }
+   return EVENT_TYPE_UNKNOWN;
+}
+
 #endif // __MLQUANTAI_TRADECANDIDATE_MQH__

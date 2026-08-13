@@ -109,7 +109,7 @@ bool   EventSerializer_HasKey(string json, string key)
 string EventSerializer_ToJson(const LifecycleEvent &e)
 {
    string s = "{";
-   s += "\"schema_version\":\""     + MLQUANTAI_SCHEMA_VERSION + "\",";
+   s += "\"schema_version\":\""     + MLQUANTAI_EVENT_SCHEMA_VERSION + "\",";
    s += "\"log_event_id\":\""       + EventSerializer_Escape(e.base.log_event_id) + "\",";
    s += "\"session_id\":\""         + EventSerializer_Escape(e.base.runtime_session_id) + "\",";
    s += "\"seq\":"                  + IntegerToString(e.base.sequence_number) + ",";
@@ -166,7 +166,7 @@ bool EventSerializer_ParseLifecycle(string line, LifecycleEvent &out)
 string EventSerializer_ToJson(const SystemEvent &e)
 {
    string s = "{";
-   s += "\"schema_version\":\"" + MLQUANTAI_SCHEMA_VERSION + "\",";
+   s += "\"schema_version\":\"" + MLQUANTAI_EVENT_SCHEMA_VERSION + "\",";
    s += "\"log_event_id\":\"" + EventSerializer_Escape(e.base.log_event_id) + "\",";
    s += "\"session_id\":\""   + EventSerializer_Escape(e.base.runtime_session_id) + "\",";
    s += "\"seq\":"            + IntegerToString(e.base.sequence_number) + ",";
@@ -202,7 +202,7 @@ bool EventSerializer_ParseSystem(string line, SystemEvent &out)
 string EventSerializer_ToJson(const ExecutionEvent &e)
 {
    string s = "{";
-   s += "\"schema_version\":\""   + MLQUANTAI_SCHEMA_VERSION + "\",";
+   s += "\"schema_version\":\""   + MLQUANTAI_EVENT_SCHEMA_VERSION + "\",";
    s += "\"log_event_id\":\""   + EventSerializer_Escape(e.base.log_event_id) + "\",";
    s += "\"session_id\":\""     + EventSerializer_Escape(e.base.runtime_session_id) + "\",";
    s += "\"seq\":"              + IntegerToString(e.base.sequence_number) + ",";

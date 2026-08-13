@@ -9,14 +9,19 @@
 #ifndef __MLQUANTAI_RUNTIMESTATE_MQH__
 #define __MLQUANTAI_RUNTIMESTATE_MQH__
 
+#include "MLQuantAI_Enums.mqh"
+#include "MLQuantAI_VersionRegistry.mqh"
+
 struct RuntimeState
 {
-   string   runtime_session_id;
-   datetime session_start_time;
-   long     last_sequence_number;
+   string                    event_schema_version; // MLQUANTAI_EVENT_SCHEMA_VERSION - what this snapshot was built from
+   string                    runtime_session_id;
+   datetime                  session_start_time;
+   long                      last_sequence_number;
 
-   bool     safe_mode;
-   string   safe_mode_reason;
+   ENUM_EVENT_STORE_HEALTH   event_store_health;
+   bool                      safe_mode;
+   string                    safe_mode_reason;
 
    int      candidates_created;
    int      candidates_submitted;
@@ -28,9 +33,11 @@ struct RuntimeState
 
 void RuntimeState_Init(RuntimeState &s)
 {
+   s.event_schema_version = MLQUANTAI_EVENT_SCHEMA_VERSION;
    s.runtime_session_id = "";
    s.session_start_time = 0;
    s.last_sequence_number = 0;
+   s.event_store_health = EVENT_STORE_HEALTH_UNKNOWN;
    s.safe_mode = false;
    s.safe_mode_reason = "";
    s.candidates_created = 0;

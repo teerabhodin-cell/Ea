@@ -8,8 +8,11 @@
 #ifndef __MLQUANTAI_ACCOUNTSNAPSHOT_MQH__
 #define __MLQUANTAI_ACCOUNTSNAPSHOT_MQH__
 
+#include "MLQuantAI_VersionRegistry.mqh"
+
 struct AccountSnapshot
 {
+   string   context_schema_version; // MLQUANTAI_CONTEXT_SCHEMA_VERSION
    double   balance;
    double   equity;
    double   margin_level;      // 0 if no margin used
@@ -21,6 +24,7 @@ struct AccountSnapshot
 
 void AccountSnapshot_Init(AccountSnapshot &a)
 {
+   a.context_schema_version = MLQUANTAI_CONTEXT_SCHEMA_VERSION;
    a.balance = 0;
    a.equity = 0;
    a.margin_level = 0;

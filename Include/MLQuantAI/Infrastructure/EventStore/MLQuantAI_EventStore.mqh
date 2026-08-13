@@ -158,7 +158,7 @@ bool EventStore_LogCandidateCreated(const TradeCandidate &c)
    e.from_state         = CANDIDATE_CREATED;
    e.to_state           = CANDIDATE_CREATED;
    e.reason             = REASON_NONE;
-   e.base.event_type   = "CANDIDATE_CREATED";
+   e.base.event_type   = EventTypeToString(EVENT_TYPE_CANDIDATE_CREATED);
    if(!EventStore_AppendLifecycle(e))
    {
       SafeMode_Trip(StringFormat("failed to durably write CANDIDATE_CREATED for %s", c.candidate_id));
@@ -195,7 +195,7 @@ bool EventStore_LogTransition(TradeCandidate &c, ENUM_CANDIDATE_STATE to, ENUM_R
    e.to_state        = to;
    e.reason          = reason;
    e.extra_json       = extraJson;
-   e.base.event_type = "CANDIDATE_" + CandidateStateToString(to);
+   e.base.event_type = EventTypeToString(EventTypeForCandidateState(to));
 
    if(!EventStore_AppendLifecycle(e))
    {

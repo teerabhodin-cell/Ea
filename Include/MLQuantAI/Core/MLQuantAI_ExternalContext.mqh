@@ -11,8 +11,12 @@
 #ifndef __MLQUANTAI_EXTERNALCONTEXT_MQH__
 #define __MLQUANTAI_EXTERNALCONTEXT_MQH__
 
+#include "MLQuantAI_VersionRegistry.mqh"
+
 struct ExternalContext
 {
+   string   context_schema_version; // MLQUANTAI_CONTEXT_SCHEMA_VERSION
+
    bool     has_dxy;
    double   dxy_value;
    int      dxy_age_seconds;
@@ -28,6 +32,7 @@ struct ExternalContext
 
 void ExternalContext_Init(ExternalContext &d)
 {
+   d.context_schema_version = MLQUANTAI_CONTEXT_SCHEMA_VERSION;
    d.has_dxy = false;    d.dxy_value = 0;    d.dxy_age_seconds = 0;
    d.has_us10y = false;  d.us10y_value = 0;  d.us10y_age_seconds = 0;
    d.has_vix = false;    d.vix_value = 0;    d.vix_age_seconds = 0;
