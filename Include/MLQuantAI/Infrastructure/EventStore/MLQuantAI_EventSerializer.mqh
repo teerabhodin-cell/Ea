@@ -142,6 +142,7 @@ bool EventSerializer_ParseLifecycle(string line, LifecycleEvent &out)
    out.base.log_event_id       = EventSerializer_GetStr(line, "log_event_id");
    out.base.runtime_session_id = EventSerializer_GetStr(line, "session_id");
    out.base.sequence_number    = EventSerializer_GetLong(line, "seq");
+   out.base.ts                 = StringToTime(EventSerializer_GetStr(line, "ts"));
    out.base.category           = EventCategoryFromString(EventSerializer_GetStr(line, "category"));
    out.base.event_type         = EventSerializer_GetStr(line, "type");
 
@@ -187,6 +188,7 @@ bool EventSerializer_ParseSystem(string line, SystemEvent &out)
    out.base.log_event_id       = EventSerializer_GetStr(line, "log_event_id");
    out.base.runtime_session_id = EventSerializer_GetStr(line, "session_id");
    out.base.sequence_number    = EventSerializer_GetLong(line, "seq");
+   out.base.ts                 = StringToTime(EventSerializer_GetStr(line, "ts"));
    out.base.category           = EventCategoryFromString(EventSerializer_GetStr(line, "category"));
    out.base.event_type         = EventSerializer_GetStr(line, "type");
    out.message                 = EventSerializer_GetStr(line, "message");
@@ -226,6 +228,7 @@ bool EventSerializer_ParseExecution(string line, ExecutionEvent &out)
    out.base.log_event_id       = EventSerializer_GetStr(line, "log_event_id");
    out.base.runtime_session_id = EventSerializer_GetStr(line, "session_id");
    out.base.sequence_number    = EventSerializer_GetLong(line, "seq");
+   out.base.ts                 = StringToTime(EventSerializer_GetStr(line, "ts"));
    out.base.category           = EventCategoryFromString(EventSerializer_GetStr(line, "category"));
    out.base.event_type         = EventSerializer_GetStr(line, "type");
    out.correlation_id          = EventSerializer_GetStr(line, "correlation_id");
