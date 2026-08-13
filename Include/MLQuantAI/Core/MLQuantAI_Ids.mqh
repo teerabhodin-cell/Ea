@@ -25,10 +25,10 @@
 // chars (64 bits) for a readable ID; collision risk at that length is
 // negligible for the number of candidates one trading system will ever
 // generate.
-string Ids_Sha256Hex(string input)
+string Ids_Sha256Hex(string text)
 {
    uchar data[];
-   int n = StringToCharArray(input, data, 0, -1, CP_UTF8);
+   int n = StringToCharArray(text, data, 0, -1, CP_UTF8);
    if(n > 0 && data[n-1] == 0) // StringToCharArray null-terminates; strip it before hashing
       ArrayResize(data, n-1);
 
