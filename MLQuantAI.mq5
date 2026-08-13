@@ -8,7 +8,7 @@
 //| EA version แสดงบน chart/log ได้, ไม่มี strategy หรือ AI logic."   |
 //+------------------------------------------------------------------+
 #property copyright "MLQuantAI"
-#property version   "0.1.0"
+#property version   "0.10"
 #property description "MLQuantAI Phase A skeleton - Event Store + Replay + Safe Mode + Broker Reconciliation only."
 
 #include <MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh>
