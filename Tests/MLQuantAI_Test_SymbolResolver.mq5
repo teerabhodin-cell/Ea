@@ -167,7 +167,7 @@ void Test_InstrumentIdStableAcrossBrokerDecoration()
 {
    Print("--- instrument_id is stable regardless of broker-specific decoration ---");
 
-   string idPlain, idSuffix, idPrefix, brokerOut, err;
+   string idPlain, idSuffix, brokerOut, err;
    SymbolResolver_ResolveWith("X", "XAUUSD", "", "", idPlain, brokerOut, err);   // will fail (bogus chart), but instrument_id is still stamped before validation
    SymbolResolver_ResolveWith("X", "XAUUSD", "X", "", idSuffix, brokerOut, err); // same
    Check(idPlain == "XAUUSD" && idSuffix == "XAUUSD",
