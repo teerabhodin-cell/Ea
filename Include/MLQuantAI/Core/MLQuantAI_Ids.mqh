@@ -68,6 +68,18 @@ string Ids_RootEventId(string symbol, string timeframeTag, string eventType, dou
    return Ids_Deterministic("EVT", key);
 }
 
+// context_event_id: one MarketContext snapshot, identified by symbol +
+// timeframe + bar_time alone (no price rounding needed - bar_time is
+// already discrete). Same bar -> same id, so a TradeCandidate can stamp
+// which exact context snapshot it was built from (candidate <-> context
+// lineage, per Phase B's B1/B3 requirements) and replay can confirm the
+// referenced context genuinely exists in the log.
+string Ids_ContextEventId(string symbol, string timeframeTag, datetime barTime)
+{
+   string key = symbol + "|" + timeframeTag + "|" + TimeToString(barTime, TIME_DATE|TIME_SECONDS);
+   return Ids_Deterministic("CTX", key);
+}
+
 // candidate_id: one strategy's candidate against one root event. Same
 // root_event_id + same strategy + same strategy_version -> same
 // candidate_id, so replaying the same event stream reproduces identical

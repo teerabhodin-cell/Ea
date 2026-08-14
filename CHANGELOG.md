@@ -4,6 +4,51 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B B1: Contract Freeze
+
+Contracts only - no DataHub/FeatureEngine/CRT/execution code was written
+or changed in this pass. See `Docs/PhaseB_B1_ContractFreeze.md`.
+
+### Added
+- `Core/MLQuantAI_ContractVersions.mqh`: Phase B schema version constants
+  (`MLQUANTAI_MARKET_CONTEXT_SCHEMA_V1`, `MLQUANTAI_FEATURE_SCHEMA_V1`,
+  `MLQUANTAI_CANDIDATE_SCHEMA_V1`, `MLQUANTAI_NEWS_SCHEMA_V1`,
+  `MLQUANTAI_RISK_SCHEMA_V1`) - separate from Phase A's
+  `MLQuantAI_VersionRegistry.mqh`, which stays untouched.
+- `Market/MLQuantAI_MarketContext.mqh`: the new, frozen `MarketContext`
+  contract - canonical `instrument_id` vs. `broker_symbol`, closed-bar-only
+  `anchor_bar_time`, per-timeframe `MqlRates` bars, an embedded
+  `NewsSnapshot[]`, and a `context_hash` that deliberately excludes
+  runtime-only account state. Coexists with the Step 9
+  `Core/MLQuantAI_MarketContext.mqh` (still what the live Data Hub/Feature
+  Engine build) until B2/B3 migrates them to this contract.
+- `Market/MLQuantAI_NewsSnapshot.mqh`: one calendar event, replayable via
+  JSON (`NewsSnapshot_ToJson`/`FromJson`/array round-trip helpers),
+  self-contained from Phase A's `EventSerializer` on purpose.
+- `Market/MLQuantAI_FeatureSnapshot.mqh`: contract stub for the eventual
+  Feature Store row (not wired to anything - B3+).
+- `Core/MLQuantAI_RiskDecision.mqh`: audit record for a future Risk
+  Manager (B7) to log for every candidate, approved or rejected - keeps
+  rejected setups explainable instead of just dropped (no survivorship
+  bias). Distinct from the existing `MLQuantAI_RiskPlan.mqh` (Phase A's
+  sizing-output struct).
+- `Core/MLQuantAI_TradeCandidate.mqh` extended **additively**:
+  `candidate_schema_version`, `context_event_id`/`context_hash`
+  (candidate <-> context lineage), `side` (`ENUM_ORDER_TYPE`),
+  `setup_anchor_bar_time` + `expiry_after_bars` (closed-bar expiry, via
+  the new `TradeCandidate_ComputeExpiryTime` helper - never
+  `TimeCurrent() + N minutes`), `entry_hint`/`sl_hint`/`tp_hint`,
+  `trigger_reason_mask` + `trigger_reasons[]`. Every Phase A field is
+  unchanged - Phase A's sealed tests and `MLQuantAI.mq5`'s Step 8.5 smoke
+  test still compile against the same struct untouched.
+- `Core/MLQuantAI_Ids.mqh`: `Ids_ContextEventId(symbol, timeframeTag,
+  barTime)` - deterministic id for one `MarketContext` snapshot, so a
+  `TradeCandidate.context_event_id` can reference the exact context it
+  was built from.
+- `Tests/MLQuantAI_Test_PhaseBContracts.mq5`: struct-shape, closed-bar
+  semantics, hash-excludes-runtime-metadata, and NewsSnapshot
+  serialize/deserialize round-trip coverage for all of the above.
+
 ## [0.1.0] - Phase A
 
 ### Added
