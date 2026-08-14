@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B B5 Commit 4: CRT_ToTradeCandidate (pure mapping)
+## [Unreleased] - Phase B B5 Commit 4: CRT_ToTradeCandidate (pure mapping) (PASSED 2026-08-14)
 
 Implements the Commit 4 boundary: `bool CRT_ToTradeCandidate(ctx, crt,
 outCandidate)` - copy/map only from Commit 3's `CRTDetectionResult`,
@@ -30,7 +30,8 @@ way - that's Commit 5. See Docs/PhaseB_B5_Commit4.md.
   rules-versions acceptance gate.
 
 ### Status
-Implemented, awaiting a real compile/test run before PASSED.
+Confirmed on a real compile/test run: MLQuantAI_Test_CRT_V1_ToTradeCandidate.mq5
+79/79 PASS.
 
 ## [Unreleased] - Phase B B5 Commit 3: Pure CRT_V1 Detection Rules (PASSED 2026-08-14)
 

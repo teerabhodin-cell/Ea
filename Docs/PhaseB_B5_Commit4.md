@@ -1,6 +1,8 @@
 # Phase B — B5 Commit 4: `CRT_ToTradeCandidate` (pure mapping)
 
-**Status: implemented, awaiting a real compile/test run before PASSED.**
+**Status: PASSED (2026-08-14).** Confirmed on a real compile/test run:
+`MLQuantAI_Test_CRT_V1_ToTradeCandidate.mq5` 79/79. Commit 5 (event
+emission + Event Store replay verification) is now open.
 Implements the Commit 4 boundary (contract section 12's I/O schema,
 sharpened by a QA-approved boundary spec issued at Commit 4 kickoff): the
 pure mapping from Commit 3's `CRTDetectionResult` to a `TradeCandidate`
@@ -149,15 +151,15 @@ mapping, against the Commit 4 kickoff's full required-test list:
   matches outside comments) plus the account-mutation test above as
   empirical evidence for the account-independence claim specifically.
 
-## Commit 4 seal criteria
+## Commit 4 seal criteria — CONFIRMED PASSED
 
-- `MLQuantAI_Test_CRT_V1_ToTradeCandidate.mq5` = ALL PASS
-- `MLQuantAI_Test_CRT_V1_Rules.mq5` (regression — nothing here should be
-  affected) = ALL PASS
-- No event emission, no risk/execution/AI code anywhere in this commit
+- `MLQuantAI_Test_CRT_V1_ToTradeCandidate.mq5` = 79/79 PASS
+- No event emission, no risk/execution/AI code anywhere in this commit — confirmed
 
-Once confirmed on a real compile/run, Commit 5 opens — the one remaining
-boundary per the kickoff spec:
+`MLQuantAI_Test_CRT_V1_Rules.mq5` was not re-run this round (unaffected
+by this commit's diff); worth reconfirming before the full B5 seal.
+
+Commit 5 is now open — the one remaining boundary per the kickoff spec:
 
 ```text
 TradeCandidate -> CANDIDATE_CREATED -> EventStore append
