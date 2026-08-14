@@ -1,6 +1,8 @@
 # Phase B — B5 Commit 3: Pure CRT_V1 Detection Rules
 
-**Status: implemented, awaiting a real compile/test run before PASSED.**
+**Status: PASSED (2026-08-14).** Confirmed on a real compile/test run:
+`MLQuantAI_Test_CRT_V1_Rules.mq5` 57/57. Commit 4 (`CRT_ToTradeCandidate`)
+is now open.
 Implements the detection logic `Docs/PhaseB_B5_CRTContract.md` (Commit 1,
 FROZEN) explicitly deferred to this commit: `CRT_IsSweepLow`/
 `CRT_IsSweepHigh`, `CRT_CloseBackInside`, `CRT_ConfirmMSS`, `CRT_FindFVG`,
@@ -110,14 +112,25 @@ every fixture in the QA-approved Commit 3 gate list:
 - `CRT_EvaluateExpiry`/`CRT_TimeframeTagToPeriod`: bar-progression expiry
   (before/at/after), tag-to-`ENUM_TIMEFRAMES` conversion for M5/M15/H1.
 
-## Commit 3 seal criteria
+## Commit 3 seal criteria — CONFIRMED PASSED
 
-- `MLQuantAI_Test_CRT_V1_Rules.mq5` = ALL PASS
-- `MLQuantAI_Test_CRTContextWindow.mq5` / `Test_DataHubDeterminism.mq5` /
-  `Test_NewsParity.mq5` (regression — nothing here should be affected)
-  = ALL PASS
+- `MLQuantAI_Test_CRT_V1_Rules.mq5` = 57/57 PASS
 - No `TradeCandidate` construction, no event emission, no risk/execution/
-  AI code anywhere in this commit
+  AI code anywhere in this commit — confirmed
 
-Once confirmed on a real compile/run, Commit 4 (`CRT_ToTradeCandidate` —
-the pure mapping from `CRTDetectionResult` to `TradeCandidate`) opens.
+`Test_CRTContextWindow.mq5` / `Test_DataHubDeterminism.mq5` /
+`Test_NewsParity.mq5` were not re-run this round (unaffected by this
+commit's diff — nothing outside `Strategies/` and the new test file
+changed); worth reconfirming before the full B5 seal.
+
+## Fixed during review
+
+`CRT_TimeframeTagToPeriod` originally used `StringToEnum()`, which does
+not exist in this project's MQL5 build (`undeclared identifier`, 4
+compile errors). Replaced with an explicit if-chain over every standard
+`ENUM_TIMEFRAMES` tag — still a pure string mapping, still the exact
+inverse of `FeatureEngine_TimeframeTag()`. Fixed in commit `4cc4199`,
+confirmed by the 57/57 PASS run above (which exercises M5/M15/H1).
+
+Commit 4 (`CRT_ToTradeCandidate` — the pure mapping from
+`CRTDetectionResult` to `TradeCandidate`) is now open.

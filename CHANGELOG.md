@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B B5 Commit 3: Pure CRT_V1 Detection Rules
+## [Unreleased] - Phase B B5 Commit 3: Pure CRT_V1 Detection Rules (PASSED 2026-08-14)
 
 Implements the detection logic Docs/PhaseB_B5_CRTContract.md (Commit 1,
 FROZEN) explicitly deferred to this commit: CRT_IsSweepLow/CRT_IsSweepHigh,
@@ -32,7 +32,10 @@ new non-gating CRT_REASON_BIT_NEWS_RISK threshold).
   them to Commit 3's discretion.
 
 ### Status
-Implemented, awaiting a real compile/test run before PASSED.
+Confirmed on a real compile/test run: MLQuantAI_Test_CRT_V1_Rules.mq5
+57/57 PASS. Fixed during review: CRT_TimeframeTagToPeriod originally used
+StringToEnum(), unavailable in this MQL5 build - replaced with an
+explicit if-chain (commit 4cc4199).
 
 ## [Unreleased] - Phase B B5 Commit 2: Context Window + CRT_V1 Domain Models (PASSED 2026-08-14)
 
