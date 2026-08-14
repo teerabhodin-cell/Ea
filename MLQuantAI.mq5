@@ -51,11 +51,20 @@ string BuildSmokeTestCandidateId(string &outRootEventId)
 // Step 8.5 Runtime Lifecycle Smoke Test - proves a candidate created by
 // THIS ACTUAL EA (not a standalone test script) gets correctly replayed
 // on the next restart. No order is ever opened; the candidate always ends
-// REJECTED_BY_RISK. Idempotent per calendar day: if today's smoke-test
-// candidate already exists (found via replay), this only reports its
-// replayed state instead of creating a duplicate - StateProjector would
-// correctly flag a second CREATED genesis for the same candidate_id as
-// corruption, so this guard is required, not just tidy.
+// REJECTED_BY_BROKER (simulating a broker-side reject after submission).
+// NOT REJECTED_BY_RISK, which the state machine only allows directly from
+// CREATED, never from SUBMITTED; an earlier version of this function used
+// CREATED -> SUBMITTED -> REJECTED_BY_RISK and the state machine correctly
+// blocked it as illegal - working exactly as designed, catching a mistake
+// in this test rather than in the state machine itself. REJECTED_BY_BROKER
+// also deliberately avoids ever landing on CANDIDATE_EXECUTED, which would
+// make BrokerReconciliation_CheckAll() falsely report a mismatch every
+// restart, since no real MT5 position backs this synthetic candidate.
+// Idempotent per calendar day: if today's smoke-test candidate already
+// exists (found via replay), this only reports its replayed state instead
+// of creating a duplicate - StateProjector would correctly flag a second
+// CREATED genesis for the same candidate_id as corruption, so this guard
+// is required, not just tidy.
 void RunRuntimeLifecycleSmokeTest()
 {
    string rootEventId;
@@ -79,9 +88,10 @@ void RunRuntimeLifecycleSmokeTest()
 
    if(!EventStore_LogCandidateCreated(smoke)) { LogWarn("Step 8.5 smoke test: failed to log CREATED"); return; }
    if(!EventStore_LogTransition(smoke, CANDIDATE_SUBMITTED, REASON_SUBMITTED_OK)) { LogWarn("Step 8.5 smoke test: failed to log SUBMITTED"); return; }
-   if(!EventStore_LogTransition(smoke, CANDIDATE_REJECTED_BY_RISK, REASON_RISK_DAILY_LOSS_LIMIT)) { LogWarn("Step 8.5 smoke test: failed to log REJECTED_BY_RISK"); return; }
+   smoke.correlation_id = Ids_CorrelationId(smoke.candidate_id);
+   if(!EventStore_LogTransition(smoke, CANDIDATE_REJECTED_BY_BROKER, REASON_BROKER_REJECT)) { LogWarn("Step 8.5 smoke test: failed to log REJECTED_BY_BROKER"); return; }
 
-   LogInfo(StringFormat("Step 8.5 smoke test: created today's candidate (%s), logged CREATED -> SUBMITTED -> REJECTED_BY_RISK. "
+   LogInfo(StringFormat("Step 8.5 smoke test: created today's candidate (%s), logged CREATED -> SUBMITTED -> REJECTED_BY_BROKER. "
                          "Restart the EA to confirm replay reconstructs this exact state.", smokeId));
 }
 
