@@ -4,6 +4,31 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B B2: Symbol Resolution
+
+Contract + resolver only - no DataHub/FeatureEngine/MLQuantAI.mq5 wiring
+in this pass (that migration is B3's job).
+
+### Added
+- `Core/MLQuantAI_ContractVersions.mqh`: `MLQUANTAI_SYMBOL_SPEC_SCHEMA_V1`.
+- `Market/MLQuantAI_SymbolSpec.mqh` extended **additively**: canonical
+  `instrument_id` vs. resolved `broker_symbol`, `tick_size`, `tick_value`,
+  `currency_margin`, `trade_mode`. Every Step 9 field is unchanged - the
+  legacy `SymbolSpec_Build()` still behaves exactly as before, since
+  `FeatureEngine_Init()` already calls it directly.
+- `Market/MLQuantAI_SymbolResolver.mqh`: `SymbolResolver_LooksLikeAlias`
+  (prefix-decoration match + a small built-in XAUUSD alias table for
+  brokers using unrelated names like "GOLD" + `InpExtraSymbolAliases` for
+  anything broker-specific - deliberately NOT a loose substring/contains
+  check), `SymbolResolver_Resolve`/`_ResolveWith` (fails closed on an
+  unknown or non-matching symbol), and `SymbolSpec_BuildResolved`/
+  `_BuildResolvedWith` - the new B2 entry point B3's DataHub and B5's
+  detectors should use instead of the legacy `SymbolSpec_Build()`.
+- `Tests/MLQuantAI_Test_SymbolResolver.mq5`: alias-matching (prefix,
+  built-in, extra, and rejection of loose/wrong matches), override vs.
+  auto-detect resolution, fail-closed behavior on an invalid symbol, and
+  full `SymbolSpec` snapshot population.
+
 ## [Unreleased] - Phase B B1: Contract Freeze
 
 Contracts only - no DataHub/FeatureEngine/CRT/execution code was written
