@@ -102,6 +102,76 @@ bool   EventSerializer_HasKey(string json, string key)
    return StringFind(json, "\"" + key + "\":") >= 0;
 }
 
+// "key":["a","b","c"] -> outArr = ["a","b","c"]. Quoted-string elements
+// only - every string[] field this project ever persists (e.g.
+// TradeCandidate.trigger_reasons[]) is a flat array of strings, never
+// nested objects/arrays, so this doesn't need general JSON array
+// handling. Element decoding mirrors EventSerializer_GetStr()'s escape
+// handling exactly. Promoted here (Phase B B6.1) from what had been the
+// same ~15-line bracket-depth pattern hand-duplicated in three separate
+// test files (MLQuantAI_Test_CRTContextWindow.mq5,
+// MLQuantAI_Test_NewsReplayIsolation.mq5, and similar) - B6.1's
+// CandidateProjection is the first PRODUCTION (non-test) code that needs
+// it, which is the right moment to stop duplicating it. Returns the
+// element count; 0 (and an empty outArr) if the key is absent or the
+// array is empty.
+int EventSerializer_GetStringArray(string json, string key, string &outArr[])
+{
+   ArrayResize(outArr, 0);
+   string needle = "\"" + key + "\":[";
+   int start = StringFind(json, needle);
+   if(start < 0) return 0;
+   int arrStart = start + StringLen(needle) - 1; // position of the opening '['
+   int len = StringLen(json);
+   int depth = 0;
+   int arrEnd = -1;
+   for(int i = arrStart; i < len; i++)
+   {
+      ushort ch = StringGetCharacter(json, i);
+      if(ch == '[') depth++;
+      else if(ch == ']')
+      {
+         depth--;
+         if(depth == 0) { arrEnd = i; break; }
+      }
+   }
+   if(arrEnd < 0) return 0;
+
+   string inner = StringSubstr(json, arrStart + 1, arrEnd - arrStart - 1);
+   int n = StringLen(inner);
+   int count = 0;
+   int i = 0;
+   while(i < n)
+   {
+      ushort ch = StringGetCharacter(inner, i);
+      if(ch != '"') { i++; continue; } // skip commas/whitespace between elements
+      i++; // past the opening quote
+      string element = "";
+      while(i < n)
+      {
+         ushort c = StringGetCharacter(inner, i);
+         if(c == '\\' && i + 1 < n)
+         {
+            ushort next = StringGetCharacter(inner, i + 1);
+            if(next == 'n')       element += "\n";
+            else if(next == 'r')  element += "\r";
+            else if(next == '"')  element += "\"";
+            else if(next == '\\') element += "\\";
+            else                  element += CharToString((uchar)next);
+            i += 2;
+            continue;
+         }
+         if(c == '"') { i++; break; } // closing quote
+         element += CharToString((uchar)c);
+         i++;
+      }
+      ArrayResize(outArr, count + 1);
+      outArr[count] = element;
+      count++;
+   }
+   return count;
+}
+
 //---------------------------------------------------------------------
 // LifecycleEvent <-> JSON
 //---------------------------------------------------------------------

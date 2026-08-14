@@ -4,6 +4,70 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B B6.1: Candidate Projection / Registry (hardened, PASSED 2026-08-15)
+
+Opens B6 ("Candidate Dataset QA & Analytics"). Strictly additive,
+strictly read-only: no B5 Strategies/ file touched, no live market/
+broker/account call - the registry is built purely from persisted
+CANDIDATE_CREATED lines via EventStore_ReadAllLines. See
+Docs/PhaseB_B6_1_CandidateProjection.md, including a flagged (not
+silently resolved) gap: several B6.2 canonical-dataset columns
+(swept_level/resolved_zone_*/instrument_id/trigger_timeframe/
+news_decision_hash/news_snapshot_identity) aren't in any persisted
+CANDIDATE_CREATED event yet - deferred to B6.2's own kickoff decision.
+
+Hardened after a QA review of the initial 104/104 pass, which proved
+B6.1's mechanics but not adversarial robustness. The most important
+fix: candidate_id reuse with a DIFFERENT candidate_hash is now rejected
+as a collision/conflict, never silently treated as an idempotent
+duplicate - the original version would have hidden exactly that class
+of corruption. See Docs/PhaseB_B6_1_CandidateProjection.md's "Hardening
+pass" section for the full gate-by-gate list (schema/time/numerical/
+enum/reason-mask/resource-limit integrity, referential integrity against
+MARKET_CONTEXT_READY, ordering/atomicity via EventStoreValidator-gated
+rebuilds, restart/crash simulation, multi-session, a candidate_hash
+mutation sweep, and a 25-candidate scale test). B6 as a whole remains
+IN REVIEW / NOT CLOSED - dataset export (B6.2), the integrity validator
+(B6.3), and full-phase regression are still outstanding.
+
+### Added
+- `Infrastructure/EventStore/MLQuantAI_CandidateProjection.mqh` (new):
+  `CandidateProjectionRecord`, `CandidateProjection_ApplyLine` (now with
+  full schema/time/numerical/enum/reason-mask/resource-limit validation
+  and payload-aware collision detection), `CandidateProjection_TryGet`,
+  `CandidateProjection_CollectContextHashes`/`_ApplyLineWithContext`
+  (referential integrity against MARKET_CONTEXT_READY),
+  `CandidateProjection_RebuildFromFile` (now EventStoreValidator-gated -
+  ordering/atomicity), `CandidateProjectionReport`.
+- `Infrastructure/EventStore/MLQuantAI_EventSerializer.mqh`:
+  `EventSerializer_GetStringArray` - a generic `"key":["a","b"]` reader,
+  promoted from a pattern previously hand-duplicated in three test files.
+- `Tests/MLQuantAI_Test_CandidateProjection.mq5` (rewritten, real
+  MARKET_CONTEXT_READY events now persisted per candidate): the original
+  6 B6.1 gates plus collision, schema, time, numerical, enum, trigger-
+  reasons, resource-limit, referential-integrity, ordering, atomicity,
+  restart/crash, multi-session, 25-candidate-scale, and a full
+  candidate_hash mutation sweep (decision-bearing fields move it,
+  excluded fields don't).
+
+### Fixed
+- `CandidateProjection_ApplyLine`: two real bugs found during hardening
+  test runs, both only reachable once real `MARKET_CONTEXT_READY` events
+  shared a store with candidates for the first time. (1) Every non-
+  `CANDIDATE_CREATED` line was misreported as "not a parsable lifecycle
+  event line" (a false failure) instead of being skipped, because the
+  type check ran after an `EventSerializer_ParseLifecycle()` call that
+  requires a `candidate_id` key SystemEvents don't have. (2) The first
+  fix over-corrected: a line with no `type` key at all (true garbage)
+  was then waved through as "irrelevant, skip" instead of failing
+  closed. Fixed by checking `type` via a category-agnostic string lookup
+  *and* requiring the key to be present, before ever attempting the
+  LifecycleEvent parse.
+
+### Status
+Confirmed on a real compile/test run: MLQuantAI_Test_CandidateProjection.mq5
+146/146 PASS.
+
 ## [Unreleased] - Phase B B5 Commit 5: CANDIDATE_CREATED Event Emission (PASSED 2026-08-14, B5 = ALL COMMITS SEALED)
 
 Implements the final Commit 5 boundary: `TradeCandidate ->
