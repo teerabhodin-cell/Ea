@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B B5 Commit 5: CANDIDATE_CREATED Event Emission
+## [Unreleased] - Phase B B5 Commit 5: CANDIDATE_CREATED Event Emission (PASSED 2026-08-14, B5 = ALL COMMITS SEALED)
 
 Implements the final Commit 5 boundary: `TradeCandidate ->
 CANDIDATE_CREATED -> EventStore append`. Reuses Phase A's sealed
@@ -32,7 +32,9 @@ immediately after each durable write).
   match-original, replay idempotency.
 
 ### Status
-Implemented, awaiting a real compile/test run before PASSED.
+Confirmed on a real compile/test run: MLQuantAI_Test_CRT_V1_CandidateCreatedEvent.mq5
+43/43 PASS. B5 Commits 1-5 are all SEALED; final B5 integration/replay QA
+remains before the whole phase seals.
 
 ## [Unreleased] - Phase B B5 Commit 4: CRT_ToTradeCandidate (pure mapping) (PASSED 2026-08-14)
 

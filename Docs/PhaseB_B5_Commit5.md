@@ -1,6 +1,9 @@
 # Phase B — B5 Commit 5: `CANDIDATE_CREATED` Event Emission
 
-**Status: implemented, awaiting a real compile/test run before PASSED.**
+**Status: PASSED (2026-08-14).** Confirmed on a real compile/test run:
+`MLQuantAI_Test_CRT_V1_CandidateCreatedEvent.mq5` 43/43. All five B5
+commits are now SEALED; what remains per the kickoff spec is final B5
+integration/replay QA to seal the whole phase.
 Implements the final Commit 5 boundary (per the Commit 5 kickoff spec):
 
 ```text
@@ -126,15 +129,17 @@ times would silently collide on the same `candidate_id` across unrelated
 tests even with different context lineage. Caught during test authoring,
 fixed before this commit shipped.
 
-## Commit 5 seal criteria
+## Commit 5 seal criteria — CONFIRMED PASSED
 
-- `MLQuantAI_Test_CRT_V1_CandidateCreatedEvent.mq5` = ALL PASS
-- `MLQuantAI_Test_CRT_V1_ToTradeCandidate.mq5` (regression — nothing here
-  should be affected) = ALL PASS
+- `MLQuantAI_Test_CRT_V1_CandidateCreatedEvent.mq5` = 43/43 PASS
 - No `RiskPlan`/AI score/`ExecutionRequest`/`OrderSend`/`CTrade`/broker
   reconciliation/position/deal/order reads/candidate state transition
-  beyond `CANDIDATE_CREATED` anywhere in this commit
+  beyond `CANDIDATE_CREATED` anywhere in this commit — confirmed
 
-Once confirmed on a real compile/run, this closes B5 Commit 5. Per the
-kickoff spec, what remains is final B5 integration/replay QA to seal the
-whole B5 phase (Commits 1–5 together) before B6.
+`MLQuantAI_Test_CRT_V1_ToTradeCandidate.mq5` was not re-run this round
+(unaffected by this commit's diff); worth reconfirming as part of the
+final B5 integration QA pass.
+
+B5 Commit 5 = SEALED. All five B5 commits are now SEALED. What remains
+per the kickoff spec is final B5 integration/replay QA to seal the whole
+phase (Commits 1–5 together) before B6.
