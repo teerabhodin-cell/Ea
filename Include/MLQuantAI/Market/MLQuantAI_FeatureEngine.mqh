@@ -1,11 +1,16 @@
 //+------------------------------------------------------------------+
 //| MLQuantAI - Market/MLQuantAI_FeatureEngine.mqh                   |
-//| Assembles DataHub + SessionEngine + NewsEngine + SymbolSpec +     |
-//| account state into one immutable MarketContext per new bar. Every |
-//| strategy module (Phase B Step 10+), the Regime Detector and the   |
-//| AI filter all read the SAME MarketContext for a given bar - build |
-//| it once here, pass it around by const reference, never let a      |
-//| downstream module recompute its own version of the same numbers.  |
+//| Phase B B3: builds the FROZEN Market/MLQuantAI_MarketContext.mqh  |
+//| contract from real MT5 data, closed-bar only. Replaces Step 9's   |
+//| FeatureEngine_Build(), which built the old Core/MarketContext.mqh |
+//| struct off bar 0 / live tick values - non-deterministic and       |
+//| explicitly forbidden by the B1 contract's own rules.              |
+//|                                                                    |
+//| HARD RULE, enforced throughout this file: anchor_bar_time =       |
+//| iTime(broker_symbol, InpTriggerTimeframe, 1) - the last CLOSED    |
+//| bar. Every other field is derived from that same closed bar or    |
+//| earlier - never shift 0, never TimeCurrent(), never a live tick.  |
+//| See Docs/PhaseB_B3_DataHubDeterminism.md.                          |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_FEATUREENGINE_MQH__
 #define __MLQUANTAI_FEATUREENGINE_MQH__
@@ -13,16 +18,47 @@
 #include "MLQuantAI_DataHub.mqh"
 #include "MLQuantAI_SessionEngine.mqh"
 #include "MLQuantAI_NewsEngine.mqh"
-#include "MLQuantAI_SymbolSpec.mqh"
-#include "../Core/MLQuantAI_MarketContext.mqh"
+#include "MLQuantAI_SymbolResolver.mqh"
+#include "MLQuantAI_MarketContext.mqh"
+#include "../Core/MLQuantAI_Ids.mqh"
 #include "../Infrastructure/EventStore/MLQuantAI_EventStore.mqh"
 
+input group "=== Feature Engine (Phase B B3) ==="
+input ENUM_TIMEFRAMES InpTriggerTimeframe = PERIOD_M5; // the ONE timeframe anchor_bar_time is measured on
+
+string g_FeatureEngine_InstrumentId = "";
+string g_FeatureEngine_BrokerSymbol = "";
 SymbolSpec g_FeatureEngine_SymbolSpec;
 
-bool FeatureEngine_Init(string symbol)
+// "M5" from PERIOD_M5, generically for whatever InpTriggerTimeframe is
+// set to - EnumToString gives "PERIOD_M5"; this just strips the prefix
+// so MarketContext.trigger_timeframe reads the same short tag the rest
+// of the project already uses elsewhere (e.g. Ids_ContextEventId's
+// timeframeTag parameter).
+string FeatureEngine_TimeframeTag(ENUM_TIMEFRAMES tf)
 {
-   SymbolSpec_Build(symbol, g_FeatureEngine_SymbolSpec); // best-effort; DataHub_Init's return value is the hard gate
-   return DataHub_Init(symbol);
+   string s = EnumToString(tf);
+   if(StringFind(s, "PERIOD_") == 0)
+      return StringSubstr(s, 7);
+   return s;
+}
+
+// Resolves instrument_id/broker_symbol (fails closed - see
+// MLQuantAI_SymbolResolver.mqh) and initializes the Data Hub's indicator
+// handles against the RESOLVED broker symbol, not necessarily the
+// chart's raw _Symbol.
+bool FeatureEngine_Init(string chartSymbol)
+{
+   string err;
+   if(!SymbolSpec_BuildResolved(chartSymbol, g_FeatureEngine_SymbolSpec, err))
+   {
+      LogError("FeatureEngine_Init: symbol resolution failed - " + err);
+      return false;
+   }
+   g_FeatureEngine_InstrumentId = g_FeatureEngine_SymbolSpec.instrument_id;
+   g_FeatureEngine_BrokerSymbol = g_FeatureEngine_SymbolSpec.broker_symbol;
+
+   return DataHub_Init(g_FeatureEngine_BrokerSymbol);
 }
 
 void FeatureEngine_Deinit()
@@ -39,91 +75,133 @@ void FeatureEngine_BuildAccountSnapshot(AccountSnapshot &a)
    a.open_positions_count = PositionsTotal();
    // open_risk_percent / daily_pnl_percent / drawdown_from_peak_percent
    // stay at 0 - there is no Global Risk Manager tracking these yet
-   // (that's Step 11); this snapshot only reports what MT5 itself knows.
+   // (that's B7); this snapshot only reports what MT5 itself knows.
 }
 
-// Builds one MarketContext snapshot for "right now". Returns a context
-// with bid/ask still 0 if there's no current tick available yet (e.g.
-// symbol not subscribed) - callers MUST check FeatureEngine_IsReady()
-// before trusting anything else in it, same convention as
-// ExternalContext's has_* flags: zero fields mean "not ready", not
-// "the value really is zero".
-MarketContext FeatureEngine_Build(string symbol)
+// The anchor_bar_time THIS session's FeatureEngine_BuildContext() would
+// use right now - exposed so MLQuantAI.mq5's OnTick can detect "is this
+// a new closed trigger bar yet" using the EXACT same value the builder
+// itself computes, instead of duplicating the iTime(...,1) call and
+// risking the two drifting apart.
+datetime FeatureEngine_CurrentAnchorBarTime()
+{
+   if(g_FeatureEngine_BrokerSymbol == "") return 0;
+   return iTime(g_FeatureEngine_BrokerSymbol, InpTriggerTimeframe, 1);
+}
+
+// Builds one immutable MarketContext for the current closed trigger bar.
+// Returns a context with anchor_bar_time == 0 if there isn't enough
+// history yet (e.g. right after EA start) or FeatureEngine_Init() never
+// succeeded - callers MUST check FeatureEngine_IsReady() before trusting
+// anything else in it.
+//
+// Every field here is a pure function of (broker_symbol, anchor bar) -
+// CopyRates/indicator buffers/calendar lookups all read HISTORICAL data
+// closed at or before anchor_bar_time. Calling this function repeatedly
+// without the underlying bar changing (e.g. Tests/MLQuantAI_Test_
+// DataHubDeterminism.mq5's 1000-iteration loop) must produce a
+// byte-identical context_hash every time - if it doesn't, something in
+// here regressed back to reading live/"now" state.
+MarketContext FeatureEngine_BuildContext()
 {
    MarketContext ctx;
    MarketContext_Init(ctx);
 
-   MqlTick tick;
-   if(!SymbolInfoTick(symbol, tick))
-      return ctx;
+   string brokerSymbol = g_FeatureEngine_BrokerSymbol;
+   if(brokerSymbol == "") return ctx; // FeatureEngine_Init never succeeded
 
-   ctx.symbol        = symbol;
-   ctx.bar_time      = iTime(symbol, PERIOD_M15, 0);
-   ctx.bid           = tick.bid;
-   ctx.ask           = tick.ask;
-   ctx.spread_points = (_Point > 0) ? (tick.ask - tick.bid) / _Point : 0;
+   datetime anchor = iTime(brokerSymbol, InpTriggerTimeframe, 1); // last CLOSED bar - the only legal anchor source
+   if(anchor == 0) return ctx; // not enough history yet
 
-   ctx.atr_m15 = DataHub_IndicatorValue(g_hATR_M15);
-   ctx.atr_h1  = DataHub_IndicatorValue(g_hATR_H1);
-   ctx.adx_h1  = DataHub_IndicatorValue(g_hADX_H1);
+   ctx.instrument_id    = g_FeatureEngine_InstrumentId;
+   ctx.broker_symbol     = brokerSymbol;
+   ctx.trigger_timeframe  = FeatureEngine_TimeframeTag(InpTriggerTimeframe);
+   ctx.anchor_bar_time     = anchor;
 
-   ctx.ema20_m15 = DataHub_IndicatorValue(g_hEMA20_M15);
-   ctx.ema50_h1  = DataHub_IndicatorValue(g_hEMA50_H1);
-   ctx.ema200_h4 = DataHub_IndicatorValue(g_hEMA200_H4);
+   MqlRates rates[];
+   if(CopyRates(brokerSymbol, PERIOD_M5,  1, 1, rates) == 1) ctx.m5_bar  = rates[0];
+   if(CopyRates(brokerSymbol, PERIOD_M15, 1, 1, rates) == 1) ctx.m15_bar = rates[0];
+   if(CopyRates(brokerSymbol, PERIOD_H1,  1, 1, rates) == 1) ctx.h1_bar  = rates[0];
+   if(CopyRates(brokerSymbol, PERIOD_H4,  1, 1, rates) == 1) ctx.h4_bar  = rates[0];
 
-   ctx.swing_high_m15 = DataHub_SwingHigh(symbol, PERIOD_M15, SwingLookbackBars);
-   ctx.swing_low_m15  = DataHub_SwingLow(symbol, PERIOD_M15, SwingLookbackBars);
-   ctx.prev_day_high  = DataHub_PrevDayHigh(symbol);
-   ctx.prev_day_low   = DataHub_PrevDayLow(symbol);
-
-   double asianHigh = 0, asianLow = 0;
-   if(DataHub_AsianRange(symbol, AsiaEndHour, asianHigh, asianLow))
+   // bid/ask/spread "at anchor" come from the trigger bar's own recorded
+   // close + spread (MqlRates.spread IS the historical spread MT5 stored
+   // for that bar) - never SymbolInfoTick()/SymbolInfoDouble(..., BID),
+   // which reflect right now and would make this non-deterministic.
+   MqlRates triggerBar[];
+   if(CopyRates(brokerSymbol, InpTriggerTimeframe, 1, 1, triggerBar) == 1)
    {
-      ctx.asian_high = asianHigh;
-      ctx.asian_low  = asianLow;
+      double point = (g_FeatureEngine_SymbolSpec.point > 0) ? g_FeatureEngine_SymbolSpec.point : SymbolInfoDouble(brokerSymbol, SYMBOL_POINT);
+      ctx.bid_at_anchor           = triggerBar[0].close;
+      ctx.spread_points_at_anchor = (double)triggerBar[0].spread;
+      ctx.ask_at_anchor           = ctx.bid_at_anchor + triggerBar[0].spread * point;
    }
 
-   ctx.in_london_killzone   = Session_IsLondonKZ(TimeCurrent());
-   ctx.in_newyork_killzone  = Session_IsNewYorkKZ(TimeCurrent());
-   ctx.high_impact_news_near = UseNewsFilter ? News_HighImpactNear(NewsCurrency, NewsMinutesBefore, NewsMinutesAfter) : false;
+   ctx.atr_m15 = DataHub_IndicatorValue(g_hATR_M15);
+   ctx.adx_m15 = DataHub_IndicatorValue(g_hADX_M15);
+   double emaAtAnchor   = DataHub_IndicatorValue(g_hEMA20_M15, 0, 1);
+   double emaOneBarBack = DataHub_IndicatorValue(g_hEMA20_M15, 0, 2);
+   ctx.ema_slope_m15 = emaAtAnchor - emaOneBarBack; // one-bar EMA20 M15 slope, price units; positive = rising
 
-   // No Regime Detector yet (that's Step 14) - every context is
-   // REGIME_TRANSITION until it exists. Real strategy modules (Step 10+)
-   // must not treat this as a meaningful signal.
-   ctx.regime = REGIME_TRANSITION;
+   ctx.pdh = DataHub_PrevDayHigh(brokerSymbol);
+   ctx.pdl = DataHub_PrevDayLow(brokerSymbol);
 
-   FeatureEngine_BuildAccountSnapshot(ctx.account);
-   // ctx.external stays at ExternalContext_Init's defaults - no
-   // Alternative Data Hub until Phase D.
+   double asianHigh = 0, asianLow = 0;
+   if(DataHub_AsianRangeAt(brokerSymbol, AsiaEndHour, anchor, asianHigh, asianLow))
+   {
+      ctx.asian_range_high = asianHigh;
+      ctx.asian_range_low  = asianLow;
+   }
+
+   ctx.session_id   = Session_Id(anchor);
+   ctx.is_kill_zone = Session_IsLondonKZ(anchor) || Session_IsNewYorkKZ(anchor);
+
+   if(UseNewsFilter)
+   {
+      int n = News_BuildSnapshots(NewsCurrency, anchor, NewsMinutesBefore, NewsMinutesAfter, ctx.news);
+      // Canonical order BEFORE anything downstream reads ctx.news - both
+      // the hash payload and the logged JSON must see the same,
+      // source-order-independent sequence (see NewsSnapshot_Canonicalize).
+      NewsSnapshot_Canonicalize(ctx.news);
+      ctx.news_count = n;
+
+      int maxImpact = 0, nearestAbsMinutes = -1, nearestSignedMinutes = 0;
+      for(int i = 0; i < n; i++)
+      {
+         if(ctx.news[i].impact > maxImpact)
+            maxImpact = ctx.news[i].impact;
+         int absMinutes = (int)MathAbs(ctx.news[i].minutes_to_event);
+         if(nearestAbsMinutes < 0 || absMinutes < nearestAbsMinutes)
+         {
+            nearestAbsMinutes = absMinutes;
+            nearestSignedMinutes = ctx.news[i].minutes_to_event;
+         }
+      }
+      ctx.max_news_impact       = maxImpact;
+      ctx.nearest_news_minutes  = (nearestAbsMinutes < 0) ? 0 : nearestSignedMinutes;
+   }
+
+   FeatureEngine_BuildAccountSnapshot(ctx.account); // runtime-only, excluded from context_hash by design
+   ctx.symbol_spec = g_FeatureEngine_SymbolSpec;
+
+   ctx.context_event_id = Ids_ContextEventId(ctx.instrument_id, ctx.trigger_timeframe, ctx.anchor_bar_time);
+   ctx.context_hash      = MarketContext_ComputeHash(ctx);
 
    return ctx;
 }
 
 bool FeatureEngine_IsReady(const MarketContext &ctx)
 {
-   return ctx.bid > 0 && ctx.ask > 0;
+   return ctx.anchor_bar_time != 0;
 }
 
-// Logs MARKET_CONTEXT_READY with the key numbers as extra_json, so the
-// event log itself is enough to audit what the Feature Engine saw for a
-// given bar without needing to reproduce the computation later.
+// Logs MARKET_CONTEXT_READY with the FULL context (including the
+// embedded NewsSnapshot[]) as extra_json, so replay can reconstruct
+// exactly what the Feature Engine saw for this anchor bar without ever
+// re-querying MT5 price history or the Economic Calendar again.
 void FeatureEngine_LogContextReady(const MarketContext &ctx)
 {
-   string extra = StringFormat(
-      "\"bar_time\":\"%s\",\"bid\":%s,\"ask\":%s,\"spread_points\":%s,"
-      "\"atr_m15\":%s,\"atr_h1\":%s,\"adx_h1\":%s,\"regime\":\"%s\","
-      "\"in_london_kz\":%s,\"in_newyork_kz\":%s,\"news_near\":%s",
-      TimeToString(ctx.bar_time, TIME_DATE|TIME_MINUTES),
-      DoubleToString(ctx.bid, (int)SymbolInfoInteger(ctx.symbol, SYMBOL_DIGITS)),
-      DoubleToString(ctx.ask, (int)SymbolInfoInteger(ctx.symbol, SYMBOL_DIGITS)),
-      DoubleToString(ctx.spread_points, 1),
-      DoubleToString(ctx.atr_m15, 5), DoubleToString(ctx.atr_h1, 5), DoubleToString(ctx.adx_h1, 2),
-      RegimeToString(ctx.regime),
-      ctx.in_london_killzone ? "true" : "false",
-      ctx.in_newyork_killzone ? "true" : "false",
-      ctx.high_impact_news_near ? "true" : "false");
-
-   EventStore_LogSystem(EventTypeToString(EVENT_TYPE_MARKET_CONTEXT_READY), "market context built", extra);
+   EventStore_LogSystem(EventTypeToString(EVENT_TYPE_MARKET_CONTEXT_READY), "market context built", MarketContext_ToJsonFragment(ctx));
 }
 
 #endif // __MLQUANTAI_FEATUREENGINE_MQH__

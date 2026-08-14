@@ -77,6 +77,20 @@ string NewsSnapshot_ToJson(const NewsSnapshot &n)
       NewsSnapshot_JsonEscape(n.source_kind), NewsSnapshot_JsonEscape(n.source_version));
 }
 
+// Phase B B3.5: canonical string fragment for ONE snapshot's IDENTITY
+// fields, used to build MarketContext's context_hash. Deliberately omits
+// title (descriptive text, not part of what makes two news snapshots
+// "the same event") and source_version (a schema tag, not content) -
+// calendar_event_id/currency/impact/release_time/minutes_to_event/
+// source_kind are what actually distinguish one news snapshot from
+// another for hashing purposes.
+string NewsSnapshot_HashFragment(const NewsSnapshot &n)
+{
+   return n.calendar_event_id + "|" + n.currency + "|" + IntegerToString(n.impact) + "|" +
+          TimeToString(n.release_time, TIME_DATE|TIME_SECONDS) + "|" +
+          IntegerToString(n.minutes_to_event) + "|" + n.source_kind;
+}
+
 // Reads back a single string field "key":"value" from a JSON object
 // string, honoring escaped quotes/backslashes char-by-char rather than
 // naively splitting on the next unescaped-looking quote.
@@ -212,6 +226,34 @@ int NewsSnapshot_ArrayFromJson(string json, NewsSnapshot &outArr[])
       }
    }
    return count;
+}
+
+// Phase B B3.5: canonical ordering for a NewsSnapshot[] BEFORE it is
+// hashed or logged - sort by release_time ascending, then
+// calendar_event_id ascending as a tie-breaker. Without this, two builds
+// of the identical set of news rows could still produce different
+// context_hash values purely because CalendarValueHistory()/the CSV scan
+// happened to return them in a different order, which would look like a
+// "market changed" mismatch in the determinism test even though nothing
+// about the market or the news actually differed. Small arrays (a
+// handful of news rows near one bar at most) - plain insertion sort is
+// simpler than pulling in a generic sort helper for this array size.
+void NewsSnapshot_Canonicalize(NewsSnapshot &arr[])
+{
+   int n = ArraySize(arr);
+   for(int i = 1; i < n; i++)
+   {
+      NewsSnapshot key = arr[i];
+      int j = i - 1;
+      while(j >= 0 &&
+            (arr[j].release_time > key.release_time ||
+             (arr[j].release_time == key.release_time && arr[j].calendar_event_id > key.calendar_event_id)))
+      {
+         arr[j + 1] = arr[j];
+         j--;
+      }
+      arr[j + 1] = key;
+   }
 }
 
 #endif // __MLQUANTAI_NEWSSNAPSHOT_MQH__

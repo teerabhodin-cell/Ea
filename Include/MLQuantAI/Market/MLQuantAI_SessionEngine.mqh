@@ -35,6 +35,25 @@ bool Session_IsAsia(datetime t)      { return Session_InHourWindow(AsiaStartHour
 bool Session_IsLondonKZ(datetime t)  { return Session_InHourWindow(LondonKZStartHour, LondonKZEndHour, t); }
 bool Session_IsNewYorkKZ(datetime t) { return Session_InHourWindow(NewYorkKZStartHour, NewYorkKZEndHour, t); }
 
+// One label for MarketContext.session_id - a single string field is
+// simpler to log/replay/dedupe on than several overlapping booleans.
+// London and New York kill zones CAN overlap (both windows are inputs,
+// not guaranteed disjoint) - LONDON_NEWYORK_OVERLAP is reported
+// separately from either alone so that overlap window isn't silently
+// collapsed into just one of the two.
+string Session_Id(datetime t)
+{
+   bool asia = Session_IsAsia(t);
+   bool london = Session_IsLondonKZ(t);
+   bool ny = Session_IsNewYorkKZ(t);
+
+   if(london && ny) return "LONDON_NEWYORK_OVERLAP";
+   if(london)        return "LONDON_KZ";
+   if(ny)             return "NEWYORK_KZ";
+   if(asia)            return "ASIA";
+   return "OFF_SESSION";
+}
+
 // Start of the broker-server-time calendar day containing t (00:00:00).
 // Used by DataHub's Asian-range scan - not calendar-exact for brokers
 // whose "trading day" doesn't start at server midnight, but stable and

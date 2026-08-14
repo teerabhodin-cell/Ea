@@ -3,14 +3,15 @@
 //| Phase A: Core Engine (Event Store, State Machine, Replay, Safe    |
 //| Mode, Broker Reconciliation) proven inside a REAL EA lifecycle,   |
 //| not just standalone test Scripts - CLOSED.                        |
-//| Phase B Step 9: Data Hub + Feature Engine now build an immutable  |
-//| MarketContext from real MT5 price/indicators/session/news/account |
-//| on every new M15 bar and log MARKET_CONTEXT_READY. Still no       |
-//| strategies, no AI, no order execution - that's Step 10+.          |
+//| Phase B B3: Data Hub + Feature Engine build an immutable           |
+//| MarketContext (the B1-frozen contract) from real MT5 price/        |
+//| indicators/session/news/account on every new CLOSED trigger bar    |
+//| (InpTriggerTimeframe, default M5) and log MARKET_CONTEXT_READY.    |
+//| Still no strategies, no AI, no order execution - that's B5+.       |
 //+------------------------------------------------------------------+
 #property copyright "MLQuantAI"
 #property version   "1.00"
-#property description "MLQuantAI - Event Store + Replay + Safe Mode + Broker Reconciliation + Market Context (Phase B Step 9)."
+#property description "MLQuantAI - Event Store + Replay + Safe Mode + Broker Reconciliation + Market Context (Phase B B3)."
 
 #include <MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh>
 #include <MLQuantAI/Core/MLQuantAI_Enums.mqh>
@@ -105,13 +106,15 @@ int OnInit()
    g_EventStoreFileName = (EventStoreFileNameOverride != "") ? EventStoreFileNameOverride : BuildDefaultEventStoreFileName();
 
    LogInfo(StringFormat("%s v%s starting - event store file: %s", MLQUANTAI_EA_NAME, MLQUANTAI_EA_VERSION, g_EventStoreFileName));
-   LogInfo("Phase B Step 9: Data Hub + Feature Engine active. Still no strategies, no AI, no order execution.");
+   LogInfo("Phase B B3: Data Hub + Feature Engine active (closed-bar MarketContext). Still no strategies, no AI, no order execution.");
 
    if(!FeatureEngine_Init(_Symbol))
    {
-      LogError("FeatureEngine_Init failed (indicator handle creation) - EA will not run.");
+      LogError("FeatureEngine_Init failed (symbol resolution or indicator handle creation) - EA will not run.");
       return INIT_FAILED;
    }
+   LogInfo(StringFormat("FeatureEngine resolved instrument_id=%s broker_symbol=%s trigger_timeframe=%s",
+           g_FeatureEngine_InstrumentId, g_FeatureEngine_BrokerSymbol, FeatureEngine_TimeframeTag(InpTriggerTimeframe)));
 
    // News CSV fallback only matters inside Strategy Tester (live trading
    // uses the real Economic Calendar) - load it once here and do a
@@ -201,18 +204,22 @@ void OnDeinit(const int reason)
 
 void OnTick()
 {
-   // Step 9: build one immutable MarketContext per new M15 bar and log
-   // MARKET_CONTEXT_READY - this is the start of the candidate dataset
-   // the whole project is built around. Still no strategies reading it
-   // yet (Step 10+), no AI, no order logic.
-   datetime barTime = iTime(_Symbol, PERIOD_M15, 0);
-   if(barTime == g_LastContextBarTime) return; // not a new bar yet
-   g_LastContextBarTime = barTime;
+   // Phase B B3: build one immutable MarketContext per new CLOSED trigger
+   // bar and log MARKET_CONTEXT_READY - this is the start of the
+   // candidate dataset the whole project is built around. Still no
+   // strategies reading it yet (B5+), no AI, no order logic.
+   //
+   // FeatureEngine_CurrentAnchorBarTime() is iTime(broker_symbol,
+   // InpTriggerTimeframe, 1) - the last CLOSED bar. Deliberately NOT
+   // shift 0 (a still-forming bar) - see Docs/PhaseB_B3_DataHubDeterminism.md.
+   datetime anchor = FeatureEngine_CurrentAnchorBarTime();
+   if(anchor == 0 || anchor == g_LastContextBarTime) return; // not a new closed trigger bar yet
+   g_LastContextBarTime = anchor;
 
-   MarketContext ctx = FeatureEngine_Build(_Symbol);
+   MarketContext ctx = FeatureEngine_BuildContext();
    if(!FeatureEngine_IsReady(ctx))
    {
-      LogDebug("MarketContext not ready yet (no tick) - skipping this bar.");
+      LogDebug("MarketContext not ready yet (insufficient history) - skipping this bar.");
       return;
    }
 
