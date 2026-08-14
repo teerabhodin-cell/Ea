@@ -1,18 +1,29 @@
 //+------------------------------------------------------------------+
 //| MLQuantAI_Test_DataHubDeterminism.mq5                            |
-//| Phase B B3 DoD: MarketContext built for a closed trigger bar must |
-//| be a pure function of (broker_symbol, anchor_bar_time) - no live  |
-//| tick, no TimeCurrent(), no live calendar query. Rebuilds the SAME |
-//| anchor bar 1,000 times and asserts context_hash never changes,    |
-//| plus checks the full MARKET_CONTEXT_READY payload is complete and |
-//| actually gets logged. No strategies, no AI, no order logic.       |
+//| Phase B B3.5 seal criteria: MarketContext built for a closed      |
+//| trigger bar must be a pure function of (broker_symbol,            |
+//| anchor_bar_time) - no live tick, no TimeCurrent(), no live         |
+//| calendar query, no source-order dependence in the news snapshot.  |
+//|                                                                    |
+//|   1. In-session determinism: 1000 rebuilds -> 0 hash mismatches   |
+//|   2. Cross-session determinism: persisted fixture vs a rebuild    |
+//|      after this script re-runs (simulates a restart)              |
+//|   3. Account-exclusion: mutating .account never changes the hash  |
+//|   4. Hash coverage: M5/M15/H1/H4 OHLC+tick_volume+historical      |
+//|      spread, feature values, PDH/PDL, session state, and ordered  |
+//|      news snapshots are all part of the hash payload              |
+//|   5. Regression: run this alongside Phase A/B1/B2 - see           |
+//|      Docs/PhaseB_B3_DataHubDeterminism.md                          |
+//|                                                                    |
+//| No strategies, no AI, no order logic.                              |
 //+------------------------------------------------------------------+
 #property copyright "MLQuantAI"
 #property script_show_inputs
 
 #include <MLQuantAI/Market/MLQuantAI_FeatureEngine.mqh>
 
-#define TEST_FILE "MLQuantAI_Test_DataHubDeterminism.jsonl"
+#define TEST_FILE    "MLQuantAI_Test_DataHubDeterminism.jsonl"
+#define FIXTURE_FILE "MLQuantAI_Test_DataHubDeterminism_Fixture.csv"
 
 int g_TestsRun    = 0;
 int g_TestsPassed = 0;
@@ -142,6 +153,134 @@ void Test_LoggedPayloadIsComplete()
    Check(StringFind(line, "\"symbol_spec_schema_version\"") >= 0,      "payload contains the SymbolSpec snapshot");
 }
 
+// Seal criterion #3 (account-exclusion), exercised against the REAL
+// pipeline's output (not a hand-built struct like the B1 contract test
+// already covers structurally) - mutating only .account on a fully-built
+// context must never change the hash payload, since account state is
+// runtime-only and excluded by design (see MarketContext_HashPayload).
+void Test_AccountExclusion_RealPipeline()
+{
+   Print("--- Seal #3: account-exclusion on the real FeatureEngine_BuildContext() pipeline ---");
+
+   MarketContext ctx = FeatureEngine_BuildContext();
+   if(!FeatureEngine_IsReady(ctx))
+   {
+      Print("  [SKIP] not enough history - account-exclusion check skipped");
+      return;
+   }
+
+   MarketContext mutated = ctx;
+   mutated.account.balance              += 12345.67;
+   mutated.account.equity                -= 999.00;
+   mutated.account.open_positions_count += 3;
+
+   Check(MarketContext_HashPayload(ctx) == MarketContext_HashPayload(mutated),
+         "mutating only .account on a real, fully-built context leaves the hash payload unchanged");
+}
+
+// Seal criterion #4 (news canonicalization): two sets of the SAME news
+// events in different source order must hash identically once
+// canonicalized - and, to prove canonicalization is actually doing
+// something (not a no-op), must NOT hash identically before it runs.
+// Self-contained (hand-built NewsSnapshot entries) - no live calendar/CSV
+// dependency, so this always runs regardless of environment.
+void Test_NewsSnapshotCanonicalization()
+{
+   Print("--- Seal #4: NewsSnapshot ordering is canonicalized before hashing ---");
+
+   NewsSnapshot evtA, evtB;
+   NewsSnapshot_Init(evtA);
+   evtA.calendar_event_id = "CAL_2"; evtA.currency = "USD"; evtA.impact = 3;
+   evtA.release_time = D'2026.08.14 13:00'; evtA.minutes_to_event = 30; evtA.source_kind = "LIVE_CALENDAR";
+
+   NewsSnapshot_Init(evtB);
+   evtB.calendar_event_id = "CAL_1"; evtB.currency = "USD"; evtB.impact = 2;
+   evtB.release_time = D'2026.08.14 12:30'; evtB.minutes_to_event = 0; evtB.source_kind = "LIVE_CALENDAR";
+
+   MarketContext ctxSourceOrderAB, ctxSourceOrderBA;
+   MarketContext_Init(ctxSourceOrderAB);
+   MarketContext_Init(ctxSourceOrderBA);
+   ctxSourceOrderAB.instrument_id = "XAUUSD";
+   ctxSourceOrderBA.instrument_id = "XAUUSD";
+
+   ArrayResize(ctxSourceOrderAB.news, 2);
+   ctxSourceOrderAB.news[0] = evtA; ctxSourceOrderAB.news[1] = evtB; // later event first, as some source might return it
+
+   ArrayResize(ctxSourceOrderBA.news, 2);
+   ctxSourceOrderBA.news[0] = evtB; ctxSourceOrderBA.news[1] = evtA; // same two events, opposite source order
+
+   Check(MarketContext_HashPayload(ctxSourceOrderAB) != MarketContext_HashPayload(ctxSourceOrderBA),
+         "uncanonicalized: differing source order produces differing hash payloads (proves canonicalization isn't a no-op)");
+
+   NewsSnapshot_Canonicalize(ctxSourceOrderAB.news);
+   NewsSnapshot_Canonicalize(ctxSourceOrderBA.news);
+
+   Check(ctxSourceOrderAB.news[0].calendar_event_id == "CAL_1" && ctxSourceOrderAB.news[1].calendar_event_id == "CAL_2",
+         "canonicalize sorts by release_time ascending");
+
+   Check(MarketContext_HashPayload(ctxSourceOrderAB) == MarketContext_HashPayload(ctxSourceOrderBA),
+         "after canonicalization, the two source orders produce an IDENTICAL hash payload");
+}
+
+// Seal criterion #2 (cross-session determinism): persists this run's
+// anchor_bar_time + context_hash to a fixture file, and - if a PRIOR run
+// of this same script already left a fixture behind for the SAME anchor
+// bar - asserts the hash matches. Since the trigger bar (default M5)
+// only stays the same for a few minutes of wall-clock time, this check
+// genuinely exercises "rebuild across a restart" whenever this script is
+// run twice within one trigger bar (e.g. re-running it right after the
+// first pass, or via MetaEditor's Run again) - and honestly reports SKIP
+// rather than a false PASS/FAIL when the bar has rolled over between runs
+// (there is no way to force wall-clock time backward to guarantee this
+// deterministically in a single automated pass).
+void Test_CrossSessionFixture()
+{
+   Print("--- Seal #2: cross-session determinism (persisted fixture vs. a fresh rebuild) ---");
+
+   MarketContext ctx = FeatureEngine_BuildContext();
+   if(!FeatureEngine_IsReady(ctx))
+   {
+      Print("  [SKIP] not enough history - cross-session fixture check skipped");
+      return;
+   }
+
+   int readHandle = FileOpen(FIXTURE_FILE, FILE_READ|FILE_CSV|FILE_ANSI|FILE_COMMON, ',');
+   if(readHandle != INVALID_HANDLE)
+   {
+      string fixtureAnchorStr = FileReadString(readHandle);
+      string fixtureHash       = FileReadString(readHandle);
+      FileClose(readHandle);
+
+      datetime fixtureAnchor = StringToTime(fixtureAnchorStr);
+      if(fixtureAnchor == ctx.anchor_bar_time)
+      {
+         Check(fixtureHash == ctx.context_hash,
+               "rebuilt context_hash for the SAME anchor bar matches the hash a PREVIOUS run of this script persisted");
+      }
+      else
+      {
+         Print(StringFormat("  [SKIP] the trigger bar rolled over since the last run of this script "
+                             "(fixture anchor=%s, current anchor=%s) - re-run within the same %s bar to "
+                             "actually exercise this check; this run's result becomes the new baseline.",
+                             fixtureAnchorStr, TimeToString(ctx.anchor_bar_time, TIME_DATE|TIME_SECONDS),
+                             FeatureEngine_TimeframeTag(InpTriggerTimeframe)));
+      }
+   }
+   else
+   {
+      Print(StringFormat("  [INFO] no prior fixture found - this run establishes the baseline. Re-run this script "
+                          "again within the same %s bar to exercise the cross-session comparison.",
+                          FeatureEngine_TimeframeTag(InpTriggerTimeframe)));
+   }
+
+   int writeHandle = FileOpen(FIXTURE_FILE, FILE_WRITE|FILE_CSV|FILE_ANSI|FILE_COMMON, ',');
+   if(writeHandle != INVALID_HANDLE)
+   {
+      FileWrite(writeHandle, TimeToString(ctx.anchor_bar_time, TIME_DATE|TIME_SECONDS), ctx.context_hash);
+      FileClose(writeHandle);
+   }
+}
+
 // Structural note: enforcement of "no bar 0 / no TimeCurrent() / no live
 // calendar during context build" is FeatureEngine_BuildContext()'s own
 // construction (every read is shift>=1 / historical CopyRates / an
@@ -158,11 +297,14 @@ void Test_NoLiveStateUsedStructurally()
 
 void OnStart()
 {
-   Print("=== MLQuantAI Test: Phase B B3 Data Hub Determinism ===");
+   Print("=== MLQuantAI Test: Phase B B3.5 Data Hub Determinism Seal ===");
 
    Test_Init();
    Test_ContextReadyAndPayloadComplete();
    Test_DeterminismOver1000Rebuilds();
+   Test_AccountExclusion_RealPipeline();
+   Test_NewsSnapshotCanonicalization();
+   Test_CrossSessionFixture();
    Test_LoggedPayloadIsComplete();
    Test_NoLiveStateUsedStructurally();
 

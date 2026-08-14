@@ -4,6 +4,34 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B B3.5: Data Hub Determinism Seal
+
+Hardens B3's `context_hash` to actually satisfy the 5 seal criteria
+(in-session determinism, cross-session determinism, account-exclusion,
+full hash coverage, regression) - see `Docs/PhaseB_B3_5_DeterminismSeal.md`.
+
+### Added
+- `Market/MLQuantAI_NewsSnapshot.mqh`: `NewsSnapshot_Canonicalize()`
+  (sorts by `release_time` then `calendar_event_id`) and
+  `NewsSnapshot_HashFragment()`. `FeatureEngine_BuildContext()` now
+  canonicalizes `ctx.news` before computing aggregates or the hash, so
+  `context_hash` no longer depends on calendar/CSV source ordering.
+- `Market/MLQuantAI_MarketContext.mqh`: `MarketContext_HashPayload()`
+  extended to include `m5_bar`/`m15_bar`/`h1_bar`/`h4_bar` (time, OHLC,
+  tick_volume, historical spread, via the new
+  `MarketContext_RatesHashFragment()`) and the full canonically-ordered
+  `NewsSnapshot[]` content - previously only `news_count`/
+  `max_news_impact`/`nearest_news_minutes` were hashed, not the news
+  identity itself. `MarketContext_RatesToJson()` gained `tick_volume` to
+  match what's now hashed.
+- `Tests/MLQuantAI_Test_DataHubDeterminism.mq5`: `Test_AccountExclusion_
+  RealPipeline()` (mutates `.account` on a real built context, asserts
+  the hash is unchanged), `Test_NewsSnapshotCanonicalization()`
+  (self-contained, proves source-order independence after
+  canonicalizing), `Test_CrossSessionFixture()` (persists a
+  anchor+hash fixture across script runs to prove the SAME anchor bar
+  hashes the same after a "restart").
+
 ## [Unreleased] - Phase B B3: Data Hub / Feature Engine Migration + Determinism
 
 Migrates the live Data Hub/Feature Engine/`MLQuantAI.mq5` to the B1-frozen

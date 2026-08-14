@@ -117,22 +117,49 @@ void MarketContext_Init(MarketContext &c)
    SymbolSpec_Init(c.symbol_spec);
 }
 
+// One closed bar's IDENTITY fields, normalized for hashing: time, OHLC,
+// tick_volume, and the HISTORICAL spread MT5 recorded for that bar.
+// real_volume is deliberately excluded - most brokers never populate it
+// (stays 0), so including it would add noise, not signal.
+string MarketContext_RatesHashFragment(const MqlRates &r)
+{
+   return TimeToString(r.time, TIME_DATE|TIME_SECONDS) + "|" +
+          DoubleToString(r.open, 5) + "|" + DoubleToString(r.high, 5) + "|" +
+          DoubleToString(r.low, 5) + "|" + DoubleToString(r.close, 5) + "|" +
+          IntegerToString((long)r.tick_volume) + "|" + IntegerToString(r.spread);
+}
+
 // Hash payload deliberately excludes context_event_id/context_hash
 // themselves (they're derived FROM this payload, not part of it) and
 // excludes account (runtime-only: balance/equity move between two builds
 // of the "same" bar and must not change what the context's identity
-// hashes to). Everything else - price/feature/news/symbol_spec fields -
-// is what actually defines "this market snapshot".
+// hashes to). Everything else - closed-bar OHLC across all 4 timeframes,
+// price/feature/session fields, and the full (canonically ordered) news
+// snapshot content - is what actually defines "this market snapshot".
+//
+// news[] MUST already be canonicalized (NewsSnapshot_Canonicalize) by
+// the caller before this runs - see FeatureEngine_BuildContext() - so
+// the hash reflects the news CONTENT, not whatever order the calendar/
+// CSV source happened to return rows in.
 string MarketContext_HashPayload(const MarketContext &c)
 {
    string s = c.instrument_id + "|" + c.broker_symbol + "|" + c.trigger_timeframe + "|" +
               TimeToString(c.anchor_bar_time, TIME_DATE|TIME_SECONDS) + "|" +
+              MarketContext_RatesHashFragment(c.m5_bar)  + "|" +
+              MarketContext_RatesHashFragment(c.m15_bar) + "|" +
+              MarketContext_RatesHashFragment(c.h1_bar)  + "|" +
+              MarketContext_RatesHashFragment(c.h4_bar)  + "|" +
               DoubleToString(c.bid_at_anchor, 5) + "|" + DoubleToString(c.ask_at_anchor, 5) + "|" +
+              DoubleToString(c.spread_points_at_anchor, 1) + "|" +
               DoubleToString(c.atr_m15, 5) + "|" + DoubleToString(c.adx_m15, 5) + "|" + DoubleToString(c.ema_slope_m15, 5) + "|" +
               DoubleToString(c.pdh, 5) + "|" + DoubleToString(c.pdl, 5) + "|" +
               DoubleToString(c.asian_range_high, 5) + "|" + DoubleToString(c.asian_range_low, 5) + "|" +
               c.session_id + "|" + (c.is_kill_zone ? "1" : "0") + "|" +
               IntegerToString(c.news_count) + "|" + IntegerToString(c.max_news_impact) + "|" + IntegerToString(c.nearest_news_minutes);
+
+   for(int i = 0; i < ArraySize(c.news); i++)
+      s += "|news" + IntegerToString(i) + ":" + NewsSnapshot_HashFragment(c.news[i]);
+
    return s;
 }
 
@@ -151,14 +178,18 @@ string MarketContext_ComputeHash(const MarketContext &c)
 // as a JSON fragment (no surrounding braces) for MARKET_CONTEXT_READY's
 // extra_json - so replay can see exactly what the Feature Engine built
 // for a given anchor bar without ever re-querying MT5 or the calendar.
-// MqlRates bars are reduced to OHLC+spread (tick_volume/real_volume
-// aren't part of the frozen B1 contract's decision inputs).
+// Carries the SAME fields MarketContext_RatesHashFragment() hashes
+// (time/OHLC/tick_volume/spread) - real_volume is excluded from both
+// (most brokers never populate it).
 string MarketContext_RatesToJson(const MqlRates &r)
 {
-   return StringFormat("{\"time\":\"%s\",\"open\":%s,\"high\":%s,\"low\":%s,\"close\":%s,\"spread\":%d}",
-      TimeToString(r.time, TIME_DATE|TIME_SECONDS),
-      DoubleToString(r.open, 5), DoubleToString(r.high, 5), DoubleToString(r.low, 5), DoubleToString(r.close, 5),
-      r.spread);
+   return "{\"time\":\"" + TimeToString(r.time, TIME_DATE|TIME_SECONDS) + "\"," +
+          "\"open\":" + DoubleToString(r.open, 5) + "," +
+          "\"high\":" + DoubleToString(r.high, 5) + "," +
+          "\"low\":"  + DoubleToString(r.low, 5) + "," +
+          "\"close\":" + DoubleToString(r.close, 5) + "," +
+          "\"tick_volume\":" + IntegerToString(r.tick_volume) + "," +
+          "\"spread\":" + IntegerToString(r.spread) + "}";
 }
 
 string MarketContext_ToJsonFragment(const MarketContext &c)

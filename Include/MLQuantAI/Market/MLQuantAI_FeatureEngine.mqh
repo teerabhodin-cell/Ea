@@ -159,6 +159,10 @@ MarketContext FeatureEngine_BuildContext()
    if(UseNewsFilter)
    {
       int n = News_BuildSnapshots(NewsCurrency, anchor, NewsMinutesBefore, NewsMinutesAfter, ctx.news);
+      // Canonical order BEFORE anything downstream reads ctx.news - both
+      // the hash payload and the logged JSON must see the same,
+      // source-order-independent sequence (see NewsSnapshot_Canonicalize).
+      NewsSnapshot_Canonicalize(ctx.news);
       ctx.news_count = n;
 
       int maxImpact = 0, nearestAbsMinutes = -1, nearestSignedMinutes = 0;
