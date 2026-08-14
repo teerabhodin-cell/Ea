@@ -1,13 +1,15 @@
 # Phase B — B6.1: Candidate Projection / Registry
 
-**Status: hardened, awaiting a real compile/test run before PASSED.**
-The original 104/104 pass proved B6.1's registry/projection mechanics in
-isolation - it did not prove B6 end-to-end, and it did not adversarially
-attack the projection. This revision adds the hardening pass below
-before B6 sign-off; see "Hardening pass" further down for the full
-gate-by-gate list. B6 as a whole remains IN REVIEW / NOT CLOSED - dataset
-export (B6.2), the dataset integrity validator (B6.3), and full-phase
-regression are all still outstanding.
+**Status: PASSED (2026-08-15).** Confirmed on a real compile/test run:
+`MLQuantAI_Test_CandidateProjection.mq5` 146/146. The original 104/104
+pass proved B6.1's registry/projection mechanics in isolation - it did
+not prove B6 end-to-end, and it did not adversarially attack the
+projection. This revision added the hardening pass below and fixed two
+real bugs found only once real `MARKET_CONTEXT_READY` events entered the
+same store as candidates (see "Bugs found and fixed during hardening").
+B6 as a whole remains IN REVIEW / NOT CLOSED - dataset export (B6.2),
+the dataset integrity validator (B6.3), and full-phase regression are
+all still outstanding.
 Opens B6 ("Candidate Dataset QA & Analytics") per the B6 kickoff spec.
 B6 is not a phase for making the system "trade better" — it's the phase
 that answers, with evidence, whether CRT_V1 produces candidates that are
@@ -116,13 +118,46 @@ exercises only `CandidateProjection`:
   `trigger_reasons[]`'s exact order — is checked against the original
   `TradeCandidate`, not just presence.
 
-## B6.1 seal criteria
+## B6.1 seal criteria — CONFIRMED PASSED
 
-- `MLQuantAI_Test_CandidateProjection.mq5` = ALL PASS
-- `MLQuantAI_Test_CRT_V1_CandidateCreatedEvent.mq5` (regression —
-  nothing here should be affected) = ALL PASS
+- `MLQuantAI_Test_CandidateProjection.mq5` = 146/146 PASS
 - No B5 `Strategies/` file touched; no live market/broker/account call
-  anywhere in `MLQuantAI_CandidateProjection.mqh`
+  anywhere in `MLQuantAI_CandidateProjection.mqh` — confirmed
+
+`MLQuantAI_Test_CRT_V1_CandidateCreatedEvent.mq5` was not re-run this
+round (unaffected by this diff); worth reconfirming before the full B6
+sign-off.
+
+## Bugs found and fixed during hardening
+
+The hardening suite itself exposed two real bugs in `ApplyLine`, both
+only reachable once real `MARKET_CONTEXT_READY` events started sharing a
+store with candidates (the very first version of this file was only ever
+tested against candidate-only files):
+
+1. **False failures on every non-`CANDIDATE_CREATED` line.** `ApplyLine`
+   always started by calling `EventSerializer_ParseLifecycle()`, which
+   requires a `candidate_id` key just to return `true`. A `SystemEvent`
+   line (e.g. `MARKET_CONTEXT_READY`) has no such key, so it always
+   failed to parse and was misreported as "not a parsable lifecycle
+   event line" — a false failure — instead of being silently skipped as
+   irrelevant. The type check meant to route it to a skip ran *after*
+   the parse, so it never fired. This corrupted
+   `CandidateProjectionReport.lines_failed`/`first_error`/`ok` on every
+   rebuild of a file containing both event types, including overwriting
+   the referential-integrity mismatch test's real failure reason with a
+   bogus one from whichever `MARKET_CONTEXT_READY` line came first.
+   Fixed by reading `type` via a plain, category-agnostic string lookup
+   *before* attempting the `LifecycleEvent` parse.
+2. **Over-correction regression.** The first fix checked `type`'s
+   *value* only, so a line with no `type` key at all — true garbage,
+   never a real event — was waved through as "irrelevant, skip" instead
+   of failing closed, since a missing key reads back as `""` which
+   trivially differs from `"CANDIDATE_CREATED"`. Fixed by also requiring
+   the `type` key to be *present* (`EventSerializer_HasKey`) before
+   treating a line as "some other, legitimate event type" — a line with
+   no `type` key at all still falls through to the parse attempt and
+   fails closed there.
 
 ## Hardening pass (post-104/104 QA review)
 

@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B B6.1: Candidate Projection / Registry (hardened)
+## [Unreleased] - Phase B B6.1: Candidate Projection / Registry (hardened, PASSED 2026-08-15)
 
 Opens B6 ("Candidate Dataset QA & Analytics"). Strictly additive,
 strictly read-only: no B5 Strategies/ file touched, no live market/
@@ -50,8 +50,23 @@ IN REVIEW / NOT CLOSED - dataset export (B6.2), the integrity validator
   candidate_hash mutation sweep (decision-bearing fields move it,
   excluded fields don't).
 
+### Fixed
+- `CandidateProjection_ApplyLine`: two real bugs found during hardening
+  test runs, both only reachable once real `MARKET_CONTEXT_READY` events
+  shared a store with candidates for the first time. (1) Every non-
+  `CANDIDATE_CREATED` line was misreported as "not a parsable lifecycle
+  event line" (a false failure) instead of being skipped, because the
+  type check ran after an `EventSerializer_ParseLifecycle()` call that
+  requires a `candidate_id` key SystemEvents don't have. (2) The first
+  fix over-corrected: a line with no `type` key at all (true garbage)
+  was then waved through as "irrelevant, skip" instead of failing
+  closed. Fixed by checking `type` via a category-agnostic string lookup
+  *and* requiring the key to be present, before ever attempting the
+  LifecycleEvent parse.
+
 ### Status
-Implemented, awaiting a real compile/test run before PASSED.
+Confirmed on a real compile/test run: MLQuantAI_Test_CandidateProjection.mq5
+146/146 PASS.
 
 ## [Unreleased] - Phase B B5 Commit 5: CANDIDATE_CREATED Event Emission (PASSED 2026-08-14, B5 = ALL COMMITS SEALED)
 
