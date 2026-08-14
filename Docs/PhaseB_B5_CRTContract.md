@@ -97,14 +97,23 @@ bit 6 (0x40)  CRT_REASON_BIT_KILLZONE         anchor bar fell inside a kill zone
 bit 7 (0x80)  CRT_REASON_BIT_NEWS_RISK        high-impact news was near the anchor bar
 ```
 
-Bits 0–5 (exactly one of {0,1}, bit 2, bit 3, exactly one of {4,5}) are
-**always all set together** on any `TradeCandidate` this module produces
-— they're the definition of "a CRT setup exists", not independent
-signals. Bits 6–7 are informational/audit-only: **B5 never gates on
-them** (no kill-zone-only or news-free requirement to create a
-candidate) — that's what makes them safe to compute from `ctx.is_kill_zone`
-/`ctx.news_count`/`ctx.max_news_impact` (already frozen B3/B4 fields) and
-attach to the reason tree for B6/B7 to actually act on later.
+Bits 0–5 are **always all set together** on any `TradeCandidate` this
+module produces — they're the definition of "a CRT setup exists", not
+independent signals, with two frozen invariants inside that group:
+
+```
+exactly one of: bit 0 (SWEEP_LOW)  | bit 1 (SWEEP_HIGH)   - never both, never neither
+exactly one of: bit 4 (FVG_FOUND)  | bit 5 (OB_FOUND)     - never both, never neither
+                                                              (§8's FVG_PRIORITY_THEN_OB_FALLBACK
+                                                               always resolves to exactly ONE zone
+                                                               kind - this is an XOR, not "at least one")
+```
+
+Bits 6–7 are informational/audit-only: **B5 never gates on them** (no
+kill-zone-only or news-free requirement to create a candidate) — that's
+what makes them safe to compute from `ctx.is_kill_zone`/`ctx.news_count`/
+`ctx.max_news_impact` (already frozen B3/B4 fields) and attach to the
+reason tree for B6/B7 to actually act on later.
 
 ## 3. `trigger_reasons[]` — ascending bit-order, frozen label vocabulary
 
@@ -226,6 +235,37 @@ Numeric formatting rule (matches `MarketContext_HashPayload`/
 decimal count — so `detector_hash` stays correct across instruments with
 different digit counts, not just XAUUSD.
 
+**`detector_hash` validity is scoped to `MLQUANTAI_CRT_V1_RULES_VERSION`,
+not just its own payload.** The payload above only covers this
+*detection's* outputs (swept level, MSS price, resolved zone, reason
+mask) — it does NOT directly hash `MLQUANTAI_CRT_V1_LOOKBACK_BARS`,
+`MLQUANTAI_CRT_V1_EXPIRY_AFTER_BARS`, the minimum-FVG-gap threshold, or
+the FVG/OB resolution policy (§8) themselves. Two detector versions with
+different frozen parameters could theoretically produce the same
+`detector_hash` for coincidentally-matching outputs. This is why §6
+already requires bumping `MLQUANTAI_CRT_V1_RULES_VERSION` (which feeds
+`candidate_id`, not `detector_hash`) on ANY semantic change to these
+parameters — `candidate_id`, not `detector_hash` alone, is what actually
+namespaces "which rule version produced this." Restated plainly:
+**any change to §8/§9's frozen parameters is a `CRT_V2`, full stop —
+`detector_hash`'s own payload is not a substitute for that discipline.**
+
+## 7A. Zone resolution policy name (frozen label)
+
+§8's resolution rule has one frozen name, used everywhere this contract
+or its tests refer to it — **not** "FVG or OB" (which reads as "either
+counts as evidence"):
+
+```
+MLQUANTAI_CRT_V1_ZONE_POLICY = "FVG_PRIORITY_THEN_OB_FALLBACK"
+```
+
+This is **not** a "FVG_OR_OB dual evidence" policy — CRT_V1 always
+resolves to exactly ONE zone kind (see the bit-4/bit-5 invariant in §2),
+never both, never "either is fine." Naming it precisely here is meant to
+stop a future reader (B6 dataset analysis included) from assuming both
+zone kinds were ever independently confirmed on the same candidate.
+
 ## 8. `FVG_OR_OB` resolution semantics
 
 After MSS confirmation, scan the impulse leg (the bars from the sweep bar
@@ -238,12 +278,14 @@ through the MSS confirmation bar, inclusive, all sourced from
 - a qualifying **Order Block** — the last opposing-color candle
   immediately before the impulse leg's displacement candle
 
-**Resolution priority (frozen):** prefer the FVG closest to the swept
-price (the earliest-formed FVG in the impulse leg) if one qualifies; fall
-back to the Order Block only if no qualifying FVG exists in the impulse
-leg. If **neither** exists, detection fails closed — no candidate is
-created (this is the "MSS but no valid FVG/OB retest" fixture in Commit
-3's list). `resolved_zone_kind` records which one won.
+**Resolution priority (frozen, named `MLQUANTAI_CRT_V1_ZONE_POLICY =
+"FVG_PRIORITY_THEN_OB_FALLBACK"`, see §7A):** prefer the FVG closest to
+the swept price (the earliest-formed FVG in the impulse leg) if one
+qualifies; fall back to the Order Block only if no qualifying FVG exists
+in the impulse leg. If **neither** exists, detection fails closed — no
+candidate is created (this is the "MSS but no valid FVG/OB retest"
+fixture in Commit 3's list). `resolved_zone_kind` records which one won —
+exactly one, never both (§2's bit-4/bit-5 XOR invariant).
 
 **Frozen parameters** (strategy policy, not architecture — conservative
 defaults chosen specifically to unblock implementation; these are the
@@ -386,6 +428,7 @@ beyond what's already inside `MarketContext`, any change to
 B5 = SEALED when the detector is a pure function of `MarketContext` +
 the frozen CRT_V1 parameters (+ the news-snapshot identity already inside
 `ctx`, nothing separately queried) only; replaying the Event Store
-reproduces identical candidate lineage without depending on broker
-timezone, current session, or any live trading state. Next: **B6
-Candidate QA / dataset analysis.**
+reproduces identical candidate lineage from the same persisted
+`MarketContext` without depending on current session, live market data,
+or any live trading state. Cross-broker timestamp identity is explicitly
+out of scope — see §4. Next: **B6 Candidate QA / dataset analysis.**
