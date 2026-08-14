@@ -4,6 +4,35 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B B5 Commit 4: CRT_ToTradeCandidate (pure mapping) (PASSED 2026-08-14)
+
+Implements the Commit 4 boundary: `bool CRT_ToTradeCandidate(ctx, crt,
+outCandidate)` - copy/map only from Commit 3's `CRTDetectionResult`,
+never recompute detector truth. Returns false (candidate left at
+`TradeCandidate_Init()` defaults) on `crt.detected == false`; no Event
+Store write, no state-machine call, no `CANDIDATE_CREATED` event either
+way - that's Commit 5. See Docs/PhaseB_B5_Commit4.md.
+
+### Added
+- `Strategies/MLQuantAI_CRT_V1_ToTradeCandidate.mqh` (new):
+  `CRT_ToTradeCandidate`, `CRT_CandidateHash`/`CRT_CandidateHashPayload`.
+- `Core/MLQuantAI_TradeCandidate.mqh`: `detector_hash` (copied verbatim
+  from `CRTDetectionResult.detector_hash`, never recomputed) and
+  `candidate_hash` (new - a canonical hash over the candidate's own
+  deterministic content, computed last, deliberately excluding
+  account/spread/broker state/wall-clock and every B6/B7-owned mutable
+  field) - both additive.
+- `Tests/MLQuantAI_Test_CRT_V1_ToTradeCandidate.mq5` (new): full mapping
+  correctness (both directions), the non-detection guard, the
+  `detector_hash`/`candidate_hash` invariants, a 1000-repeat
+  `candidate_hash` determinism loop, account-mutation independence,
+  detector-input-not-mutated, and the `candidate_id`-differs-across-
+  rules-versions acceptance gate.
+
+### Status
+Confirmed on a real compile/test run: MLQuantAI_Test_CRT_V1_ToTradeCandidate.mq5
+79/79 PASS.
+
 ## [Unreleased] - Phase B B5 Commit 3: Pure CRT_V1 Detection Rules (PASSED 2026-08-14)
 
 Implements the detection logic Docs/PhaseB_B5_CRTContract.md (Commit 1,
