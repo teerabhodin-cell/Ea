@@ -5,6 +5,12 @@
 //| enforcement, and the seal criteria tying it all to MarketContext. |
 //| No CRT/TradeCandidate/execution code exercised anywhere here.     |
 //|                                                                    |
+//| Companion tests (run alongside this one for the full B4 DoD):      |
+//| Tests/MLQuantAI_Test_NewsReplayIsolation.mq5 (source-free replay   |
+//| verified at runtime, not just asserted by construction) and        |
+//| Tests/MLQuantAI_Test_NewsSchemaEvolution.mq5 (additive V2 metadata |
+//| fields don't disturb news_decision_hash/context_hash).             |
+//|                                                                    |
 //| REQUIRES: Tests/Fixtures/MLQuantAI_NewsParityFixture_V1.csv copied|
 //| into this terminal's Common\Files folder before running.          |
 //+------------------------------------------------------------------+
@@ -450,21 +456,6 @@ void Test_Seal_MetadataOnlyChangesDontMoveDecisionHash()
          "news_snapshot_identity DOES change on the same metadata differences - that's its entire purpose (B5 lineage/audit trail)");
 }
 
-// Structural note: replay reconstructs MarketContext.news[]/
-// news_decision_hash/news_snapshot_identity straight from the already-
-// logged MARKET_CONTEXT_READY event (Infrastructure/EventStore/
-// MLQuantAI_ReplayEngine.mqh's StateProjector never calls
-// NewsEngine_Build() or touches any INewsSource) - proven by
-// construction (NewsEngine_Build is only ever called from
-// FeatureEngine_BuildContext(), which OnTick calls for a NEW bar, never
-// from the replay path), not by a runtime assertion here.
-void Test_Seal_ReplayNeverCallsSources()
-{
-   Print("--- Seal: replay never re-touches a news source ---");
-   Check(true, "enforced by construction - NewsEngine_Build() is only called from FeatureEngine_BuildContext() "
-               "(OnTick, new-bar path), never from ReplayEngine/StateProjector (see Docs/PhaseB_B4_NewsParity.md)");
-}
-
 void Test_Seal_LineageFieldsInMarketContextReadyPayload()
 {
    Print("--- Seal: B5 lineage fields (normalized_event_key/revision_id/source_priority) appear in MARKET_CONTEXT_READY ---");
@@ -539,7 +530,6 @@ void OnStart()
    Test_CsvSource_MalformedSchema_FailsClosed();
 
    Test_Seal_MetadataOnlyChangesDontMoveDecisionHash();
-   Test_Seal_ReplayNeverCallsSources();
    Test_Seal_LineageFieldsInMarketContextReadyPayload();
 
    Print("=== Result: ", g_TestsPassed, "/", g_TestsRun, " checks passed ===");

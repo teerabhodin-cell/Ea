@@ -32,6 +32,17 @@ struct RawNewsEvent
    int      source_priority;      // News_Deduplicate's tie-break input when two sources report the same normalized_event_key
    string   revision_id;          // "" if the source doesn't track revisions
    datetime revision_timestamp;   // 0 if unknown
+
+   // Phase B B4 seal hardening: additive, optional consensus/actual data -
+   // "" when a source doesn't provide it (both current concrete sources
+   // leave these at ""; the frozen 7-column CSV format is UNCHANGED, these
+   // are NOT CSV columns). Proves the pipeline tolerates a schema growing
+   // new fields before B5 ever depends on a specific NormalizedNewsEvent
+   // shape - see MLQuantAI_NewsCanonicalizer.mqh's News_SnapshotIdentity
+   // and Tests/MLQuantAI_Test_NewsSchemaEvolution.mq5.
+   string   forecast;
+   string   actual;
+   string   previous;
 };
 
 void RawNewsEvent_Init(RawNewsEvent &e)
@@ -47,6 +58,9 @@ void RawNewsEvent_Init(RawNewsEvent &e)
    e.source_priority = 0;
    e.revision_id = "";
    e.revision_timestamp = 0;
+   e.forecast = "";
+   e.actual = "";
+   e.previous = "";
 }
 
 // One news source. Both concrete sources (LiveCalendarNewsSource,

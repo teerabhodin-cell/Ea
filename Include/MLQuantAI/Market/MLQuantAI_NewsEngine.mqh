@@ -189,6 +189,15 @@ input string NewsSourceCsvFileName = "MLQuantAI_NewsSourceV1.csv"; // CsvStaticN
 
 CsvStaticNewsSource *g_NewsEngine_CsvSource = NULL;
 
+// Phase B B4 seal hardening: NewsEngine_Build() is the ONLY function in
+// the whole project that ever touches an INewsSource (see its own
+// comment below) - this counter turns that architectural claim into a
+// mechanically checked one. Tests/MLQuantAI_Test_NewsReplayIsolation.mq5
+// snapshots this before/after a build+persist+replay sequence and
+// asserts it never moved during the replay portion, instead of just
+// asserting "true, by construction".
+int g_NewsEngine_BuildCallCount = 0;
+
 struct NewsEngineResult
 {
    bool         ok;
@@ -267,6 +276,8 @@ void NewsEngine_DeinitCsvSource()
 // Docs/PhaseB_B4_NewsParity.md.
 NewsEngineResult NewsEngine_Build(datetime anchorTime)
 {
+   g_NewsEngine_BuildCallCount++;
+
    NewsEngineResult result;
    NewsEngineResult_Init(result);
 
