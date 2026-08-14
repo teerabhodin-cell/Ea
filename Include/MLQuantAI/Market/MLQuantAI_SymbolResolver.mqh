@@ -35,7 +35,7 @@ string SymbolResolver_BuiltInAliases(string instrumentId)
    string upper = instrumentId;
    StringToUpper(upper);
    if(upper == "XAUUSD")
-      return "GOLD,GOLD.,GOLDm,GOLDc,GOLD-ECN,GOLD#,XAU/USD,XAUUSD.raw";
+      return "GOLD,GOLD.,GOLDm,GOLDc,GOLD-ECN,GOLD#,GOLD.raw,XAU/USD";
    return "";
 }
 
