@@ -71,6 +71,15 @@ void Test_ContextReadyAndPayloadComplete()
    Check(ctx.h1_bar.time != 0,  "h1_bar was populated");
    Check(ctx.h4_bar.time != 0,  "h4_bar was populated");
 
+   // Phase B B5: trigger_tf_recent[] - see Tests/MLQuantAI_Test_CRTContextWindow.mq5
+   // for the full window-rules coverage (ordering, anchor equality, hash/
+   // replay parity); this is just the payload-completeness check.
+   int recentN = ArraySize(ctx.trigger_tf_recent);
+   Check(recentN > 0, "trigger_tf_recent[] was populated (Phase B B5)");
+   if(recentN > 0)
+      Check(ctx.trigger_tf_recent[recentN - 1].time == ctx.anchor_bar_time,
+            "trigger_tf_recent[]'s last element matches anchor_bar_time");
+
    Check(ctx.symbol_spec.instrument_id == ctx.instrument_id, "embedded symbol_spec.instrument_id matches the context's own instrument_id");
    Check(ctx.symbol_spec.broker_symbol == ctx.broker_symbol, "embedded symbol_spec.broker_symbol matches the context's own broker_symbol");
    Check(ctx.news_count >= 0, "news_count was computed (>= 0)");
@@ -156,6 +165,7 @@ void Test_LoggedPayloadIsComplete()
    Check(StringFind(line, "\"broker_symbol\"") >= 0,              "payload contains broker_symbol");
    Check(StringFind(line, "\"anchor_bar_time\"") >= 0,             "payload contains anchor_bar_time");
    Check(StringFind(line, "\"m5_bar\"") >= 0 && StringFind(line, "\"h4_bar\"") >= 0, "payload contains OHLC bar snapshots (m5..h4)");
+   Check(StringFind(line, "\"trigger_tf_recent\"") >= 0, "payload contains trigger_tf_recent[] (Phase B B5)");
    Check(StringFind(line, "\"news\":[") >= 0,                        "payload embeds the NewsSnapshot array itself, not just a count");
    Check(StringFind(line, "\"news_count\"") >= 0,                     "payload contains news_count");
    Check(StringFind(line, "\"news_decision_hash\"") >= 0,               "payload contains news_decision_hash (Phase B B4)");
