@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B B6.1: Candidate Projection / Registry
+## [Unreleased] - Phase B B6.1: Candidate Projection / Registry (hardened)
 
 Opens B6 ("Candidate Dataset QA & Analytics"). Strictly additive,
 strictly read-only: no B5 Strategies/ file touched, no live market/
@@ -16,19 +16,39 @@ silently resolved) gap: several B6.2 canonical-dataset columns
 news_decision_hash/news_snapshot_identity) aren't in any persisted
 CANDIDATE_CREATED event yet - deferred to B6.2's own kickoff decision.
 
+Hardened after a QA review of the initial 104/104 pass, which proved
+B6.1's mechanics but not adversarial robustness. The most important
+fix: candidate_id reuse with a DIFFERENT candidate_hash is now rejected
+as a collision/conflict, never silently treated as an idempotent
+duplicate - the original version would have hidden exactly that class
+of corruption. See Docs/PhaseB_B6_1_CandidateProjection.md's "Hardening
+pass" section for the full gate-by-gate list (schema/time/numerical/
+enum/reason-mask/resource-limit integrity, referential integrity against
+MARKET_CONTEXT_READY, ordering/atomicity via EventStoreValidator-gated
+rebuilds, restart/crash simulation, multi-session, a candidate_hash
+mutation sweep, and a 25-candidate scale test). B6 as a whole remains
+IN REVIEW / NOT CLOSED - dataset export (B6.2), the integrity validator
+(B6.3), and full-phase regression are still outstanding.
+
 ### Added
 - `Infrastructure/EventStore/MLQuantAI_CandidateProjection.mqh` (new):
-  `CandidateProjectionRecord`, `CandidateProjection_ApplyLine`,
-  `CandidateProjection_TryGet`, `CandidateProjection_RebuildFromFile`,
-  `CandidateProjectionReport`.
+  `CandidateProjectionRecord`, `CandidateProjection_ApplyLine` (now with
+  full schema/time/numerical/enum/reason-mask/resource-limit validation
+  and payload-aware collision detection), `CandidateProjection_TryGet`,
+  `CandidateProjection_CollectContextHashes`/`_ApplyLineWithContext`
+  (referential integrity against MARKET_CONTEXT_READY),
+  `CandidateProjection_RebuildFromFile` (now EventStoreValidator-gated -
+  ordering/atomicity), `CandidateProjectionReport`.
 - `Infrastructure/EventStore/MLQuantAI_EventSerializer.mqh`:
   `EventSerializer_GetStringArray` - a generic `"key":["a","b"]` reader,
   promoted from a pattern previously hand-duplicated in three test files.
-- `Tests/MLQuantAI_Test_CandidateProjection.mq5` (new): one-event-one-
-  record, duplicate-idempotent, two-candidates-lookupable, three
-  fail-closed malformed-line cases, rebuild-equals-incremental, and
-  replay-twice-is-identical - using the real B5 pipeline to produce
-  genuine candidates.
+- `Tests/MLQuantAI_Test_CandidateProjection.mq5` (rewritten, real
+  MARKET_CONTEXT_READY events now persisted per candidate): the original
+  6 B6.1 gates plus collision, schema, time, numerical, enum, trigger-
+  reasons, resource-limit, referential-integrity, ordering, atomicity,
+  restart/crash, multi-session, 25-candidate-scale, and a full
+  candidate_hash mutation sweep (decision-bearing fields move it,
+  excluded fields don't).
 
 ### Status
 Implemented, awaiting a real compile/test run before PASSED.
