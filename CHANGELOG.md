@@ -4,6 +4,35 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B B6.1: Candidate Projection / Registry
+
+Opens B6 ("Candidate Dataset QA & Analytics"). Strictly additive,
+strictly read-only: no B5 Strategies/ file touched, no live market/
+broker/account call - the registry is built purely from persisted
+CANDIDATE_CREATED lines via EventStore_ReadAllLines. See
+Docs/PhaseB_B6_1_CandidateProjection.md, including a flagged (not
+silently resolved) gap: several B6.2 canonical-dataset columns
+(swept_level/resolved_zone_*/instrument_id/trigger_timeframe/
+news_decision_hash/news_snapshot_identity) aren't in any persisted
+CANDIDATE_CREATED event yet - deferred to B6.2's own kickoff decision.
+
+### Added
+- `Infrastructure/EventStore/MLQuantAI_CandidateProjection.mqh` (new):
+  `CandidateProjectionRecord`, `CandidateProjection_ApplyLine`,
+  `CandidateProjection_TryGet`, `CandidateProjection_RebuildFromFile`,
+  `CandidateProjectionReport`.
+- `Infrastructure/EventStore/MLQuantAI_EventSerializer.mqh`:
+  `EventSerializer_GetStringArray` - a generic `"key":["a","b"]` reader,
+  promoted from a pattern previously hand-duplicated in three test files.
+- `Tests/MLQuantAI_Test_CandidateProjection.mq5` (new): one-event-one-
+  record, duplicate-idempotent, two-candidates-lookupable, three
+  fail-closed malformed-line cases, rebuild-equals-incremental, and
+  replay-twice-is-identical - using the real B5 pipeline to produce
+  genuine candidates.
+
+### Status
+Implemented, awaiting a real compile/test run before PASSED.
+
 ## [Unreleased] - Phase B B5 Commit 5: CANDIDATE_CREATED Event Emission (PASSED 2026-08-14, B5 = ALL COMMITS SEALED)
 
 Implements the final Commit 5 boundary: `TradeCandidate ->
