@@ -324,7 +324,15 @@ bool CandidateProjection_ApplyLine(string line, string &outReason)
    // CandidateProjectionReport.lines_failed and swallow the real
    // first_error from whatever line actually needed to be reported)
    // instead of being silently skipped as irrelevant.
-   if(EventSerializer_GetStr(line, "type") != EventTypeToString(EVENT_TYPE_CANDIDATE_CREATED))
+   //
+   // Deliberately gated on the "type" KEY BEING PRESENT, not just its
+   // value - a line with no "type" key at all (truncated/garbage, never
+   // a real event of any kind) must still fall through to the parse
+   // attempt below and fail closed there, not be waved through as
+   // "just some other event type". Only a line that genuinely carries a
+   // *different* recognized type is skipped as irrelevant.
+   if(EventSerializer_HasKey(line, "type") &&
+      EventSerializer_GetStr(line, "type") != EventTypeToString(EVENT_TYPE_CANDIDATE_CREATED))
    {
       outReason = "not a CANDIDATE_CREATED event - skipped, not relevant to this projection";
       return true;
