@@ -16,21 +16,18 @@
 //| - breaking the determinism the whole Event Store / replay design |
 //| depends on. See Docs/PhaseB_B1_ContractFreeze.md.                 |
 //|                                                                    |
-//| NOTE - this is a SEPARATE struct from the Step 9                  |
-//| Core/MLQuantAI_MarketContext.mqh (Phase A/Step 9's MarketContext, |
-//| still used by the live Data Hub/Feature Engine/MLQuantAI.mq5).    |
-//| B1 only freezes the new contract; migrating the Data Hub/Feature  |
-//| Engine to build THIS struct instead is B2/B3's job, not B1's -    |
-//| B1 is explicitly contract-only, no DataHub/FeatureEngine changes. |
-//| Until that migration, two "MarketContext" structs exist in two    |
-//| different files/namespaces by design; nothing includes both in    |
-//| the same translation unit today.                                  |
+//| Phase B B3 migrated the Data Hub/Feature Engine to build THIS      |
+//| struct (see Market/MLQuantAI_FeatureEngine.mqh's                   |
+//| FeatureEngine_BuildContext()); the old Step 9 struct this coexisted|
+//| with (Core/MLQuantAI_MarketContext.mqh) was deleted in the same    |
+//| pass once nothing referenced it anymore.                           |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_MARKET_MARKETCONTEXT_MQH__
 #define __MLQUANTAI_MARKET_MARKETCONTEXT_MQH__
 
 #include "../Core/MLQuantAI_ContractVersions.mqh"
 #include "../Core/MLQuantAI_AccountSnapshot.mqh"
+#include "../Core/MLQuantAI_Ids.mqh"
 #include "MLQuantAI_NewsSnapshot.mqh"
 #include "MLQuantAI_SymbolSpec.mqh"
 
@@ -136,6 +133,75 @@ string MarketContext_HashPayload(const MarketContext &c)
               DoubleToString(c.asian_range_high, 5) + "|" + DoubleToString(c.asian_range_low, 5) + "|" +
               c.session_id + "|" + (c.is_kill_zone ? "1" : "0") + "|" +
               IntegerToString(c.news_count) + "|" + IntegerToString(c.max_news_impact) + "|" + IntegerToString(c.nearest_news_minutes);
+   return s;
+}
+
+// Truncated SHA-256 over MarketContext_HashPayload() - same hashing
+// primitive Core/MLQuantAI_Ids.mqh uses for deterministic IDs. Callers
+// (FeatureEngine_BuildContext) should set c.context_hash to this AFTER
+// every other field is filled in, so the hash reflects the finished
+// context. Phase B B3's determinism test rebuilds the same anchor bar
+// repeatedly and asserts this never changes.
+string MarketContext_ComputeHash(const MarketContext &c)
+{
+   return Ids_Sha256Hex(MarketContext_HashPayload(c));
+}
+
+// Serializes the full context (including the embedded NewsSnapshot[])
+// as a JSON fragment (no surrounding braces) for MARKET_CONTEXT_READY's
+// extra_json - so replay can see exactly what the Feature Engine built
+// for a given anchor bar without ever re-querying MT5 or the calendar.
+// MqlRates bars are reduced to OHLC+spread (tick_volume/real_volume
+// aren't part of the frozen B1 contract's decision inputs).
+string MarketContext_RatesToJson(const MqlRates &r)
+{
+   return StringFormat("{\"time\":\"%s\",\"open\":%s,\"high\":%s,\"low\":%s,\"close\":%s,\"spread\":%d}",
+      TimeToString(r.time, TIME_DATE|TIME_SECONDS),
+      DoubleToString(r.open, 5), DoubleToString(r.high, 5), DoubleToString(r.low, 5), DoubleToString(r.close, 5),
+      r.spread);
+}
+
+string MarketContext_ToJsonFragment(const MarketContext &c)
+{
+   string s = "";
+   s += "\"context_event_id\":\""              + c.context_event_id + "\",";
+   s += "\"context_hash\":\""                   + c.context_hash + "\",";
+   s += "\"market_context_schema_version\":\""  + c.market_context_schema_version + "\",";
+   s += "\"feature_schema_version\":\""         + c.feature_schema_version + "\",";
+   s += "\"news_schema_version\":\""            + c.news_schema_version + "\",";
+   s += "\"instrument_id\":\""                  + c.instrument_id + "\",";
+   s += "\"broker_symbol\":\""                  + c.broker_symbol + "\",";
+   s += "\"trigger_timeframe\":\""               + c.trigger_timeframe + "\",";
+   s += "\"anchor_bar_time\":\""                  + TimeToString(c.anchor_bar_time, TIME_DATE|TIME_SECONDS) + "\",";
+   s += "\"m5_bar\":"   + MarketContext_RatesToJson(c.m5_bar) + ",";
+   s += "\"m15_bar\":"  + MarketContext_RatesToJson(c.m15_bar) + ",";
+   s += "\"h1_bar\":"   + MarketContext_RatesToJson(c.h1_bar) + ",";
+   s += "\"h4_bar\":"   + MarketContext_RatesToJson(c.h4_bar) + ",";
+   s += "\"bid_at_anchor\":"           + DoubleToString(c.bid_at_anchor, 5) + ",";
+   s += "\"ask_at_anchor\":"           + DoubleToString(c.ask_at_anchor, 5) + ",";
+   s += "\"spread_points_at_anchor\":" + DoubleToString(c.spread_points_at_anchor, 1) + ",";
+   s += "\"atr_m15\":"       + DoubleToString(c.atr_m15, 5) + ",";
+   s += "\"adx_m15\":"       + DoubleToString(c.adx_m15, 5) + ",";
+   s += "\"ema_slope_m15\":" + DoubleToString(c.ema_slope_m15, 5) + ",";
+   s += "\"pdh\":" + DoubleToString(c.pdh, 5) + ",";
+   s += "\"pdl\":" + DoubleToString(c.pdl, 5) + ",";
+   s += "\"asian_range_high\":" + DoubleToString(c.asian_range_high, 5) + ",";
+   s += "\"asian_range_low\":"  + DoubleToString(c.asian_range_low, 5) + ",";
+   s += "\"session_id\":\"" + c.session_id + "\",";
+   s += "\"is_kill_zone\":" + (c.is_kill_zone ? "true" : "false") + ",";
+   s += "\"news\":" + NewsSnapshot_ArrayToJson(c.news) + ",";
+   s += "\"news_count\":" + IntegerToString(c.news_count) + ",";
+   s += "\"max_news_impact\":" + IntegerToString(c.max_news_impact) + ",";
+   s += "\"nearest_news_minutes\":" + IntegerToString(c.nearest_news_minutes) + ",";
+   // account is excluded from context_hash (runtime-only, see
+   // MarketContext_HashPayload) but is still worth logging here for
+   // audit - it's just not part of the context's identity.
+   s += "\"account_balance\":" + DoubleToString(c.account.balance, 2) + ",";
+   s += "\"account_equity\":"  + DoubleToString(c.account.equity, 2) + ",";
+   s += "\"symbol_spec_schema_version\":\"" + c.symbol_spec.symbol_spec_schema_version + "\",";
+   s += "\"symbol_spec_digits\":" + IntegerToString(c.symbol_spec.digits) + ",";
+   s += "\"symbol_spec_tick_size\":" + DoubleToString(c.symbol_spec.tick_size, 5) + ",";
+   s += "\"symbol_spec_tick_value\":" + DoubleToString(c.symbol_spec.tick_value, 5);
    return s;
 }
 
