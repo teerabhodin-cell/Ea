@@ -4,6 +4,42 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B B4 seal hardening
+
+Two DoD gates from the original B4 pass weren't genuinely runtime-tested:
+`Test_Seal_ReplayNeverCallsSources` only asserted `Check(true, "enforced
+by construction")`, and additive schema evolution was never exercised at
+all. See `Docs/PhaseB_B4_NewsParity.md`.
+
+### Added
+- `Market/MLQuantAI_NewsSource.mqh` / `Market/MLQuantAI_NewsCanonicalizer.mqh`:
+  `forecast`/`actual`/`previous` additive fields on `RawNewsEvent`/
+  `NormalizedNewsEvent` (both "" by default, not CSV columns - the frozen
+  7-column format is unchanged). Folded into `News_SnapshotIdentity()`'s
+  payload; deliberately excluded from `News_DecisionHash()` and from
+  `NewsSnapshot`/`News_ToSnapshot()` itself.
+- `Market/MLQuantAI_NewsEngine.mqh`: `g_NewsEngine_BuildCallCount` -
+  increments once per `NewsEngine_Build()` call, turning "replay never
+  touches a source" from an architectural claim into something a test can
+  mechanically check.
+- `Tests/MLQuantAI_Test_NewsReplayIsolation.mq5`: builds a `MarketContext`
+  via the pure canonicalizer pipeline only (no `INewsSource` touched),
+  persists `MARKET_CONTEXT_READY`, closes the store, re-opens a fresh
+  handle, and asserts the replayed `news_decision_hash`/
+  `news_snapshot_identity`/`context_hash`/`NewsSnapshot[]` match exactly
+  what was computed before persisting - and that `g_NewsEngine_
+  BuildCallCount` never moved across the whole sequence.
+- `Tests/MLQuantAI_Test_NewsSchemaEvolution.mq5`: additive `forecast`/
+  `actual`/`previous` metadata moves `news_snapshot_identity` but never
+  `news_decision_hash`/`context_hash`; `normalized_event_key` stays
+  stable regardless; the frozen V1 CSV fixture still loads/normalizes
+  correctly (new fields read back empty, not misaligned/garbage) after
+  the schema grew.
+
+### Removed
+- `Tests/MLQuantAI_Test_NewsParity.mq5`: `Test_Seal_ReplayNeverCallsSources`
+  - superseded by `Test_NewsReplayIsolation.mq5`'s runtime-verified check.
+
 ## [Unreleased] - Phase B B4: News Parity Layer
 
 One Raw -> Normalize -> Dedup -> Sort/Select pipeline shared by the live

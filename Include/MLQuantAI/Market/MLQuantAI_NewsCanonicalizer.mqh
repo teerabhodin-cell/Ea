@@ -53,6 +53,16 @@ struct NormalizedNewsEvent
    string   source_version;
    string   source_content_hash;
    int      source_priority;
+
+   // Phase B B4 seal hardening: additive, optional - see RawNewsEvent's
+   // matching fields in MLQuantAI_NewsSource.mqh for why these exist.
+   // Carried through News_NormalizedEvent_From_Raw() and folded into
+   // News_SnapshotIdentity() (audit trail) but deliberately excluded from
+   // News_DecisionHash() and NewsSnapshot itself - see
+   // Tests/MLQuantAI_Test_NewsSchemaEvolution.mq5.
+   string   forecast;
+   string   actual;
+   string   previous;
 };
 
 void NormalizedNewsEvent_Init(NormalizedNewsEvent &e)
@@ -73,6 +83,10 @@ void NormalizedNewsEvent_Init(NormalizedNewsEvent &e)
    e.source_version = "";
    e.source_content_hash = "";
    e.source_priority = 0;
+
+   e.forecast = "";
+   e.actual = "";
+   e.previous = "";
 }
 
 //---------------------------------------------------------------------
@@ -182,6 +196,10 @@ void News_NormalizedEvent_From_Raw(const RawNewsEvent &raw, datetime anchorTimeU
    out.source_version         = raw.source_version;
    out.source_content_hash     = raw.source_content_hash;
    out.source_priority          = raw.source_priority;
+
+   out.forecast = raw.forecast;
+   out.actual   = raw.actual;
+   out.previous = raw.previous;
 }
 
 int News_NormalizeAll(const RawNewsEvent &rawArr[], datetime anchorTimeUtc, NormalizedNewsEvent &outArr[])
@@ -336,19 +354,25 @@ string News_DecisionHash(const NormalizedNewsEvent &arr[])
 
 // news_snapshot_identity: hash of the full selected set INCLUDING
 // lineage/provenance (normalized_event_key, calendar_event_id,
-// revision_id, revision_timestamp, source_kind, source_priority) -
-// changes whenever ANY metadata changes, even when the decision-relevant
-// fields stay the same (e.g. a revision correction, or a different
-// source_priority tie-break winner). This is the audit-trail hash B5's
-// dataset lineage keys off - distinct from news_decision_hash, which
-// stays stable across exactly these kinds of metadata-only changes.
+// revision_id, revision_timestamp, source_kind, source_priority, and -
+// Phase B B4 seal hardening - forecast/actual/previous) - changes
+// whenever ANY metadata changes, even when the decision-relevant fields
+// stay the same (e.g. a revision correction, a different source_priority
+// tie-break winner, or a consensus/actual value updating). This is the
+// audit-trail hash B5's dataset lineage keys off - distinct from
+// news_decision_hash, which stays stable across exactly these kinds of
+// metadata-only changes. Safe to extend the payload here (same
+// reasoning as MLQuantAI_MarketContext.mqh's MarketContext_HashPayload
+// change): no candidate dataset yet depends on a historical
+// news_snapshot_identity value, since B5 hasn't started.
 string News_SnapshotIdentity(const NormalizedNewsEvent &arr[])
 {
    string payload = "";
    for(int i = 0; i < ArraySize(arr); i++)
       payload += arr[i].normalized_event_key + "|" + arr[i].calendar_event_id + "|" +
                  arr[i].revision_id + "|" + TimeToString(arr[i].revision_timestamp, TIME_DATE|TIME_SECONDS) + "|" +
-                 arr[i].source_kind + "|" + IntegerToString(arr[i].source_priority) + ";";
+                 arr[i].source_kind + "|" + IntegerToString(arr[i].source_priority) + "|" +
+                 arr[i].forecast + "|" + arr[i].actual + "|" + arr[i].previous + ";";
    return Ids_Sha256Hex(payload);
 }
 

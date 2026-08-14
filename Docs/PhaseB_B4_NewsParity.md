@@ -208,7 +208,28 @@ trigger bar. `Infrastructure/EventStore/MLQuantAI_ReplayEngine.mqh`'s
 `news_decision_hash`, `news_snapshot_identity`) — it never calls
 `NewsEngine_Build()` or touches an `INewsSource`. This is true by
 construction (there is exactly one call site for `NewsEngine_Build()` in
-the whole project), not enforced by a runtime assertion.
+the whole project) — and, as of the B4 seal-hardening pass, mechanically
+verified: `g_NewsEngine_BuildCallCount` (`Market/MLQuantAI_NewsEngine.mqh`)
+increments once per `NewsEngine_Build()` call, and `Tests/MLQuantAI_
+Test_NewsReplayIsolation.mq5` snapshots it before/after a full build ->
+persist -> close -> fresh-file-read sequence and asserts it never moved.
+
+## Additive schema evolution
+
+`RawNewsEvent`/`NormalizedNewsEvent` carry three additive, optional
+fields — `forecast`/`actual`/`previous` (`Market/MLQuantAI_NewsSource.mqh`
+/ `Market/MLQuantAI_NewsCanonicalizer.mqh`), "" when a source doesn't
+report them (both current concrete sources leave them empty; the frozen
+7-column CSV format is unchanged — these are NOT CSV columns). They flow
+into `News_SnapshotIdentity()`'s payload (the audit-trail hash moves when
+they differ) but are deliberately excluded from `News_DecisionHash()` and
+from `NewsSnapshot`/`News_ToSnapshot()` itself, so `context_hash` and the
+embedded contract are untouched by their presence. This exists
+specifically to prove — before B5 depends on the shape staying fixed —
+that the pipeline tolerates a schema growing new fields without moving
+the hashes anything downstream already trusts, and that old ("V1") data
+carrying none of these fields keeps parsing and hashing exactly as
+before. See `Tests/MLQuantAI_Test_NewsSchemaEvolution.mq5`.
 
 ## Test coverage (`Tests/MLQuantAI_Test_NewsParity.mq5`)
 
@@ -241,20 +262,29 @@ the existing `MLQuantAI_News.csv` fixture).
   fail closed with a reason.
 - **Seal criteria** — metadata-only differences (`revision_id`/
   `source_kind`/`source_priority`) leave `news_decision_hash` unchanged
-  while still moving `news_snapshot_identity`; the replay/no-source-access
-  guarantee (structural, see above); a hand-built `MarketContext` logged
-  to a scratch event store round-trips `normalized_event_key`/
+  while still moving `news_snapshot_identity`; a hand-built `MarketContext`
+  logged to a scratch event store round-trips `normalized_event_key`/
   `revision_id`/`source_priority`/`news_decision_hash`/
   `news_snapshot_identity` through `MARKET_CONTEXT_READY`'s JSON payload.
+
+`Tests/MLQuantAI_Test_NewsReplayIsolation.mq5` (source-free replay,
+runtime-verified via the `g_NewsEngine_BuildCallCount` counter) and
+`Tests/MLQuantAI_Test_NewsSchemaEvolution.mq5` (additive `forecast`/
+`actual`/`previous` metadata moves `news_snapshot_identity` but never
+`news_decision_hash`/`context_hash`, and old CSV data still parses) are
+separate scripts covering the two DoD gates that weren't genuinely
+runtime-tested in the first pass.
 
 ## B4 seal criteria (Step 9)
 
 B4 closes when, on a real compile + run:
 
 - `MLQuantAI_Test_NewsParity.mq5` = ALL PASS
+- `MLQuantAI_Test_NewsReplayIsolation.mq5` = ALL PASS
+- `MLQuantAI_Test_NewsSchemaEvolution.mq5` = ALL PASS
 - `MLQuantAI_Test_DataHubDeterminism.mq5` (B3/B3.5 regression) = PASS
-- No source access during replay = verified (true by construction, see
-  above)
+- No source access during replay = verified at runtime (see above, not
+  just by construction)
 - Coverage failure = fails closed (`Test_CoverageValidation_
   FailsClosedOnGap`, `NewsEngine_InitCsvSource` gating `MLQuantAI.mq5`'s
   `OnInit`)
@@ -265,5 +295,5 @@ B4 closes when, on a real compile + run:
   at the `MarketContext` level)
 
 Once all of the above are confirmed by a real MetaEditor compile and test
-run, B4 merges into `mlquantai`, tagged `phase-b-b4-news-parity-v1`, and
-B5 (CRT detector-only) opens.
+run, B4's status upgrades from CONDITIONAL PASS to SEALED, and B5 (CRT
+detector-only) opens.
