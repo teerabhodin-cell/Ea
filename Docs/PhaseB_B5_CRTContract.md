@@ -1,9 +1,12 @@
 # Phase B — B5: CRT_V1 Detector Contract Freeze (Commit 1)
 
-**Status: DRAFT — pending review before Commit 2 starts.** This is a
-documentation-only commit. No `CRT_IsSweepLow`, `CRT_ConfirmMSS`,
-`CRT_FindFVG`, `CRT_FindOrderBlock`, or any other detection logic exists
-yet — that's Commit 3+, gated on this contract being reviewed first.
+**Status: FROZEN.** This is a documentation-only commit. No
+`CRT_IsSweepLow`, `CRT_ConfirmMSS`, `CRT_FindFVG`, `CRT_FindOrderBlock`,
+or any other detection logic exists yet — that's Commit 3+. Every
+decision below (including the `MarketContext` window extension and the
+four previously-open parameters) is locked; changing any of them later
+means a new `CRT_V2`, never redefining `CRT_V1` in place — same
+discipline every other frozen contract in this project runs on.
 
 CRT_V1 ("Candle Range Theory") is the first live strategy module: sweep a
 prior liquidity level, confirm a market structure shift (MSS), retest a
@@ -14,7 +17,7 @@ fully auditable reason tree — nothing about risk, sizing, execution, AI,
 or regime compatibility. Those stay at their `TradeCandidate_Init()`
 defaults; B6/B7's job, not B5's.
 
-## ⚠️ One open design question before Commit 2 can start
+## `MarketContext` trigger-bar window (frozen extension)
 
 B1–B4 froze `MarketContext` (`Market/MLQuantAI_MarketContext.mqh`) as a
 **single closed bar's snapshot** — `m5_bar`/`m15_bar`/`h1_bar`/`h4_bar`
@@ -23,43 +26,46 @@ to see a **short window of recent trigger-timeframe bars** to find the
 sweep bar, the reaction bar(s), and the MSS confirmation bar — that's
 inherently a multi-bar pattern, not a single-bar one.
 
-Two ways to get that window into the detector:
+Letting `CRT_*` functions call `CopyRates`/`iTime` themselves at
+detection time was rejected: it reintroduces a live-data dependency
+exactly like the news-source problem B4 exists to solve (a replayed
+candidate could disagree with the original if history depth/availability
+differs between runs), and violates this same contract's own §10 Pure
+Function Contract and the "no direct runtime/broker-state access" test
+gate. **Frozen instead:** `MarketContext` gets one additive field,
+populated exactly like `m5_bar` etc. already are:
 
-1. **Extend `MarketContext` additively** with a recent-bars field (e.g.
-   `MqlRates trigger_tf_recent[]`, the last N closed bars on
-   `trigger_timeframe` ending at `anchor_bar_time` inclusive, captured
-   once by `FeatureEngine_BuildContext()` the same way `m5_bar` etc.
-   already are). CRT_V1 stays a pure function of `ctx` alone; replay
-   reconstructs the exact same window from the persisted
-   `MARKET_CONTEXT_READY` payload without ever re-querying price history.
-2. Let `CRT_*` functions call `CopyRates`/`iTime` themselves at detection
-   time.
-
-**Option 2 violates the Pure Function Contract below** (reintroduces a
-live-data dependency exactly like the news-source problem B4 exists to
-solve — a replayed candidate could disagree with the original if history
-depth/availability differs between runs) and violates this table's own
-"Detector has no direct runtime/broker-state access" test gate. **Option
-1 is the one this contract assumes** — proposed shape:
-
-```
+```cpp
 MqlRates trigger_tf_recent[];   // additive field on MarketContext
-                                  // last MLQUANTAI_CRT_V1_LOOKBACK_BARS
-                                  // closed bars on trigger_timeframe,
-                                  // oldest first, last element == the bar
-                                  // at anchor_bar_time (shift 1) itself -
-                                  // i.e. trigger_tf_recent[N-1] is the
-                                  // same bar as ctx.m5_bar when
-                                  // trigger_timeframe == M5.
 ```
 
-This needs an actual code change to `MarketContext.mqh` (additive - every
-B1–B4 sealed field is untouched, same discipline as B4's own additions)
-plus a `context_hash`/`MARKET_CONTEXT_READY` payload update (append the
-window, same "safe before B5 relies on it" justification B4 already used
-twice). **Confirm this before Commit 2** — it's the one piece of this
-contract that reaches back into an already-sealed file instead of only
-adding new B5-owned files.
+Rules (all frozen, all part of Commit 2's implementation, not
+CRT-detection-rule logic):
+
+- Captured exactly once, by `FeatureEngine_BuildContext()` — the same
+  place `m5_bar`/`m15_bar`/`h1_bar`/`h4_bar` are already captured.
+- Contains exactly `MLQUANTAI_CRT_V1_LOOKBACK_BARS` closed bars on
+  `trigger_timeframe` (see the frozen parameter table below).
+- Ordered oldest → newest. The last element's `.time` equals
+  `ctx.anchor_bar_time` — i.e. `trigger_tf_recent[N-1]` is the same bar
+  as `ctx.m5_bar` whenever `trigger_timeframe == M5`.
+- Never includes the forming/current bar (shift 0) — same closed-bar-only
+  rule every other `MarketContext` field already follows.
+- Included in `MarketContext_ToJsonFragment()`'s `MARKET_CONTEXT_READY`
+  serialization and in `MarketContext_HashPayload()`'s `context_hash`
+  payload (same "safe to extend before B5 relies on it" justification B4
+  already used twice for `news_decision_hash`/`news_snapshot_identity`).
+- If fewer than `MLQUANTAI_CRT_V1_LOOKBACK_BARS` closed bars exist
+  (not enough history yet — e.g. right after EA start, or early in a
+  Tester run), `FeatureEngine_BuildContext()` still builds the context
+  (nothing else about `MarketContext` requires CRT-readiness), but
+  `trigger_tf_recent[]` is short. `CRT_*` treats a short window as
+  CRT-ineligible for that bar — `CRTDetectionResult.detected = false`,
+  never a partial/best-effort detection over incomplete history.
+- **`CRT_*` code must never call `CopyRates`/`iTime`/any price-history
+  API directly** — every bar it ever looks at comes from
+  `trigger_tf_recent[]` (or `m5_bar`/`m15_bar`/`h1_bar`/`h4_bar`/`pdh`/
+  `pdl`/`asian_range_high`/`asian_range_low`, all already frozen).
 
 ## 1. Direction — canonical field and semantics
 
@@ -116,17 +122,40 @@ bit only (never a label for an unset bit):
 7 -> "news_risk_near"
 ```
 
-## 4. UTC / lineage timestamp normalization
+## 4. Canonical `MarketContext` timestamp provenance (not a UTC contract)
 
-Same policy B4 already froze for `News_NormalizeTimeUtc` — MQL5 can't
-reliably convert an arbitrary historical `datetime` to true UTC, so
-"canonical clock" here means the same single clock every closed-bar
-computation in this project already uses: broker server time via
-`iTime()`. **Every CRT_V1 lineage timestamp used in an ID or hash payload
-must be one already inside `MarketContext`** (`anchor_bar_time`, an
-`.time` field off `m5_bar`/`m15_bar`/`h1_bar`/`h4_bar`/`trigger_tf_recent[]`)
-— never `TimeCurrent()`, never a hand-built `MqlDateTime`, never a value
-computed outside the `ctx` that was passed in.
+**Corrected from an earlier draft that called this "UTC normalization" —
+the mechanism was never true UTC, and that heading overclaimed
+cross-broker guarantees the mechanism can't actually deliver.**
+
+`iTime()` returns broker SERVER time, not UTC. MQL5 has no reliable way
+to convert an arbitrary historical `datetime` to true UTC (no API exposes
+a broker's historical GMT offset, and that offset moves with DST) — this
+is the exact same limitation B4's `News_NormalizeTimeUtc` already
+documents. Building a real UTC-conversion layer now would mean inventing
+an unreliable historical-offset mechanism this project has already
+concluded doesn't exist in MQL5 — rejected for the same reason B4
+rejected it.
+
+**What's actually frozen:** every CRT_V1 lineage timestamp used in an ID
+or hash payload must be one already inside `MarketContext`
+(`anchor_bar_time`, an `.time` field off `m5_bar`/`m15_bar`/`h1_bar`/
+`h4_bar`/`trigger_tf_recent[]`) — never `TimeCurrent()`, never a
+hand-built `MqlDateTime`, never a value computed outside the `ctx` that
+was passed in. This guarantees **deterministic replay identity**: the
+same `MarketContext` always derives the same `root_event_id`/
+`candidate_id`/`detector_hash`, on any run, forever.
+
+**What this does NOT guarantee, and no longer claims to:** identical IDs
+across two different broker connections whose servers run different UTC
+offsets for the same real-world moment. A broker on GMT+2 and a broker on
+GMT+3 will report different `iTime()` values for "the same" real-world
+bar close, so their `root_event_id`s for what a human would call the same
+event will differ. This is an inherited characteristic of
+`Ids_RootEventId`/`Ids_ContextEventId` since Phase A (both already hash a
+raw broker-server `datetime`) — not new to B5, and not something this
+contract can fix without reopening Phase A's sealed ID generation
+semantics, which is out of scope here.
 
 ## 5. `root_event_id` canonical payload
 
@@ -201,7 +230,7 @@ different digit counts, not just XAUUSD.
 
 After MSS confirmation, scan the impulse leg (the bars from the sweep bar
 through the MSS confirmation bar, inclusive, all sourced from
-`trigger_tf_recent[]` — see the open question above) for:
+`trigger_tf_recent[]`) for:
 
 - a qualifying 3-candle **Fair Value Gap** in the direction of the move
   (candle 1's high/low vs. candle 3's low/high leaving a gap candle 2
@@ -216,23 +245,46 @@ leg. If **neither** exists, detection fails closed — no candidate is
 created (this is the "MSS but no valid FVG/OB retest" fixture in Commit
 3's list). `resolved_zone_kind` records which one won.
 
-**PROPOSED, PENDING REVIEW** (real strategy parameters, not
-architecture — flagging rather than silently deciding):
-- minimum FVG gap size (currently proposed: any non-zero gap, no ATR
-  multiple floor)
-- `entry_hint`/`sl_hint`/`tp_hint` derivation from the resolved zone
-  (proposed: `entry_hint` = resolved zone midpoint; `sl_hint` = beyond
-  the swept extreme by a frozen buffer; `tp_hint` = a frozen R-multiple)
-- `MLQUANTAI_CRT_V1_LOOKBACK_BARS` (the size of `trigger_tf_recent[]`
-  above) and `MLQUANTAI_CRT_V1_EXPIRY_AFTER_BARS` (§9) exact values
+**Frozen parameters** (strategy policy, not architecture — conservative
+defaults chosen specifically to unblock implementation; these are the
+values `CRT_V1_RULES_VERSION = "CRT_V1"` means from here on, and changing
+any of them later is a `CRT_V2`, never an in-place edit, since
+`detector_hash` and `candidate_id` are both derived from data these
+parameters shape):
+
+```cpp
+#define MLQUANTAI_CRT_V1_LOOKBACK_BARS      64   // size of trigger_tf_recent[]
+#define MLQUANTAI_CRT_V1_EXPIRY_AFTER_BARS  12   // TradeCandidate_ComputeExpiryTime's expiry_after_bars
+// minimum FVG gap: strictly greater than 0.0 (any non-zero 3-candle gap qualifies, no ATR-multiple floor)
+```
+
+`entry_hint`/`sl_hint`/`tp_hint` derivation from the resolved zone
+(`resolved_zone_high`/`resolved_zone_low`, `swept_level`,
+`ctx.symbol_spec.point`):
+
+```cpp
+entry_hint = (resolved_zone_low + resolved_zone_high) / 2.0
+
+// bullish (side == ORDER_TYPE_BUY):
+sl_hint = swept_level - 1 * ctx.symbol_spec.point
+tp_hint = entry_hint + 2.0 * (entry_hint - sl_hint)
+
+// bearish (side == ORDER_TYPE_SELL):
+sl_hint = swept_level + 1 * ctx.symbol_spec.point
+tp_hint = entry_hint - 2.0 * (sl_hint - entry_hint)
+```
+
+i.e. a fixed 1-point buffer beyond the swept extreme for `sl_hint`, and a
+frozen 2.0R target for `tp_hint` (R = `|entry_hint - sl_hint|`) — both
+pure functions of already-computed CRT_V1 values and `ctx.symbol_spec`,
+no new inputs.
 
 ## 9. Expiry — by bar progression, not wall clock
 
 Reuses the existing, sealed `TradeCandidate_ComputeExpiryTime
 (setup_anchor_bar_time, expiry_after_bars, trigger_timeframe)` — no new
-expiry primitive. `expiry_after_bars` is a frozen constant,
-`MLQUANTAI_CRT_V1_EXPIRY_AFTER_BARS` (Commit 2, value PROPOSED/PENDING
-REVIEW — see §8). `CRT_EvaluateExpiry(setup_anchor_bar_time,
+expiry primitive. `expiry_after_bars = MLQUANTAI_CRT_V1_EXPIRY_AFTER_BARS`
+(§8, frozen at 12). `CRT_EvaluateExpiry(setup_anchor_bar_time,
 expiry_after_bars, trigger_timeframe, currentClosedBarTime)` (Commit 3)
 is a pure function of those four values — never `TimeCurrent()`.
 
@@ -270,8 +322,8 @@ until the Execution Engine phase actually arrives.
 ## 12. B5 input/output schema
 
 ```
-Input:  const MarketContext &ctx   (extended per the open question above)
-        CRT_V1_FrozenParameters    (Commit 2 - #defines or a const struct)
+Input:  const MarketContext &ctx   (extended with trigger_tf_recent[], see above)
+        CRT_V1_FrozenParameters    (Commit 2 - #defines, values frozen in §8/§9)
 
 Output: CRTDetectionResult          (Commit 2 struct)
           detected            bool
@@ -308,10 +360,11 @@ reject; B6/B7 rejection semantics only start once a candidate exists).
 ```
 [ ] Detector has no direct runtime/broker-state access
 [ ] Same input produces byte-stable output across repeated runs
-[ ] UTC-equivalent inputs produce identical lineage identifiers
+[ ] Same MarketContext replayed on the same broker connection reproduces
+    identical root_event_id/candidate_id/detector_hash (deterministic
+    replay identity - see §4 for what this does NOT claim across brokers)
 [ ] reason_labels are sorted by ascending reason bit
 [ ] detector_hash changes only when frozen rule inputs change
-[ ] root_event_id is cross-broker stable (same instrument_id/price/bar, any broker_symbol)
 [ ] expiry follows bar progression, not wall clock
 [ ] FVG_OR_OB follows frozen resolution semantics
 [ ] Event replay reconstructs CANDIDATE_CREATED lineage
@@ -324,8 +377,9 @@ Risk sizing, execution, AI filtering, regime-compatibility gating,
 cross-strategy arbitration/deduplication (root_event_id only *enables*
 that later), any strategy other than CRT_V1, any timeframe confluence
 beyond what's already inside `MarketContext`, any change to
-`MarketContext`'s B1–B4 sealed fields (only the additive window in the
-open question above, if confirmed).
+`MarketContext`'s B1–B4 sealed fields (only the additive
+`trigger_tf_recent[]` window above), a real UTC-conversion mechanism
+(rejected — see §4).
 
 ## B5 Definition of Done
 
