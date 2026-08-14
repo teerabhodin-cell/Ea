@@ -314,17 +314,27 @@ bool CandidateProjection_ApplyLine(string line, string &outReason)
       return false;
    }
 
+   // Category-agnostic pre-check, BEFORE attempting a LifecycleEvent
+   // parse: "type" is read via a plain string lookup that works for any
+   // event category, on purpose. EventSerializer_ParseLifecycle()
+   // requires a "candidate_id" key just to return true - a SystemEvent
+   // line (e.g. MARKET_CONTEXT_READY, which this same store legitimately
+   // carries) has no such key and would otherwise be misreported as "not
+   // a parsable lifecycle event line" (a false failure that would corrupt
+   // CandidateProjectionReport.lines_failed and swallow the real
+   // first_error from whatever line actually needed to be reported)
+   // instead of being silently skipped as irrelevant.
+   if(EventSerializer_GetStr(line, "type") != EventTypeToString(EVENT_TYPE_CANDIDATE_CREATED))
+   {
+      outReason = "not a CANDIDATE_CREATED event - skipped, not relevant to this projection";
+      return true;
+   }
+
    LifecycleEvent e;
    if(!EventSerializer_ParseLifecycle(line, e))
    {
       outReason = "not a parsable lifecycle event line";
       return false;
-   }
-
-   if(e.base.event_type != EventTypeToString(EVENT_TYPE_CANDIDATE_CREATED))
-   {
-      outReason = "not a CANDIDATE_CREATED event - skipped, not relevant to this projection";
-      return true;
    }
 
    if(e.from_state != CANDIDATE_CREATED || e.to_state != CANDIDATE_CREATED)

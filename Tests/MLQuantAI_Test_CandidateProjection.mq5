@@ -291,7 +291,13 @@ void Test_Collision_DifferentPayloadSameId(string lineA, string candidateAId)
    Check(!applied, "a line with the same candidate_id but a different candidate_hash is REJECTED");
    Check(StringFind(reason, "collision") >= 0 || StringFind(reason, "conflict") >= 0,
          "the rejection reason explicitly names it a collision/conflict, not a duplicate");
-   Check(StringFind(reason, "duplicate") < 0, "the rejection reason does NOT call it a duplicate - that would hide the corruption");
+   // The message legitimately contains the substring "duplicate" (it
+   // says "...rejected as a conflict, not a duplicate" - the collision/
+   // conflict assertion above is what actually proves the corruption
+   // isn't being hidden). What matters is it never uses the exact phrase
+   // ApplyLine's genuine idempotent-duplicate no-op path uses.
+   Check(StringFind(reason, "identical candidate_hash") < 0,
+         "the rejection reason does not reuse the genuine-duplicate no-op phrasing - a collision is never worded like a harmless no-op");
    Check(CandidateProjection_Count() == before, "registry size is unchanged");
 
    CandidateProjectionRecord after;
