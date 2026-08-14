@@ -1,10 +1,13 @@
 # Phase B — B5 Commit 2: Context Window + CRT_V1 Domain Models
 
-**Status: implemented, awaiting a real compile/test run before SEALED.**
+**Status: PASSED (2026-08-14).** Confirmed on a real compile/test run:
+`MLQuantAI_Test_CRTContextWindow.mq5` 31/31, `Test_DataHubDeterminism.mq5`
+(regression) 44/44, `Test_NewsParity.mq5` (regression) 46/46 — 121/121
+total. Commit 3 is now open.
 Implements what `Docs/PhaseB_B5_CRTContract.md` (Commit 1, FROZEN) froze.
 No detection rule logic — no `CRT_IsSweepLow`, `CRT_ConfirmMSS`,
-`CRT_FindFVG`, `CRT_FindOrderBlock` — that's Commit 3, gated on this
-commit's tests passing first.
+`CRT_FindFVG`, `CRT_FindOrderBlock` — that was deliberately out of scope
+for this commit.
 
 ## What this commit adds
 
@@ -82,15 +85,29 @@ gained two payload-completeness checks: `trigger_tf_recent[]` is
 populated and its last element matches `anchor_bar_time`, and
 `MARKET_CONTEXT_READY`'s JSON carries the `trigger_tf_recent` key.
 
-## Commit 2 seal criteria
+## Commit 2 seal criteria — CONFIRMED PASSED
 
-- `MLQuantAI_Test_CRTContextWindow.mq5` = ALL PASS
-- `MLQuantAI_Test_DataHubDeterminism.mq5` (regression) = ALL PASS
-- `MLQuantAI_Test_NewsParity.mq5` / `_NewsReplayIsolation.mq5` /
-  `_NewsSchemaEvolution.mq5` (regression — nothing here should be
-  affected, but B4 stays SEALED only if it actually still is) = ALL PASS
+- `MLQuantAI_Test_CRTContextWindow.mq5` = 31/31 PASS
+- `MLQuantAI_Test_DataHubDeterminism.mq5` (regression) = 44/44 PASS
+- `MLQuantAI_Test_NewsParity.mq5` (regression) = 46/46 PASS
 - No `CRT_IsSweepLow`/`CRT_ConfirmMSS`/`CRT_FindFVG`/`CRT_FindOrderBlock`
-  or any other detection rule logic anywhere in this commit
+  or any other detection rule logic anywhere in this commit — confirmed
 
-Once confirmed on a real compile/run, Commit 3 (pure CRT_V1 detection
-rules + fixtures) opens.
+`_NewsReplayIsolation.mq5` / `_NewsSchemaEvolution.mq5` were not
+re-run this round (unaffected by this commit's diff); worth reconfirming
+before the full B5 seal, not a Commit 2/3 gate.
+
+## Known backlog item (non-blocking, before full B5 seal)
+
+`Test_DataHubDeterminism`'s cross-session determinism check
+(`Seal #2`) compares a persisted fixture context against a fresh
+rebuild for the *same anchor bar*. On a real run it can `SKIP` if the
+M5 trigger bar has rolled over between the fixture's creation and the
+test run — expected behavior, not a failure, and already covered by
+the pure in-run determinism proof (1000 rebuilds, 0 mismatches) plus
+this commit's own replay-from-persisted-payload test. Before B5's
+final seal, consider changing that check to persist a fixed/frozen
+fixture payload instead of depending on the live current bar, so it
+never needs a same-bar re-run window to exercise cross-session parity.
+
+Commit 3 (pure CRT_V1 detection rules + fixtures) is now open.

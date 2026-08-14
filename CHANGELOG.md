@@ -4,11 +4,14 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B B5 Commit 2: Context Window + CRT_V1 Domain Models
+## [Unreleased] - Phase B B5 Commit 2: Context Window + CRT_V1 Domain Models (PASSED 2026-08-14)
 
 Implements what Docs/PhaseB_B5_CRTContract.md (Commit 1, FROZEN after 3
 QA review rounds) froze. No detection rule logic - no CRT_IsSweepLow/
 CRT_ConfirmMSS/CRT_FindFVG/CRT_FindOrderBlock - that's Commit 3.
+Confirmed on a real compile/test run: MLQuantAI_Test_CRTContextWindow.mq5
+31/31, Test_DataHubDeterminism.mq5 (regression) 44/44, Test_NewsParity.mq5
+(regression) 46/46 - 121/121 total.
 
 ### Added
 - `Market/MLQuantAI_MarketContext.mqh`: `trigger_tf_recent[]` (additive)
