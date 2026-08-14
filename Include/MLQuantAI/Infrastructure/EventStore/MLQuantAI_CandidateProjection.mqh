@@ -164,6 +164,17 @@ bool CandidateProjection_TryGet(string candidateId, CandidateProjectionRecord &o
    return true;
 }
 
+// Phase B B6.2: positional access for full-registry iteration (dataset
+// export needs every record, not just a by-id lookup) - kept separate
+// from reaching into g_CandProj_Records directly so callers outside this
+// file never depend on the backing array's own storage layout.
+bool CandidateProjection_GetAt(int index, CandidateProjectionRecord &out)
+{
+   if(index < 0 || index >= g_CandProj_Count) return false;
+   out = g_CandProj_Records[index];
+   return true;
+}
+
 //---------------------------------------------------------------------
 // Pure validation helpers - each returns "" if the check passes, or a
 // human-readable reason if it doesn't. Kept separate from ApplyLine's
