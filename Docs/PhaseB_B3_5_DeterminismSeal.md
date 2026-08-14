@@ -1,9 +1,17 @@
 # Phase B — B3.5: Data Hub Determinism Seal
 
-Status: implemented on `fix/phase-b-b3-determinism-seal`, awaiting a real
-compile + test run (this environment has no MQL5 compiler) before it can
-actually be marked SEALED. See `Docs/PhaseB_B3_DataHubDeterminism.md` for
-B3 itself.
+**Status: SEALED.** All 5 criteria verified against a real compile + test
+run (2026-08-14). See `Docs/PhaseB_B3_DataHubDeterminism.md` for B3
+itself.
+
+Evidence: `MLQuantAI_Test_DataHubDeterminism` run at 16:07:43 - **38/38
+checks passed**, including the cross-session check:
+`[PASS] rebuilt context_hash for the SAME anchor bar matches the hash a
+PREVIOUS run of this script persisted`. A second run at 16:10:11 (after
+the M5 trigger bar rolled over) correctly reported `[SKIP]` rather than a
+false pass/fail - proving the check actually compares against the
+fixture rather than trivially passing. Full Phase A + B1 + B2 regression
+stayed green across every run in this pass.
 
 ## The 5 seal criteria and what satisfies each one
 
