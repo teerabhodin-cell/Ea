@@ -4,6 +4,45 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B B5 Commit 2: Context Window + CRT_V1 Domain Models (PASSED 2026-08-14)
+
+Implements what Docs/PhaseB_B5_CRTContract.md (Commit 1, FROZEN after 3
+QA review rounds) froze. No detection rule logic - no CRT_IsSweepLow/
+CRT_ConfirmMSS/CRT_FindFVG/CRT_FindOrderBlock - that's Commit 3.
+Confirmed on a real compile/test run: MLQuantAI_Test_CRTContextWindow.mq5
+31/31, Test_DataHubDeterminism.mq5 (regression) 44/44, Test_NewsParity.mq5
+(regression) 46/46 - 121/121 total.
+
+### Added
+- `Market/MLQuantAI_MarketContext.mqh`: `trigger_tf_recent[]` (additive)
+  - last `MLQUANTAI_CRT_V1_LOOKBACK_BARS` closed bars on
+  `trigger_timeframe`, oldest first, folded into both
+  `MarketContext_HashPayload()` and `MarketContext_ToJsonFragment()`.
+  `MarketContext_RatesArrayToJson`/`_RatesArrayFromJson`/`_RatesFromJson`
+  - the array counterpart to the existing single-bar
+  `MarketContext_RatesToJson`, self-contained (no EventSerializer
+  dependency), same convention `NewsSnapshot.mqh` already uses.
+- `Market/MLQuantAI_FeatureEngine.mqh`: `FeatureEngine_BuildContext()`
+  captures `trigger_tf_recent[]` via one `CopyRates(..., 1,
+  MLQUANTAI_CRT_V1_LOOKBACK_BARS, ctx.trigger_tf_recent)` call - a plain
+  array, so `CopyRates` already fills it oldest-first with no manual
+  reversal.
+- `Core/MLQuantAI_ContractVersions.mqh`: `MLQUANTAI_CRT_V1_RULES_VERSION
+  = "CRT_V1"`.
+- `Strategies/MLQuantAI_CRT_V1_Contract.mqh` (new file, new `Strategies/`
+  directory): every B5-frozen parameter as `#define`s, the 8
+  `CRT_REASON_BIT_*` bit constants, `CRT_ReasonBitLabel`/
+  `CRT_ReasonLabelsFromMask` (ascending-bit-order label vocabulary),
+  `CRTDetectionResult` + `_Init`, `CRT_DetectorHash` (frozen payload/
+  field order/numeric formatting, a pure function of its arguments).
+- `Tests/MLQuantAI_Test_CRTContextWindow.mq5`: real-pipeline window
+  rules (size, ordering, anchor equality, no forming-bar, determinism
+  across rebuilds), pure-function hash-sensitivity and JSON round-trip
+  tests, a persisted-payload replay test, and CRT_V1 domain-model tests
+  (reason label ordering, detector_hash sensitivity, Init defaults).
+- `Tests/MLQuantAI_Test_DataHubDeterminism.mq5`: 2 new payload-
+  completeness checks for `trigger_tf_recent[]`.
+
 ## [Unreleased] - Phase B B4 seal hardening
 
 Two DoD gates from the original B4 pass weren't genuinely runtime-tested:

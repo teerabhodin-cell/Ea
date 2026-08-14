@@ -22,6 +22,13 @@
 #include "MLQuantAI_MarketContext.mqh"
 #include "../Core/MLQuantAI_Ids.mqh"
 #include "../Infrastructure/EventStore/MLQuantAI_EventStore.mqh"
+// Phase B B5: MLQUANTAI_CRT_V1_LOOKBACK_BARS only - this is the one place
+// the generally-owned Market/ layer depends on a Strategies/-owned
+// constant, because the window size is inherently a CRT_V1 parameter
+// (see Docs/PhaseB_B5_CRTContract.md) even though capturing it has to
+// happen here, at MarketContext build time, for CRT_V1 to stay a pure
+// function of MarketContext alone.
+#include "../Strategies/MLQuantAI_CRT_V1_Contract.mqh"
 
 input group "=== Feature Engine (Phase B B3) ==="
 input ENUM_TIMEFRAMES InpTriggerTimeframe = PERIOD_M5; // the ONE timeframe anchor_bar_time is measured on
@@ -124,6 +131,19 @@ MarketContext FeatureEngine_BuildContext()
    if(CopyRates(brokerSymbol, PERIOD_M15, 1, 1, rates) == 1) ctx.m15_bar = rates[0];
    if(CopyRates(brokerSymbol, PERIOD_H1,  1, 1, rates) == 1) ctx.h1_bar  = rates[0];
    if(CopyRates(brokerSymbol, PERIOD_H4,  1, 1, rates) == 1) ctx.h4_bar  = rates[0];
+
+   // Phase B B5: last MLQUANTAI_CRT_V1_LOOKBACK_BARS CLOSED bars on
+   // trigger_timeframe, ending at (and including) the anchor bar itself.
+   // ctx.trigger_tf_recent is a plain (non-AS_SERIES) dynamic array, so
+   // CopyRates fills it oldest-first, ascending - ctx.trigger_tf_recent[
+   // copied-1] is shift 1 (== anchor_bar_time), matching the frozen
+   // ordering rule directly with no manual reversal. A short/failed copy
+   // (insufficient history, e.g. right after EA start) leaves the array
+   // short or empty - CRT_V1 (Commit 3+), not this function, is what
+   // treats that as detection-ineligible for the bar.
+   int recentCopied = CopyRates(brokerSymbol, InpTriggerTimeframe, 1, MLQUANTAI_CRT_V1_LOOKBACK_BARS, ctx.trigger_tf_recent);
+   if(recentCopied <= 0)
+      ArrayResize(ctx.trigger_tf_recent, 0);
 
    // bid/ask/spread "at anchor" come from the trigger bar's own recorded
    // close + spread (MqlRates.spread IS the historical spread MT5 stored

@@ -21,4 +21,13 @@
 // B2: Symbol Resolution
 #define MLQUANTAI_SYMBOL_SPEC_SCHEMA_V1    "SYMBOL_SPEC_V1"
 
+// B5: CRT_V1 detector rules version (candidate_id's strategyVersion
+// argument, see Docs/PhaseB_B5_CRTContract.md section 6) - distinct from
+// MLQUANTAI_CANDIDATE_SCHEMA_V1 (the TradeCandidate struct shape) the
+// same way TradeCandidate.regime_rules_version is distinct from
+// candidate_schema_version. Bump to a new _V2 string, never redefine
+// _V1 in place, if any of the frozen CRT_V1 parameters in
+// Strategies/MLQuantAI_CRT_V1_Contract.mqh ever change.
+#define MLQUANTAI_CRT_V1_RULES_VERSION     "CRT_V1"
+
 #endif // __MLQUANTAI_CONTRACTVERSIONS_MQH__

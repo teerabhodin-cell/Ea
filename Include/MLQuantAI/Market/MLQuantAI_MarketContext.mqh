@@ -33,6 +33,16 @@
 //| value yet (B5 hasn't started), which is specifically why this is    |
 //| the appropriate time to make it, before context_hash is ever relied |
 //| on for real replay auditing. See Docs/PhaseB_B4_NewsParity.md.      |
+//|                                                                    |
+//| Phase B B5 Commit 2 added trigger_tf_recent[] additively - a short  |
+//| window of the last MLQUANTAI_CRT_V1_LOOKBACK_BARS CLOSED bars on    |
+//| trigger_timeframe, oldest first, last element == anchor_bar_time,   |
+//| captured once by FeatureEngine_BuildContext() the same way m5_bar   |
+//| etc. already are. Exists so CRT_V1 (Commit 3+) can be a pure        |
+//| function of MarketContext alone - it never calls CopyRates/iTime    |
+//| itself. Folded into both context_hash and MARKET_CONTEXT_READY, per |
+//| the same "safe to extend before a real dependent exists" precedent  |
+//| B4 already used twice. See Docs/PhaseB_B5_CRTContract.md.           |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_MARKET_MARKETCONTEXT_MQH__
 #define __MLQUANTAI_MARKET_MARKETCONTEXT_MQH__
@@ -60,6 +70,13 @@ struct MarketContext
    MqlRates m15_bar;
    MqlRates h1_bar;
    MqlRates h4_bar;
+
+   // Phase B B5: last MLQUANTAI_CRT_V1_LOOKBACK_BARS CLOSED bars on
+   // trigger_timeframe, oldest first, trigger_tf_recent[N-1].time ==
+   // anchor_bar_time - see Docs/PhaseB_B5_CRTContract.md's "MarketContext
+   // trigger-bar window" section for the full frozen rules (never the
+   // forming bar, short-history behavior, why this exists).
+   MqlRates trigger_tf_recent[];
 
    double   bid_at_anchor;
    double   ask_at_anchor;
@@ -105,6 +122,7 @@ void MarketContext_Init(MarketContext &c)
    ZeroMemory(c.m15_bar);
    ZeroMemory(c.h1_bar);
    ZeroMemory(c.h4_bar);
+   ArrayResize(c.trigger_tf_recent, 0);
 
    c.bid_at_anchor = 0;
    c.ask_at_anchor = 0;
@@ -145,13 +163,28 @@ string MarketContext_RatesHashFragment(const MqlRates &r)
           IntegerToString((long)r.tick_volume) + "|" + IntegerToString(r.spread);
 }
 
+// Phase B B5: same per-bar fragment as MarketContext_RatesHashFragment,
+// applied to the whole trigger_tf_recent[] window in order (oldest
+// first, matching the frozen ordering rule) - order matters here, unlike
+// News_DecisionHash's canonically-sorted set, since a bar window's
+// sequence IS part of its identity (a sweep-then-MSS pattern read
+// backward is a different pattern).
+string MarketContext_RatesArrayHashFragment(const MqlRates &arr[])
+{
+   string s = "";
+   for(int i = 0; i < ArraySize(arr); i++)
+      s += MarketContext_RatesHashFragment(arr[i]) + ";";
+   return s;
+}
+
 // Hash payload deliberately excludes context_event_id/context_hash
 // themselves (they're derived FROM this payload, not part of it) and
 // excludes account (runtime-only: balance/equity move between two builds
 // of the "same" bar and must not change what the context's identity
 // hashes to). Everything else - closed-bar OHLC across all 4 timeframes,
-// price/feature/session fields, and news_decision_hash - is what
-// actually defines "this market snapshot".
+// the trigger_tf_recent[] window (Phase B B5), price/feature/session
+// fields, and news_decision_hash - is what actually defines "this
+// market snapshot".
 //
 // Phase B B4: the news contribution is news_decision_hash (decision-
 // relevant news content only - currency/impact/release_time/
@@ -179,7 +212,8 @@ string MarketContext_HashPayload(const MarketContext &c)
               DoubleToString(c.pdh, 5) + "|" + DoubleToString(c.pdl, 5) + "|" +
               DoubleToString(c.asian_range_high, 5) + "|" + DoubleToString(c.asian_range_low, 5) + "|" +
               c.session_id + "|" + (c.is_kill_zone ? "1" : "0") + "|" +
-              "news_decision:" + c.news_decision_hash;
+              "news_decision:" + c.news_decision_hash + "|" +
+              "trigger_tf_recent:" + MarketContext_RatesArrayHashFragment(c.trigger_tf_recent);
 
    return s;
 }
@@ -213,6 +247,122 @@ string MarketContext_RatesToJson(const MqlRates &r)
           "\"spread\":" + IntegerToString(r.spread) + "}";
 }
 
+// Phase B B5: serializes trigger_tf_recent[] as a JSON array of the same
+// per-bar shape MarketContext_RatesToJson() already produces for
+// m5_bar/m15_bar/h1_bar/h4_bar.
+string MarketContext_RatesArrayToJson(const MqlRates &arr[])
+{
+   string s = "[";
+   for(int i = 0; i < ArraySize(arr); i++)
+   {
+      if(i > 0) s += ",";
+      s += MarketContext_RatesToJson(arr[i]);
+   }
+   s += "]";
+   return s;
+}
+
+// Minimal local JSON scalar readers, scoped to this file - mirrors
+// NewsSnapshot.mqh's own "self-contained, no dependency on
+// Infrastructure/EventStore" convention rather than reaching into
+// EventSerializer.mqh from Market/.
+double MarketContext_JsonGetDouble(string json, string key)
+{
+   string needle = "\"" + key + "\":";
+   int p = StringFind(json, needle);
+   if(p < 0) return 0;
+   int start = p + StringLen(needle);
+   int n = StringLen(json);
+   int end = start;
+   while(end < n)
+   {
+      ushort ch = StringGetCharacter(json, end);
+      if(ch == ',' || ch == '}') break;
+      end++;
+   }
+   return StringToDouble(StringSubstr(json, start, end - start));
+}
+
+string MarketContext_JsonGetStr(string json, string key)
+{
+   string needle = "\"" + key + "\":\"";
+   int p = StringFind(json, needle);
+   if(p < 0) return "";
+   int start = p + StringLen(needle);
+   int n = StringLen(json);
+   string result = "";
+   for(int i = start; i < n; i++)
+   {
+      ushort ch = StringGetCharacter(json, i);
+      if(ch == '"') break;
+      result += StringFormat("%c", ch);
+   }
+   return result;
+}
+
+// Reverse of MarketContext_RatesToJson(). Returns false if the JSON is
+// missing even the identity field (time) - a malformed/truncated element
+// should never be mistaken for a real zero-value bar.
+bool MarketContext_RatesFromJson(string json, MqlRates &out)
+{
+   ZeroMemory(out);
+   if(StringFind(json, "\"time\":") < 0)
+      return false;
+   out.time        = StringToTime(MarketContext_JsonGetStr(json, "time"));
+   out.open        = MarketContext_JsonGetDouble(json, "open");
+   out.high        = MarketContext_JsonGetDouble(json, "high");
+   out.low         = MarketContext_JsonGetDouble(json, "low");
+   out.close       = MarketContext_JsonGetDouble(json, "close");
+   out.tick_volume = (long)MarketContext_JsonGetDouble(json, "tick_volume");
+   out.spread      = (int)MarketContext_JsonGetDouble(json, "spread");
+   return true;
+}
+
+// Reverse of MarketContext_RatesArrayToJson(). Same brace-depth-matching
+// approach (and same known limitation) as NewsSnapshot.mqh's
+// NewsSnapshot_ArrayFromJson() - fine here since MqlRates JSON never
+// contains a string field whose value could itself contain a brace.
+int MarketContext_RatesArrayFromJson(string json, MqlRates &outArr[])
+{
+   ArrayResize(outArr, 0);
+   string trimmed = json;
+   StringTrimLeft(trimmed);
+   StringTrimRight(trimmed);
+   if(StringLen(trimmed) < 2) return 0;
+   string inner = StringSubstr(trimmed, 1, StringLen(trimmed) - 2); // strip [ ]
+   if(StringLen(inner) == 0) return 0;
+
+   int count = 0;
+   int depth = 0;
+   int elemStart = 0;
+   int n = StringLen(inner);
+   for(int i = 0; i < n; i++)
+   {
+      ushort ch = StringGetCharacter(inner, i);
+      if(ch == '{') depth++;
+      else if(ch == '}')
+      {
+         depth--;
+         if(depth == 0)
+         {
+            string elem = StringSubstr(inner, elemStart, i - elemStart + 1);
+            MqlRates r;
+            if(MarketContext_RatesFromJson(elem, r))
+            {
+               ArrayResize(outArr, count + 1);
+               outArr[count] = r;
+               count++;
+            }
+            int j = i + 1;
+            while(j < n && (StringGetCharacter(inner, j) == ',')) j++;
+            elemStart = j;
+            i = j - 1;
+         }
+      }
+   }
+   return count;
+}
+
 string MarketContext_ToJsonFragment(const MarketContext &c)
 {
    string s = "";
@@ -229,6 +379,7 @@ string MarketContext_ToJsonFragment(const MarketContext &c)
    s += "\"m15_bar\":"  + MarketContext_RatesToJson(c.m15_bar) + ",";
    s += "\"h1_bar\":"   + MarketContext_RatesToJson(c.h1_bar) + ",";
    s += "\"h4_bar\":"   + MarketContext_RatesToJson(c.h4_bar) + ",";
+   s += "\"trigger_tf_recent\":" + MarketContext_RatesArrayToJson(c.trigger_tf_recent) + ",";
    s += "\"bid_at_anchor\":"           + DoubleToString(c.bid_at_anchor, 5) + ",";
    s += "\"ask_at_anchor\":"           + DoubleToString(c.ask_at_anchor, 5) + ",";
    s += "\"spread_points_at_anchor\":" + DoubleToString(c.spread_points_at_anchor, 1) + ",";
