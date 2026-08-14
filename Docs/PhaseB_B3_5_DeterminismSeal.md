@@ -1,17 +1,51 @@
 # Phase B — B3.5: Data Hub Determinism Seal
 
-**Status: SEALED.** All 5 criteria verified against a real compile + test
-run (2026-08-14). See `Docs/PhaseB_B3_DataHubDeterminism.md` for B3
+**Status: CONDITIONAL PASS - not yet SEALED.** 6 of 7 criteria verified
+against a real compile + test run (2026-08-14); the cross-session check
+still needs to be re-run across an actual MT5 terminal restart (not just
+a script re-invocation within the same running terminal) before this can
+be marked SEALED. See `Docs/PhaseB_B3_DataHubDeterminism.md` for B3
 itself.
 
-Evidence: `MLQuantAI_Test_DataHubDeterminism` run at 16:07:43 - **38/38
-checks passed**, including the cross-session check:
+## Evidence so far
+
+`MLQuantAI_Test_DataHubDeterminism` run at 16:07:43 - **38/38 checks
+passed**, including the cross-session fixture check:
 `[PASS] rebuilt context_hash for the SAME anchor bar matches the hash a
 PREVIOUS run of this script persisted`. A second run at 16:10:11 (after
 the M5 trigger bar rolled over) correctly reported `[SKIP]` rather than a
 false pass/fail - proving the check actually compares against the
 fixture rather than trivially passing. Full Phase A + B1 + B2 regression
 stayed green across every run in this pass.
+
+## Why this isn't SEALED yet
+
+Both the 16:07:43 and 16:10:11 runs were the script being re-invoked
+within the SAME already-running MT5 terminal process - proving the
+fixture-compare mechanism itself works, but not proving determinism
+survives an actual process boundary (terminal indicator-handle caches,
+loaded DLL state, etc. all persisted across those two runs, since the
+terminal itself never restarted). The seal criterion is specifically
+"restart EA or MT5 session, rebuild the same context, get the same
+hash" - that still needs its own piece of evidence.
+
+## What's needed to close this out
+
+No code changes - the mechanism (`Test_CrossSessionFixture()`) is
+already correct and doesn't need to change. Just run it across a real
+restart, within one M5 window:
+
+1. Run `MLQuantAI_Test_DataHubDeterminism` once (persists the fixture).
+2. **Actually restart MT5** (close and reopen the terminal, or at minimum
+   fully unload/reload the terminal's script engine - not just re-running
+   the script from the Navigator).
+3. Run the script again, within the same M5 bar as step 1.
+4. Confirm the log shows a new terminal/session startup AND
+   `[PASS] rebuilt context_hash for the SAME anchor bar matches the hash
+   a PREVIOUS run of this script persisted`.
+
+Once that lands, this file's status flips to SEALED and B3/B3.5 close
+per `Docs/PhaseB_B3_DataHubDeterminism.md`'s DoD.
 
 ## The 5 seal criteria and what satisfies each one
 
