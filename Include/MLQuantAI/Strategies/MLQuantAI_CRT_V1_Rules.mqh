@@ -231,11 +231,34 @@ bool CRT_ResolveZone(const MarketContext &ctx, int sweepBarIndex, int mssBarInde
 //---------------------------------------------------------------------
 // Pure string->enum mapping (the inverse of FeatureEngine_TimeframeTag) -
 // no broker call, so it stays legal inside a CRT_* pure-function chain.
+// MQL5 has no generic StringToEnum() available in this build, so this is
+// an explicit table covering every standard ENUM_TIMEFRAMES value -
+// EnumToString(PERIOD_x) with the "PERIOD_" prefix stripped, the exact
+// inverse of FeatureEngine_TimeframeTag().
 ENUM_TIMEFRAMES CRT_TimeframeTagToPeriod(string tag)
 {
-   ENUM_TIMEFRAMES tf = PERIOD_CURRENT;
-   StringToEnum("PERIOD_" + tag, tf);
-   return tf;
+   if(tag == "M1")  return PERIOD_M1;
+   if(tag == "M2")  return PERIOD_M2;
+   if(tag == "M3")  return PERIOD_M3;
+   if(tag == "M4")  return PERIOD_M4;
+   if(tag == "M5")  return PERIOD_M5;
+   if(tag == "M6")  return PERIOD_M6;
+   if(tag == "M10") return PERIOD_M10;
+   if(tag == "M12") return PERIOD_M12;
+   if(tag == "M15") return PERIOD_M15;
+   if(tag == "M20") return PERIOD_M20;
+   if(tag == "M30") return PERIOD_M30;
+   if(tag == "H1")  return PERIOD_H1;
+   if(tag == "H2")  return PERIOD_H2;
+   if(tag == "H3")  return PERIOD_H3;
+   if(tag == "H4")  return PERIOD_H4;
+   if(tag == "H6")  return PERIOD_H6;
+   if(tag == "H8")  return PERIOD_H8;
+   if(tag == "H12") return PERIOD_H12;
+   if(tag == "D1")  return PERIOD_D1;
+   if(tag == "W1")  return PERIOD_W1;
+   if(tag == "MN1") return PERIOD_MN1;
+   return PERIOD_CURRENT;
 }
 
 bool CRT_EvaluateExpiry(datetime setupAnchorBarTime, int expiryAfterBars, ENUM_TIMEFRAMES triggerTimeframe, datetime currentClosedBarTime)
