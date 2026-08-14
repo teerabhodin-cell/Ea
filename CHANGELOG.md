@@ -4,6 +4,36 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B B5 Commit 5: CANDIDATE_CREATED Event Emission
+
+Implements the final Commit 5 boundary: `TradeCandidate ->
+CANDIDATE_CREATED -> EventStore append`. Reuses Phase A's sealed
+`EventStore_LogCandidateCreated()`/`StateProjector_TryGetState()`
+machinery rather than inventing a new event-store primitive or
+idempotency mechanism. See Docs/PhaseB_B5_Commit5.md, including a real
+live-session idempotency gap this commit found and closed
+(`StateProjector` is only populated by replay, never by
+`EventStore_LogCandidateCreated()` itself - fixed by having
+`CRT_EmitCandidateCreated()` apply the genesis event to `StateProjector`
+immediately after each durable write).
+
+### Added
+- `Strategies/MLQuantAI_CRT_V1_EventEmission.mqh` (new):
+  `CRT_EmitCandidateCreated`, `CRT_CandidateCreatedExtraJson`,
+  `CRT_StringArrayToJson`.
+- `Infrastructure/EventStore/MLQuantAI_EventStore.mqh`:
+  `EventStore_LogCandidateCreated` gained an additive `extraJson=""`
+  parameter (every existing Phase A caller unaffected).
+- `Tests/MLQuantAI_Test_CRT_V1_CandidateCreatedEvent.mq5` (new): full
+  Commit 5 required-test checklist - exactly-one-event-per-detection,
+  required fields carried through, ordered trigger_reasons[] preserved,
+  duplicate-candidate_id no-op, non-detection emits nothing, replay
+  reconstruction via ReplayEngine_Run/StateProjector, replayed-fields-
+  match-original, replay idempotency.
+
+### Status
+Implemented, awaiting a real compile/test run before PASSED.
+
 ## [Unreleased] - Phase B B5 Commit 4: CRT_ToTradeCandidate (pure mapping) (PASSED 2026-08-14)
 
 Implements the Commit 4 boundary: `bool CRT_ToTradeCandidate(ctx, crt,

@@ -150,7 +150,17 @@ bool EventStore_LogSystem(string eventType, string message, string extraJson="")
 // machine itself never allows anyway). Returns false if the birth event
 // could not be durably written - callers should treat the candidate as
 // not safely usable in that case.
-bool EventStore_LogCandidateCreated(const TradeCandidate &c)
+//
+// Phase B B5 Commit 5: extraJson is additive (default "", so every
+// Phase A caller - MLQuantAI.mq5's Step 8.5 smoke test, DummyLifecycle/
+// BrokerReconciliation/EventStoreRecovery/ReplayIntegrity tests - is
+// unaffected). CRT_EmitCandidateCreated() (Strategies/MLQuantAI_CRT_V1_
+// EventEmission.mqh) passes a JSON fragment here carrying the B5 fields
+// LifecycleEvent has no native slot for (context_event_id/context_hash/
+// candidate_hash/detector_hash/trigger_reason_mask/trigger_reasons[]),
+// same "caller-supplied JSON fragment" convention EventStore_LogTransition
+// already uses.
+bool EventStore_LogCandidateCreated(const TradeCandidate &c, string extraJson="")
 {
    LifecycleEvent e;
    LifecycleEvent_Init(e);
@@ -161,6 +171,7 @@ bool EventStore_LogCandidateCreated(const TradeCandidate &c)
    e.from_state         = CANDIDATE_CREATED;
    e.to_state           = CANDIDATE_CREATED;
    e.reason             = REASON_NONE;
+   e.extra_json         = extraJson;
    e.base.event_type   = EventTypeToString(EVENT_TYPE_CANDIDATE_CREATED);
    if(!EventStore_AppendLifecycle(e))
    {
