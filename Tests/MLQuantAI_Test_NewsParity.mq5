@@ -34,7 +34,7 @@ void Check(bool cond, string label)
 // Core parity - Live vs. CSV sources agree on decision-relevant content
 //=====================================================================
 
-void Test_Parity_SameEvent_SameDecisionHash_DifferentSnapshotIdentity()
+void Test_Parity_SameEvent_SameDecisionHash_DiffIdentity()
 {
    Print("--- Core parity: same underlying event from two sources ---");
 
@@ -523,7 +523,7 @@ void OnStart()
 {
    Print("=== MLQuantAI Test: Phase B B4 News Engine Parity ===");
 
-   Test_Parity_SameEvent_SameDecisionHash_DifferentSnapshotIdentity();
+   Test_Parity_SameEvent_SameDecisionHash_DiffIdentity();
    Test_Parity_ContextHashEqualWhenDecisionHashEqual();
 
    Test_Canonicalize_ImpactCaseInsensitive();
