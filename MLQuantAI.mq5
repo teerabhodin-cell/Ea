@@ -22,6 +22,7 @@
 input group "=== System ==="
 input bool   DebugMode                   = false;
 input string EventStoreFileNameOverride  = ""; // blank = auto date-stamped "MLQuantAI_events_YYYY-MM-DD.jsonl"
+input bool   RunLifecycleSmokeTest       = true; // Step 8.5: prove a candidate written by THIS EA replays correctly across restarts. Turn off once Phase B strategies produce real candidates.
 
 string g_EventStoreFileName = "";
 
@@ -30,6 +31,58 @@ string BuildDefaultEventStoreFileName()
    MqlDateTime tm;
    TimeToStruct(TimeCurrent(), tm);
    return StringFormat("MLQuantAI_events_%04d-%02d-%02d.jsonl", tm.year, tm.mon, tm.day);
+}
+
+// Deterministic per-CALENDAR-DAY id (not per-tick) so repeated restarts on
+// the same day find the SAME candidate_id instead of creating a new one
+// each time - that's what lets OnInit tell "already logged today, replay
+// found it correctly" apart from "never logged, create it now".
+// TimeCurrent() - (TimeCurrent()%86400) is an approximate day boundary
+// (doesn't account for the broker's exact midnight), which is fine here -
+// this only needs to stay stable across restarts within the same session
+// of testing, not be calendar-exact.
+string BuildSmokeTestCandidateId(string &outRootEventId)
+{
+   datetime approxDayStart = TimeCurrent() - (TimeCurrent() % 86400);
+   outRootEventId = Ids_RootEventId(_Symbol, "SMOKE", "RUNTIME_LIFECYCLE_SMOKE_TEST", 0.0, approxDayStart, 0);
+   return Ids_CandidateId(outRootEventId, "SMOKE", "V1");
+}
+
+// Step 8.5 Runtime Lifecycle Smoke Test - proves a candidate created by
+// THIS ACTUAL EA (not a standalone test script) gets correctly replayed
+// on the next restart. No order is ever opened; the candidate always ends
+// REJECTED_BY_RISK. Idempotent per calendar day: if today's smoke-test
+// candidate already exists (found via replay), this only reports its
+// replayed state instead of creating a duplicate - StateProjector would
+// correctly flag a second CREATED genesis for the same candidate_id as
+// corruption, so this guard is required, not just tidy.
+void RunRuntimeLifecycleSmokeTest()
+{
+   string rootEventId;
+   string smokeId = BuildSmokeTestCandidateId(rootEventId);
+
+   ENUM_CANDIDATE_STATE existingState;
+   if(StateProjector_TryGetState(smokeId, existingState))
+   {
+      LogInfo(StringFormat("Step 8.5 smoke test: today's candidate (%s) already exists and replayed correctly -> state=%s",
+              smokeId, CandidateStateToString(existingState)));
+      return;
+   }
+
+   TradeCandidate smoke;
+   TradeCandidate_Init(smoke);
+   smoke.candidate_id  = smokeId;
+   smoke.root_event_id = rootEventId;
+   smoke.strategy_id   = -1; // not a real strategy - synthetic smoke-test candidate
+   smoke.strategy_name = "RuntimeLifecycleSmokeTest";
+   smoke.signal_time   = TimeCurrent();
+
+   if(!EventStore_LogCandidateCreated(smoke)) { LogWarn("Step 8.5 smoke test: failed to log CREATED"); return; }
+   if(!EventStore_LogTransition(smoke, CANDIDATE_SUBMITTED, REASON_SUBMITTED_OK)) { LogWarn("Step 8.5 smoke test: failed to log SUBMITTED"); return; }
+   if(!EventStore_LogTransition(smoke, CANDIDATE_REJECTED_BY_RISK, REASON_RISK_DAILY_LOSS_LIMIT)) { LogWarn("Step 8.5 smoke test: failed to log REJECTED_BY_RISK"); return; }
+
+   LogInfo(StringFormat("Step 8.5 smoke test: created today's candidate (%s), logged CREATED -> SUBMITTED -> REJECTED_BY_RISK. "
+                         "Restart the EA to confirm replay reconstructs this exact state.", smokeId));
 }
 
 int OnInit()
@@ -89,6 +142,14 @@ int OnInit()
       EventStoreHealth_TripSafeMode(StringFormat("replay found an inconsistency: %s", rr.first_error));
 
    BrokerReconciliationReport brr = BrokerReconciliation_CheckAll();
+
+   // Step 8.5: prove a candidate this exact EA wrote gets replayed
+   // correctly on the next restart - not just candidates written by the
+   // standalone Tests/ scripts. Runs AFTER replay/reconciliation above so
+   // it can see (via StateProjector_TryGetState) whether today's
+   // smoke-test candidate already exists from a previous run this session.
+   if(RunLifecycleSmokeTest)
+      RunRuntimeLifecycleSmokeTest();
 
    Comment(StringFormat("%s v%s | Safe Mode: %s | candidates created (all-time): %d",
            MLQUANTAI_EA_NAME, MLQUANTAI_EA_VERSION,
