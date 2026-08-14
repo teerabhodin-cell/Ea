@@ -1,21 +1,25 @@
 # Phase B — B4: News Parity Layer
 
-**Status: CONDITIONAL PASS — not yet SEALED.** `MLQuantAI_Test_NewsParity`
-(47/47) and the `MLQuantAI_Test_DataHubDeterminism` regression (41/41)
-both passed on real compiles/runs, and merged into `mlquantai`. Two gates
-from the original DoD were under-tested at that point and are being
-closed out here before B4 is actually sealed:
+**Status: SEALED (2026-08-14).** All DoD gates verified on real
+compiles/runs, including the two that were only architecturally claimed
+(not runtime-tested) in the first pass:
 
-1. **Source-free replay** — the original `Test_Seal_ReplayNeverCallsSources`
-   only asserted `Check(true, ...)` with a "true by construction" comment.
-   That's an architectural claim, not a verified one - it never actually
-   built data, persisted it, threw away in-memory state, and re-derived
-   the same hashes from disk alone. See `Tests/MLQuantAI_Test_NewsReplayIsolation.mq5`.
-2. **Additive schema evolution** — B4 never exercised what happens when a
-   news event carries fields the current schema didn't originally define
-   (the exact scenario `news_schema_version` exists to eventually support).
-   See `Tests/MLQuantAI_Test_NewsSchemaEvolution.mq5` and the new
-   `forecast`/`actual`/`previous` pass-through fields below.
+- `MLQuantAI_Test_NewsParity`: 46/46 ALL PASS
+- `MLQuantAI_Test_NewsReplayIsolation`: 9/9 ALL PASS — replaces the
+  earlier `Test_Seal_ReplayNeverCallsSources`, which only asserted
+  `Check(true, ...)` with a "true by construction" comment. This version
+  actually builds data, persists it, closes the store, opens a fresh
+  handle, and re-derives the same hashes from disk alone, plus asserts
+  `g_NewsEngine_BuildCallCount` never moved.
+- `MLQuantAI_Test_NewsSchemaEvolution`: 14/14 ALL PASS — proves additive
+  `forecast`/`actual`/`previous` metadata moves `news_snapshot_identity`
+  but never `news_decision_hash`/`context_hash`, and that old CSV data
+  keeps parsing correctly after the schema grew.
+- `MLQuantAI_Test_DataHubDeterminism` (B3/B3.5 regression): 41/41 ALL PASS
+- `MLQuantAI_Test_PhaseBContracts`: 52/52 ALL PASS
+- `MLQuantAI_Test_SymbolResolver`: 38/38 ALL PASS
+- `MLQuantAI.mq5` EA: clean startup, event store replay OK, broker
+  reconciliation OK
 
 Builds a single Raw → Normalize → Dedup → Sort/Select pipeline shared by
 both the live MT5 Economic Calendar and a deterministic Tester-only CSV
@@ -275,16 +279,14 @@ runtime-verified via the `g_NewsEngine_BuildCallCount` counter) and
 separate scripts covering the two DoD gates that weren't genuinely
 runtime-tested in the first pass.
 
-## B4 seal criteria (Step 9)
+## B4 seal criteria (Step 9) — all met
 
-B4 closes when, on a real compile + run:
-
-- `MLQuantAI_Test_NewsParity.mq5` = ALL PASS
-- `MLQuantAI_Test_NewsReplayIsolation.mq5` = ALL PASS
-- `MLQuantAI_Test_NewsSchemaEvolution.mq5` = ALL PASS
-- `MLQuantAI_Test_DataHubDeterminism.mq5` (B3/B3.5 regression) = PASS
-- No source access during replay = verified at runtime (see above, not
-  just by construction)
+- `MLQuantAI_Test_NewsParity.mq5` = ALL PASS (46/46)
+- `MLQuantAI_Test_NewsReplayIsolation.mq5` = ALL PASS (9/9)
+- `MLQuantAI_Test_NewsSchemaEvolution.mq5` = ALL PASS (14/14)
+- `MLQuantAI_Test_DataHubDeterminism.mq5` (B3/B3.5 regression) = ALL PASS (41/41)
+- No source access during replay = verified at runtime via
+  `g_NewsEngine_BuildCallCount`, not just by construction
 - Coverage failure = fails closed (`Test_CoverageValidation_
   FailsClosedOnGap`, `NewsEngine_InitCsvSource` gating `MLQuantAI.mq5`'s
   `OnInit`)
@@ -294,6 +296,4 @@ B4 closes when, on a real compile + run:
   `source_priority`, plus `news_decision_hash`/`news_snapshot_identity`
   at the `MarketContext` level)
 
-Once all of the above are confirmed by a real MetaEditor compile and test
-run, B4's status upgrades from CONDITIONAL PASS to SEALED, and B5 (CRT
-detector-only) opens.
+B4 merged into `mlquantai`. B5 (CRT detector-only) is approved to start.
