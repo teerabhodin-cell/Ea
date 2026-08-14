@@ -1,12 +1,30 @@
 # Phase B — B4: News Parity Layer
 
-**Status: implemented, awaiting a real compile/test run before SEALED.**
+**Status: CONDITIONAL PASS — not yet SEALED.** `MLQuantAI_Test_NewsParity`
+(47/47) and the `MLQuantAI_Test_DataHubDeterminism` regression (41/41)
+both passed on real compiles/runs, and merged into `mlquantai`. Two gates
+from the original DoD were under-tested at that point and are being
+closed out here before B4 is actually sealed:
+
+1. **Source-free replay** — the original `Test_Seal_ReplayNeverCallsSources`
+   only asserted `Check(true, ...)` with a "true by construction" comment.
+   That's an architectural claim, not a verified one - it never actually
+   built data, persisted it, threw away in-memory state, and re-derived
+   the same hashes from disk alone. See `Tests/MLQuantAI_Test_NewsReplayIsolation.mq5`.
+2. **Additive schema evolution** — B4 never exercised what happens when a
+   news event carries fields the current schema didn't originally define
+   (the exact scenario `news_schema_version` exists to eventually support).
+   See `Tests/MLQuantAI_Test_NewsSchemaEvolution.mq5` and the new
+   `forecast`/`actual`/`previous` pass-through fields below.
+
 Builds a single Raw → Normalize → Dedup → Sort/Select pipeline shared by
 both the live MT5 Economic Calendar and a deterministic Tester-only CSV
 source, so `MarketContext.news[]` — and everything derived from it — is
 identical regardless of which source supplied the data. No CRT/
 `TradeCandidate`/execution code touched. See `Docs/PhaseB_B3_5_
-DeterminismSeal.md` for B3/B3.5, which this builds on top of.
+DeterminismSeal.md` for B3/B3.5 (B3.5 stays SEALED — its one `[SKIP]`
+run was a bar rollover between script runs, not a regression, and doesn't
+affect its sealed status).
 
 ## Why a shared pipeline
 
