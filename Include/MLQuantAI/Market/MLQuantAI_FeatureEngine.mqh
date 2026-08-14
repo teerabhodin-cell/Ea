@@ -64,6 +64,7 @@ bool FeatureEngine_Init(string chartSymbol)
 void FeatureEngine_Deinit()
 {
    DataHub_Deinit();
+   NewsEngine_DeinitCsvSource();
 }
 
 void FeatureEngine_BuildAccountSnapshot(AccountSnapshot &a)
@@ -158,27 +159,34 @@ MarketContext FeatureEngine_BuildContext()
 
    if(UseNewsFilter)
    {
-      int n = News_BuildSnapshots(NewsCurrency, anchor, NewsMinutesBefore, NewsMinutesAfter, ctx.news);
-      // Canonical order BEFORE anything downstream reads ctx.news - both
-      // the hash payload and the logged JSON must see the same,
-      // source-order-independent sequence (see NewsSnapshot_Canonicalize).
-      NewsSnapshot_Canonicalize(ctx.news);
-      ctx.news_count = n;
-
-      int maxImpact = 0, nearestAbsMinutes = -1, nearestSignedMinutes = 0;
-      for(int i = 0; i < n; i++)
+      // Phase B B4: NewsEngine_Build() runs the full Raw -> Normalize ->
+      // Dedup -> Sort/Select pipeline (Market/MLQuantAI_NewsCanonicalizer.mqh)
+      // and already returns ctx.news[] in final canonical order, plus the
+      // decision/identity hashes - nothing here recomputes normalization
+      // or aggregates by hand anymore.
+      NewsEngineResult newsResult = NewsEngine_Build(anchor);
+      if(newsResult.ok)
       {
-         if(ctx.news[i].impact > maxImpact)
-            maxImpact = ctx.news[i].impact;
-         int absMinutes = (int)MathAbs(ctx.news[i].minutes_to_event);
-         if(nearestAbsMinutes < 0 || absMinutes < nearestAbsMinutes)
-         {
-            nearestAbsMinutes = absMinutes;
-            nearestSignedMinutes = ctx.news[i].minutes_to_event;
-         }
+         int n = ArraySize(newsResult.snapshots);
+         ArrayResize(ctx.news, n);
+         for(int i = 0; i < n; i++)
+            ctx.news[i] = newsResult.snapshots[i];
+         ctx.news_count              = newsResult.news_count;
+         ctx.max_news_impact         = newsResult.max_news_impact;
+         ctx.nearest_news_minutes    = newsResult.nearest_news_minutes;
+         ctx.news_decision_hash      = newsResult.news_decision_hash;
+         ctx.news_snapshot_identity  = newsResult.news_snapshot_identity;
       }
-      ctx.max_news_impact       = maxImpact;
-      ctx.nearest_news_minutes  = (nearestAbsMinutes < 0) ? 0 : nearestSignedMinutes;
+      else
+      {
+         // News source failure is NOT silently treated as "no news" -
+         // this context is still built (so the bar isn't lost from the
+         // dataset entirely), but stays at MarketContext_Init's news
+         // defaults, and the failure is already logged by
+         // NewsEngine_Build() itself via LogError.
+         LogWarn(StringFormat("FeatureEngine_BuildContext: news unavailable for anchor %s - %s",
+                 TimeToString(anchor, TIME_DATE|TIME_SECONDS), newsResult.error));
+      }
    }
 
    FeatureEngine_BuildAccountSnapshot(ctx.account); // runtime-only, excluded from context_hash by design

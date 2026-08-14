@@ -14,12 +14,25 @@
 //|   time,currency,impact                                            |
 //|   2026.08.14 12:30:00,USD,HIGH                                    |
 //| impact is one of HIGH/MEDIUM/LOW (only HIGH blocks).               |
+//|                                                                    |
+//| Phase B B4 added NewsEngine_Build() below - the orchestrator       |
+//| FeatureEngine_BuildContext() calls to populate MarketContext.news[]|
+//| / news_decision_hash / news_snapshot_identity via the new Raw ->   |
+//| Normalize -> Dedup -> Sort/Select pipeline (Market/MLQuantAI_      |
+//| NewsCanonicalizer.mqh). Everything above this point (News_LoadCsv/ |
+//| News_HighImpactNear* and the 3-column CSV format) is UNCHANGED and |
+//| stays a separate, still-live "gate check right now" utility - not  |
+//| what builds a replayable snapshot anymore.                         |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_NEWSENGINE_MQH__
 #define __MLQUANTAI_NEWSENGINE_MQH__
 
 #include "../Logging/MLQuantAI_SystemLogger.mqh"
 #include "MLQuantAI_NewsSnapshot.mqh"
+#include "MLQuantAI_NewsSource.mqh"
+#include "MLQuantAI_NewsCanonicalizer.mqh"
+#include "MLQuantAI_CsvStaticNewsSource.mqh"
+#include "MLQuantAI_LiveCalendarNewsSource.mqh"
 #include "../Core/MLQuantAI_ContractVersions.mqh"
 
 input group "=== News Engine ==="
@@ -150,9 +163,10 @@ bool News_HighImpactNear_Csv(string currency, datetime now, int minutesBefore, i
 // Tester, the live Economic Calendar otherwise. Reads TimeCurrent()
 // internally BY DESIGN - this is a live gate check, not a replayable
 // snapshot. Do NOT use this to populate MarketContext.news[] - use
-// News_BuildSnapshots() (below) for that, which takes an explicit asOf
-// instead of reading "now" and returns the full NewsSnapshot[] Phase B
-// B3 embeds into MARKET_CONTEXT_READY for replay.
+// NewsEngine_Build() (below) for that, which takes an explicit anchor
+// time instead of reading "now" and returns the full NewsSnapshot[]
+// (via the Canonicalizer pipeline) that MARKET_CONTEXT_READY embeds
+// for replay.
 bool News_HighImpactNear(string currency, int minutesBefore, int minutesAfter)
 {
    datetime now = TimeCurrent();
@@ -161,102 +175,176 @@ bool News_HighImpactNear(string currency, int minutesBefore, int minutesAfter)
    return News_HighImpactNear_Live(currency, now, minutesBefore, minutesAfter);
 }
 
-// Same integer impact scale on both sources (0=NONE/unknown, 1=LOW,
-// 2=MEDIUM/MODERATE, 3=HIGH) so MarketContext.max_news_impact is
-// meaningful regardless of which source built the snapshot.
-int News_CsvImpactToInt(string impact)
+//---------------------------------------------------------------------
+// Phase B B4: NewsEngine_Build() - the orchestrator. Supersedes B3.5's
+// News_BuildSnapshots()/_Live/_Csv (removed - nothing else referenced
+// them by name, and they built a NewsSnapshot directly instead of
+// routing through the Canonicalizer, which is exactly the "no
+// normalization logic duplicated outside the Canonicalizer" rule B4
+// exists to enforce).
+//---------------------------------------------------------------------
+
+input group "=== News Engine V2 (Phase B B4) ==="
+input string NewsSourceCsvFileName = "MLQuantAI_NewsSourceV1.csv"; // CsvStaticNewsSource file (Tester only), Common\Files, see MLQuantAI_CsvStaticNewsSource.mqh for the frozen format
+
+CsvStaticNewsSource *g_NewsEngine_CsvSource = NULL;
+
+struct NewsEngineResult
 {
-   string u = impact;
-   StringToUpper(u);
-   if(u == "HIGH")   return 3;
-   if(u == "MEDIUM") return 2;
-   if(u == "LOW")    return 1;
-   return 0;
+   bool         ok;
+   string       error;
+   NewsSnapshot snapshots[];
+   int          news_count;
+   int          max_news_impact;
+   int          nearest_news_minutes;
+   string       news_decision_hash;
+   string       news_snapshot_identity;
+};
+
+void NewsEngineResult_Init(NewsEngineResult &r)
+{
+   r.ok = false;
+   r.error = "";
+   ArrayResize(r.snapshots, 0);
+   r.news_count = 0;
+   r.max_news_impact = 0;
+   r.nearest_news_minutes = 0;
+   r.news_decision_hash = "";
+   r.news_snapshot_identity = "";
 }
 
-// Builds the full replayable NewsSnapshot[] anchored at asOf - the Phase
-// B B3 entry point MarketContext building should use, NOT
-// News_HighImpactNear(). Deliberately takes asOf as a parameter instead
-// of reading TimeCurrent(): the same asOf must always produce the same
-// snapshots, on live, in the Tester, and across repeated calls in the
-// determinism test - the whole reason NewsSnapshot exists is to embed
-// this into MARKET_CONTEXT_READY so replay never needs to re-query
-// the calendar (live or CSV) again.
-int News_BuildSnapshots_Live(string currency, datetime asOf, int minutesBefore, int minutesAfter, NewsSnapshot &outArr[])
+// Call once from OnInit when running in the Tester (never in live/demo -
+// live trading uses LiveCalendarNewsSource, created fresh per call
+// instead, since it holds no state worth persisting). Loads the CSV
+// source and hard-validates its coverage against [rangeStart, rangeEnd]
+// (typically the full backtest range) - returns false on ANY load or
+// coverage problem; callers (MLQuantAI.mq5's OnInit) MUST treat that as
+// INIT_FAILED, not a warning.
+bool NewsEngine_InitCsvSource(datetime rangeStart, datetime rangeEnd, string &outError)
 {
-   ArrayResize(outArr, 0);
-   datetime from = asOf - minutesBefore * 60;
-   datetime to   = asOf + minutesAfter * 60;
-
-   MqlCalendarValue values[];
-   if(!CalendarValueHistory(values, from, to, NULL, currency))
-      return 0;
-
-   int count = 0;
-   for(int i = 0; i < ArraySize(values); i++)
+   if(g_NewsEngine_CsvSource != NULL)
    {
-      MqlCalendarEvent evt;
-      if(!CalendarEventById(values[i].event_id, evt)) continue;
-
-      ArrayResize(outArr, count + 1);
-      NewsSnapshot_Init(outArr[count]);
-      outArr[count].calendar_event_id = IntegerToString(values[i].event_id) + "_" + IntegerToString((long)values[i].time);
-      outArr[count].currency           = currency;
-      outArr[count].impact              = (int)evt.importance;
-      outArr[count].title                = evt.name;
-      outArr[count].release_time          = values[i].time;
-      outArr[count].minutes_to_event       = (int)((values[i].time - asOf) / 60);
-      outArr[count].source_kind             = "LIVE_CALENDAR";
-      outArr[count].source_version           = MLQUANTAI_NEWS_SCHEMA_V1;
-      count++;
+      delete g_NewsEngine_CsvSource;
+      g_NewsEngine_CsvSource = NULL;
    }
-   return count;
-}
 
-// CSV fallback counterpart. KNOWN LIMITATION (Phase B B4 will address
-// this - "News Engine parity" is explicitly a separate step): the CSV
-// format (time,currency,impact) has no event id or title, so those are
-// synthesized here rather than sourced from real calendar metadata -
-// still enough for replay determinism (same CSV row -> same synthesized
-// id/title every time), just not as descriptive as the live path.
-int News_BuildSnapshots_Csv(string currency, datetime asOf, int minutesBefore, int minutesAfter, NewsSnapshot &outArr[])
-{
-   ArrayResize(outArr, 0);
-   if(!g_NewsCsvLoaded) return 0;
-
-   datetime from = asOf - minutesBefore * 60;
-   datetime to   = asOf + minutesAfter * 60;
-
-   int count = 0;
-   for(int i = 0; i < ArraySize(g_NewsCsv); i++)
+   CsvStaticNewsSource *src = new CsvStaticNewsSource(NewsSourceCsvFileName);
+   if(!src.Load(outError))
    {
-      if(g_NewsCsv[i].time < from || g_NewsCsv[i].time > to) continue;
-      if(currency != "" && g_NewsCsv[i].currency != currency) continue;
-
-      ArrayResize(outArr, count + 1);
-      NewsSnapshot_Init(outArr[count]);
-      outArr[count].calendar_event_id = "CSV_" + TimeToString(g_NewsCsv[i].time, TIME_DATE|TIME_SECONDS) + "_" + g_NewsCsv[i].currency;
-      outArr[count].currency           = g_NewsCsv[i].currency;
-      outArr[count].impact              = News_CsvImpactToInt(g_NewsCsv[i].impact);
-      outArr[count].title                = g_NewsCsv[i].currency + " " + g_NewsCsv[i].impact + " impact news (CSV, no title in source)";
-      outArr[count].release_time          = g_NewsCsv[i].time;
-      outArr[count].minutes_to_event       = (int)((g_NewsCsv[i].time - asOf) / 60);
-      outArr[count].source_kind             = "CSV_STATIC";
-      outArr[count].source_version           = MLQUANTAI_NEWS_SCHEMA_V1;
-      count++;
+      delete src;
+      return false;
    }
-   return count;
+   if(!src.ValidateCoverage(rangeStart, rangeEnd, outError))
+   {
+      delete src;
+      return false;
+   }
+
+   g_NewsEngine_CsvSource = src;
+   return true;
 }
 
-// The one function MarketContext building should call. Routes to the CSV
-// fallback inside Strategy Tester, the live Economic Calendar otherwise -
-// same live/Tester routing convention as News_HighImpactNear(), but
-// anchored on asOf and returning full snapshots instead of a bool.
-int News_BuildSnapshots(string currency, datetime asOf, int minutesBefore, int minutesAfter, NewsSnapshot &outArr[])
+void NewsEngine_DeinitCsvSource()
 {
+   if(g_NewsEngine_CsvSource != NULL)
+   {
+      delete g_NewsEngine_CsvSource;
+      g_NewsEngine_CsvSource = NULL;
+   }
+}
+
+// The ONE function FeatureEngine_BuildContext() calls to populate
+// MarketContext's news fields. Selects the source by the same live/
+// Tester routing convention every other module in this project uses,
+// reads raw events for the FROZEN window (MLQUANTAI_NEWS_LOOKBACK_
+// MINUTES/MLQUANTAI_NEWS_LOOKAHEAD_MINUTES, both 1440 - see
+// MLQuantAI_NewsCanonicalizer.mqh), then runs the full pipeline:
+// normalize -> dedup -> sort/select -> hash -> convert to NewsSnapshot[].
+//
+// REPLAY NEVER CALLS THIS - a replayed context reads NewsSnapshot[]
+// straight back out of the already-logged MARKET_CONTEXT_READY event,
+// it does not re-run source reads or the pipeline. See
+// Docs/PhaseB_B4_NewsParity.md.
+NewsEngineResult NewsEngine_Build(datetime anchorTime)
+{
+   NewsEngineResult result;
+   NewsEngineResult_Init(result);
+
+   string sourceKindForLog;
+   RawNewsEvent rawArr[];
+   string err = "";
+   bool readOk;
+
    if(MQLInfoInteger(MQL_TESTER))
-      return News_BuildSnapshots_Csv(currency, asOf, minutesBefore, minutesAfter, outArr);
-   return News_BuildSnapshots_Live(currency, asOf, minutesBefore, minutesAfter, outArr);
+   {
+      sourceKindForLog = "CSV_STATIC";
+      if(g_NewsEngine_CsvSource == NULL)
+      {
+         result.error = "NewsEngine_Build: CSV source not initialized - call NewsEngine_InitCsvSource() from OnInit first";
+         LogError(result.error);
+         return result;
+      }
+      readOk = g_NewsEngine_CsvSource.ReadRawEvents(NewsCurrency, anchorTime,
+                                                     MLQUANTAI_NEWS_LOOKBACK_MINUTES, MLQUANTAI_NEWS_LOOKAHEAD_MINUTES,
+                                                     rawArr, err);
+   }
+   else
+   {
+      sourceKindForLog = "LIVE_CALENDAR";
+      LiveCalendarNewsSource live;
+      readOk = live.ReadRawEvents(NewsCurrency, anchorTime,
+                                   MLQUANTAI_NEWS_LOOKBACK_MINUTES, MLQUANTAI_NEWS_LOOKAHEAD_MINUTES,
+                                   rawArr, err);
+   }
+
+   if(!readOk)
+   {
+      result.error = "NewsEngine_Build: " + err;
+      LogError(result.error);
+      return result;
+   }
+
+   NormalizedNewsEvent normalized[];
+   News_NormalizeAll(rawArr, anchorTime, normalized);
+
+   NormalizedNewsEvent deduped[];
+   if(!News_Deduplicate(normalized, deduped, err))
+   {
+      result.error = "NewsEngine_Build: " + err;
+      LogError(result.error);
+      return result;
+   }
+
+   News_SortAndSelect(deduped, MLQUANTAI_NEWS_MAX_EVENTS);
+
+   result.news_decision_hash    = News_DecisionHash(deduped);
+   result.news_snapshot_identity = News_SnapshotIdentity(deduped);
+   result.news_count              = News_ToSnapshotArray(deduped, result.snapshots);
+
+   int maxImpact = 0, nearestAbsMinutes = -1, nearestSignedMinutes = 0;
+   for(int i = 0; i < result.news_count; i++)
+   {
+      if(result.snapshots[i].impact > maxImpact)
+         maxImpact = result.snapshots[i].impact;
+      int absMinutes = (int)MathAbs(result.snapshots[i].minutes_to_event);
+      if(nearestAbsMinutes < 0 || absMinutes < nearestAbsMinutes)
+      {
+         nearestAbsMinutes = absMinutes;
+         nearestSignedMinutes = result.snapshots[i].minutes_to_event;
+      }
+   }
+   result.max_news_impact      = maxImpact;
+   result.nearest_news_minutes = (nearestAbsMinutes < 0) ? 0 : nearestSignedMinutes;
+   result.ok = true;
+
+   LogInfo(StringFormat("NewsEngine: source=%s anchor=%s window=[-%dm,+%dm] raw_events=%d canonical_events=%d "
+                         "selected_events=%d news_decision_hash=%s news_snapshot_identity=%s status=OK",
+           sourceKindForLog, TimeToString(anchorTime, TIME_DATE|TIME_SECONDS),
+           MLQUANTAI_NEWS_LOOKBACK_MINUTES, MLQUANTAI_NEWS_LOOKAHEAD_MINUTES,
+           ArraySize(rawArr), ArraySize(deduped), result.news_count,
+           result.news_decision_hash, result.news_snapshot_identity));
+
+   return result;
 }
 
 #endif // __MLQUANTAI_NEWSENGINE_MQH__

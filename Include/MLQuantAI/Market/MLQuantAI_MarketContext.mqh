@@ -21,6 +21,18 @@
 //| FeatureEngine_BuildContext()); the old Step 9 struct this coexisted|
 //| with (Core/MLQuantAI_MarketContext.mqh) was deleted in the same    |
 //| pass once nothing referenced it anymore.                           |
+//|                                                                    |
+//| Phase B B4 added news_decision_hash/news_snapshot_identity          |
+//| additively (see Market/MLQuantAI_NewsCanonicalizer.mqh) AND changed |
+//| what MarketContext_HashPayload's news contribution actually is:     |
+//| it now folds in news_decision_hash (decision-relevant news content  |
+//| only) instead of iterating news[] through NewsSnapshot_HashFragment |
+//| (which includes source_kind - provenance). This is a deliberate     |
+//| context_hash ALGORITHM change, not a struct/schema change - no real |
+//| candidate dataset depends on a specific historical context_hash     |
+//| value yet (B5 hasn't started), which is specifically why this is    |
+//| the appropriate time to make it, before context_hash is ever relied |
+//| on for real replay auditing. See Docs/PhaseB_B4_NewsParity.md.      |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_MARKET_MARKETCONTEXT_MQH__
 #define __MLQUANTAI_MARKET_MARKETCONTEXT_MQH__
@@ -69,6 +81,8 @@ struct MarketContext
    int      news_count;
    int      max_news_impact;
    int      nearest_news_minutes;
+   string   news_decision_hash;     // Phase B B4: decision-relevant news content only - see MarketContext_HashPayload
+   string   news_snapshot_identity; // Phase B B4: full news lineage/provenance hash - audit trail, excluded from context_hash
 
    AccountSnapshot account;
    SymbolSpec      symbol_spec;
@@ -112,6 +126,8 @@ void MarketContext_Init(MarketContext &c)
    c.news_count = 0;
    c.max_news_impact = 0;
    c.nearest_news_minutes = 0;
+   c.news_decision_hash = "";
+   c.news_snapshot_identity = "";
 
    AccountSnapshot_Init(c.account);
    SymbolSpec_Init(c.symbol_spec);
@@ -134,13 +150,21 @@ string MarketContext_RatesHashFragment(const MqlRates &r)
 // excludes account (runtime-only: balance/equity move between two builds
 // of the "same" bar and must not change what the context's identity
 // hashes to). Everything else - closed-bar OHLC across all 4 timeframes,
-// price/feature/session fields, and the full (canonically ordered) news
-// snapshot content - is what actually defines "this market snapshot".
+// price/feature/session fields, and news_decision_hash - is what
+// actually defines "this market snapshot".
 //
-// news[] MUST already be canonicalized (NewsSnapshot_Canonicalize) by
-// the caller before this runs - see FeatureEngine_BuildContext() - so
-// the hash reflects the news CONTENT, not whatever order the calendar/
-// CSV source happened to return rows in.
+// Phase B B4: the news contribution is news_decision_hash (decision-
+// relevant news content only - currency/impact/release_time/
+// minutes_to_event per selected event, canonically ordered - see
+// Market/MLQuantAI_NewsCanonicalizer.mqh's News_DecisionHash()), NOT a
+// per-element loop over news[] via NewsSnapshot_HashFragment(). That
+// older per-element approach (kept in NewsSnapshot.mqh, still used
+// elsewhere) included source_kind - metadata that MUST NOT move
+// context_hash on its own, per B4's "metadata-only changes don't change
+// context_hash" seal criterion. news_count/max_news_impact/
+// nearest_news_minutes are themselves derived from the same selected
+// set news_decision_hash covers, so including news_decision_hash alone
+// is sufficient - they aren't hashed separately to avoid redundancy.
 string MarketContext_HashPayload(const MarketContext &c)
 {
    string s = c.instrument_id + "|" + c.broker_symbol + "|" + c.trigger_timeframe + "|" +
@@ -155,10 +179,7 @@ string MarketContext_HashPayload(const MarketContext &c)
               DoubleToString(c.pdh, 5) + "|" + DoubleToString(c.pdl, 5) + "|" +
               DoubleToString(c.asian_range_high, 5) + "|" + DoubleToString(c.asian_range_low, 5) + "|" +
               c.session_id + "|" + (c.is_kill_zone ? "1" : "0") + "|" +
-              IntegerToString(c.news_count) + "|" + IntegerToString(c.max_news_impact) + "|" + IntegerToString(c.nearest_news_minutes);
-
-   for(int i = 0; i < ArraySize(c.news); i++)
-      s += "|news" + IntegerToString(i) + ":" + NewsSnapshot_HashFragment(c.news[i]);
+              "news_decision:" + c.news_decision_hash;
 
    return s;
 }
@@ -224,6 +245,8 @@ string MarketContext_ToJsonFragment(const MarketContext &c)
    s += "\"news_count\":" + IntegerToString(c.news_count) + ",";
    s += "\"max_news_impact\":" + IntegerToString(c.max_news_impact) + ",";
    s += "\"nearest_news_minutes\":" + IntegerToString(c.nearest_news_minutes) + ",";
+   s += "\"news_decision_hash\":\"" + c.news_decision_hash + "\",";
+   s += "\"news_snapshot_identity\":\"" + c.news_snapshot_identity + "\",";
    // account is excluded from context_hash (runtime-only, see
    // MarketContext_HashPayload) but is still worth logging here for
    // audit - it's just not part of the context's identity.

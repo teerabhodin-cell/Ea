@@ -116,17 +116,34 @@ int OnInit()
    LogInfo(StringFormat("FeatureEngine resolved instrument_id=%s broker_symbol=%s trigger_timeframe=%s",
            g_FeatureEngine_InstrumentId, g_FeatureEngine_BrokerSymbol, FeatureEngine_TimeframeTag(InpTriggerTimeframe)));
 
-   // News CSV fallback only matters inside Strategy Tester (live trading
-   // uses the real Economic Calendar) - load it once here and do a
-   // best-effort coverage check against however much M15 history this
-   // symbol has, so a gap between the CSV and the actual test range shows
-   // up as a warning before any candidate ever depends on the news filter.
+   // Phase B B4 hard gate: NewsEngine_Build() (the pipeline that
+   // populates MarketContext.news[]) needs its CsvStaticNewsSource loaded
+   // AND its coverage validated against the full backtest range BEFORE
+   // the first bar - a coverage gap must block startup, not silently run
+   // with an incomplete news dataset. Unlike the legacy
+   // News_ValidateCsvCoverage below (advisory-only, and only feeds the
+   // separate News_HighImpactNear() live-gate utility), this is a hard
+   // INIT_FAILED.
    if(UseNewsFilter && MQLInfoInteger(MQL_TESTER))
    {
-      News_LoadCsv(NewsCsvFileName);
       datetime seriesStart = (datetime)SeriesInfoInteger(_Symbol, PERIOD_M15, SERIES_FIRSTDATE);
+      datetime rangeEnd     = TimeCurrent();
       if(seriesStart > 0)
-         News_ValidateCsvCoverage(seriesStart, TimeCurrent());
+      {
+         string newsSourceErr;
+         if(!NewsEngine_InitCsvSource(seriesStart, rangeEnd, newsSourceErr))
+         {
+            LogError("NewsEngine_InitCsvSource failed - refusing to start with an incomplete/invalid news dataset "
+                     "while UseNewsFilter=true (Phase B B4 hard gate): " + newsSourceErr);
+            return INIT_FAILED;
+         }
+      }
+
+      // Legacy 3-column CSV fallback - a separate concern, feeds only the
+      // still-live News_HighImpactNear() gate-check utility. Advisory only.
+      News_LoadCsv(NewsCsvFileName);
+      if(seriesStart > 0)
+         News_ValidateCsvCoverage(seriesStart, rangeEnd);
    }
 
    // Validate whatever's already in the file BEFORE this session appends

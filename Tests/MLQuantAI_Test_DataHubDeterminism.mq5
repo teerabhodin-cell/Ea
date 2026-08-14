@@ -74,6 +74,14 @@ void Test_ContextReadyAndPayloadComplete()
    Check(ctx.symbol_spec.instrument_id == ctx.instrument_id, "embedded symbol_spec.instrument_id matches the context's own instrument_id");
    Check(ctx.symbol_spec.broker_symbol == ctx.broker_symbol, "embedded symbol_spec.broker_symbol matches the context's own broker_symbol");
    Check(ctx.news_count >= 0, "news_count was computed (>= 0)");
+   if(UseNewsFilter)
+   {
+      // Non-empty even with zero selected events - News_DecisionHash([])/
+      // News_SnapshotIdentity([]) still hash the empty payload to a real
+      // SHA-256 value, they don't return "".
+      Check(ctx.news_decision_hash != "", "news_decision_hash is populated (Phase B B4)");
+      Check(ctx.news_snapshot_identity != "", "news_snapshot_identity is populated (Phase B B4)");
+   }
 }
 
 // The core B3 DoD requirement: same anchor bar, rebuilt repeatedly with
@@ -150,6 +158,8 @@ void Test_LoggedPayloadIsComplete()
    Check(StringFind(line, "\"m5_bar\"") >= 0 && StringFind(line, "\"h4_bar\"") >= 0, "payload contains OHLC bar snapshots (m5..h4)");
    Check(StringFind(line, "\"news\":[") >= 0,                        "payload embeds the NewsSnapshot array itself, not just a count");
    Check(StringFind(line, "\"news_count\"") >= 0,                     "payload contains news_count");
+   Check(StringFind(line, "\"news_decision_hash\"") >= 0,               "payload contains news_decision_hash (Phase B B4)");
+   Check(StringFind(line, "\"news_snapshot_identity\"") >= 0,            "payload contains news_snapshot_identity (Phase B B4)");
    Check(StringFind(line, "\"symbol_spec_schema_version\"") >= 0,      "payload contains the SymbolSpec snapshot");
 }
 
@@ -184,42 +194,68 @@ void Test_AccountExclusion_RealPipeline()
 // something (not a no-op), must NOT hash identically before it runs.
 // Self-contained (hand-built NewsSnapshot entries) - no live calendar/CSV
 // dependency, so this always runs regardless of environment.
-void Test_NewsSnapshotCanonicalization()
+// MIGRATION NOTE (Phase B B4): this test originally built ctx.news[]
+// directly and relied on MarketContext_HashPayload() iterating it via
+// NewsSnapshot_HashFragment() per element. B4 changed what
+// MarketContext_HashPayload()'s news contribution actually IS - it now
+// folds in ctx.news_decision_hash (computed ONCE, upstream, by
+// Market/MLQuantAI_NewsCanonicalizer.mqh's News_DecisionHash() over a
+// canonically sorted NormalizedNewsEvent[]) instead of hashing news[]
+// directly - see that function's doc comment for why. This test's
+// PROTECTIVE INTENT is unchanged (news content must affect context_hash;
+// source order/provenance alone must not) - only the mechanism exercised
+// changed, since ordering is now resolved entirely upstream of
+// MarketContext. The upstream mechanism itself (source-order
+// independence after canonicalization) is covered directly by
+// Tests/MLQuantAI_Test_NewsParity.mq5.
+void Test_NewsDecisionHash_DrivesContextHash()
 {
-   Print("--- Seal #4: NewsSnapshot ordering is canonicalized before hashing ---");
+   Print("--- Seal #4 (migrated for B4): context_hash responds to news_decision_hash, not raw news[] content ---");
 
+   // Part 1: NewsSnapshot_Canonicalize() itself (Market/MLQuantAI_
+   // NewsSnapshot.mqh) is no longer part of the live pipeline (superseded
+   // by NewsCanonicalizer.mqh's News_SortAndSelect on
+   // NormalizedNewsEvent[]), but it's still a real, callable utility -
+   // keep it directly covered so it isn't left silently untested.
    NewsSnapshot evtA, evtB;
    NewsSnapshot_Init(evtA);
-   evtA.calendar_event_id = "CAL_2"; evtA.currency = "USD"; evtA.impact = 3;
-   evtA.release_time = D'2026.08.14 13:00'; evtA.minutes_to_event = 30; evtA.source_kind = "LIVE_CALENDAR";
-
+   evtA.calendar_event_id = "CAL_2"; evtA.release_time = D'2026.08.14 13:00';
    NewsSnapshot_Init(evtB);
-   evtB.calendar_event_id = "CAL_1"; evtB.currency = "USD"; evtB.impact = 2;
-   evtB.release_time = D'2026.08.14 12:30'; evtB.minutes_to_event = 0; evtB.source_kind = "LIVE_CALENDAR";
+   evtB.calendar_event_id = "CAL_1"; evtB.release_time = D'2026.08.14 12:30';
 
-   MarketContext ctxSourceOrderAB, ctxSourceOrderBA;
-   MarketContext_Init(ctxSourceOrderAB);
-   MarketContext_Init(ctxSourceOrderBA);
-   ctxSourceOrderAB.instrument_id = "XAUUSD";
-   ctxSourceOrderBA.instrument_id = "XAUUSD";
+   NewsSnapshot toSort[];
+   ArrayResize(toSort, 2);
+   toSort[0] = evtA; toSort[1] = evtB; // later event first
+   NewsSnapshot_Canonicalize(toSort);
+   Check(toSort[0].calendar_event_id == "CAL_1" && toSort[1].calendar_event_id == "CAL_2",
+         "NewsSnapshot_Canonicalize still sorts by release_time ascending (standalone utility, unit-tested directly)");
 
-   ArrayResize(ctxSourceOrderAB.news, 2);
-   ctxSourceOrderAB.news[0] = evtA; ctxSourceOrderAB.news[1] = evtB; // later event first, as some source might return it
+   // Part 2: MarketContext_HashPayload() itself - same news_decision_hash
+   // must hash identically regardless of what's in the raw news[] array,
+   // and a different news_decision_hash must change the payload.
+   MarketContext ctxA, ctxB, ctxC;
+   MarketContext_Init(ctxA);
+   MarketContext_Init(ctxB);
+   MarketContext_Init(ctxC);
+   ctxA.instrument_id = "XAUUSD"; ctxB.instrument_id = "XAUUSD"; ctxC.instrument_id = "XAUUSD";
 
-   ArrayResize(ctxSourceOrderBA.news, 2);
-   ctxSourceOrderBA.news[0] = evtB; ctxSourceOrderBA.news[1] = evtA; // same two events, opposite source order
+   ctxA.news_decision_hash = "DECISION_HASH_X";
+   ArrayResize(ctxA.news, 1);
+   ctxA.news[0] = evtA;
 
-   Check(MarketContext_HashPayload(ctxSourceOrderAB) != MarketContext_HashPayload(ctxSourceOrderBA),
-         "uncanonicalized: differing source order produces differing hash payloads (proves canonicalization isn't a no-op)");
+   ctxB.news_decision_hash = "DECISION_HASH_X"; // same decision hash as ctxA
+   ArrayResize(ctxB.news, 2);
+   ctxB.news[0] = evtB; // completely different raw news[] content/count from ctxA
+   NewsSnapshot evtExtra; NewsSnapshot_Init(evtExtra); evtExtra.calendar_event_id = "CAL_99";
+   ctxB.news[1] = evtExtra;
 
-   NewsSnapshot_Canonicalize(ctxSourceOrderAB.news);
-   NewsSnapshot_Canonicalize(ctxSourceOrderBA.news);
+   Check(MarketContext_HashPayload(ctxA) == MarketContext_HashPayload(ctxB),
+         "same news_decision_hash -> identical context hash payload, even though the raw news[] arrays differ completely "
+         "(ordering/content resolution happens upstream, before news_decision_hash is computed)");
 
-   Check(ctxSourceOrderAB.news[0].calendar_event_id == "CAL_1" && ctxSourceOrderAB.news[1].calendar_event_id == "CAL_2",
-         "canonicalize sorts by release_time ascending");
-
-   Check(MarketContext_HashPayload(ctxSourceOrderAB) == MarketContext_HashPayload(ctxSourceOrderBA),
-         "after canonicalization, the two source orders produce an IDENTICAL hash payload");
+   ctxC.news_decision_hash = "DECISION_HASH_Y"; // different decision hash
+   Check(MarketContext_HashPayload(ctxA) != MarketContext_HashPayload(ctxC),
+         "a different news_decision_hash changes the context hash payload");
 }
 
 // Seal criterion #2 (cross-session determinism): persists this run's
@@ -303,7 +339,7 @@ void OnStart()
    Test_ContextReadyAndPayloadComplete();
    Test_DeterminismOver1000Rebuilds();
    Test_AccountExclusion_RealPipeline();
-   Test_NewsSnapshotCanonicalization();
+   Test_NewsDecisionHash_DrivesContextHash();
    Test_CrossSessionFixture();
    Test_LoggedPayloadIsComplete();
    Test_NoLiveStateUsedStructurally();

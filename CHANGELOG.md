@@ -4,6 +4,75 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B B4: News Parity Layer
+
+One Raw -> Normalize -> Dedup -> Sort/Select pipeline shared by the live
+MT5 Economic Calendar and a deterministic Tester-only CSV source, so
+neither source can drift into its own interpretation of "the same news
+event". See `Docs/PhaseB_B4_NewsParity.md`. Still no CRT/`TradeCandidate`/
+execution code touched.
+
+### Added
+- `Market/MLQuantAI_NewsSource.mqh`: `RawNewsEvent` struct + `INewsSource`
+  interface (`ReadRawEvents`/`SourceKind`) - the only shape either source
+  is allowed to produce; no normalization at this layer.
+- `Market/MLQuantAI_NewsCanonicalizer.mqh`: the pipeline. `NormalizedNewsEvent`,
+  `News_NormalizeTitle`/`News_NormalizeImpact`/`News_NormalizeTimeUtc`,
+  `News_MakeCanonicalEventKey`, `News_ComputeMinutesToEvent` (truncates
+  toward zero both signs), `News_Deduplicate` (priority -> revision_timestamp
+  -> lexical source_kind tie-break, fails loudly on an unresolved conflict),
+  `News_SortAndSelect` (frozen 24h/24h/top-10 window), `News_DecisionHash`
+  (decision-relevant fields only, source-independent) and
+  `News_SnapshotIdentity` (full lineage, deliberately source-dependent -
+  the B5 audit trail).
+- `Market/MLQuantAI_NewsCoverageValidator.mqh`: `News_ValidateCoverage` -
+  hard fail-closed gate (not advisory) on a source's raw data not fully
+  covering a requested range.
+- `Market/MLQuantAI_CsvStaticNewsSource.mqh`: `CsvStaticNewsSource` -
+  frozen 7-column CSV format (`Common\Files`), fails closed on missing
+  file/bad schema version/any malformed row - never skips a bad row.
+- `Market/MLQuantAI_LiveCalendarNewsSource.mqh`: `LiveCalendarNewsSource` -
+  wraps `CalendarValueHistory`/`CalendarEventById`/`CalendarCountryById`,
+  routes through the same canonicalizer, fails closed (no silent fallback)
+  on a calendar read failure.
+- `Market/MLQuantAI_NewsEngine.mqh`: `NewsEngine_Build(anchorTime)` -
+  the orchestrator; routes to CSV (Tester) or Live (else) by
+  `MQL_TESTER`, runs the full pipeline, returns `NewsEngineResult`
+  (`snapshots[]`, `news_count`/`max_news_impact`/`nearest_news_minutes`,
+  `news_decision_hash`, `news_snapshot_identity`), logs one journal line
+  per build. `NewsEngine_InitCsvSource`/`_DeinitCsvSource` load + hard-gate
+  CSV coverage once from `OnInit`. Legacy `News_HighImpactNear*` (a
+  separate live real-time gate check) kept unchanged.
+- `Market/MLQuantAI_MarketContext.mqh`: `news_decision_hash`/
+  `news_snapshot_identity` fields (additive). `MarketContext_HashPayload()`'s
+  news contribution changed from a per-element `NewsSnapshot_HashFragment`
+  loop (included `source_kind`) to the single `news_decision_hash` field -
+  a deliberate algorithm change, justified in-file, since no candidate
+  dataset yet depends on a historical `context_hash` value.
+- `Market/MLQuantAI_NewsSnapshot.mqh`: `normalized_event_key`/`revision_id`/
+  `revision_timestamp`/`source_priority` fields (additive lineage).
+- `MLQuantAI.mq5`: `OnInit` now hard-gates on `NewsEngine_InitCsvSource()`
+  in Tester mode - `INIT_FAILED` on a coverage/schema/file problem, not a
+  warning.
+- `Tests/MLQuantAI_Test_NewsParity.mq5` + `Tests/Fixtures/
+  MLQuantAI_NewsParityFixture_V1.csv`: core parity (live vs. CSV agree on
+  `news_decision_hash`, differ on `news_snapshot_identity`), canonicalization
+  (case/whitespace/truncation/tie-break/order-independence), selection/
+  coverage against the real fixture (>10 events caps to a deterministic
+  top 10, dedup winner, fail-closed coverage gap and malformed CSV), and
+  seal criteria (metadata-only changes don't move `news_decision_hash`,
+  replay never touches a source, B5 lineage fields reach
+  `MARKET_CONTEXT_READY`'s JSON payload).
+- `Tests/MLQuantAI_Test_DataHubDeterminism.mq5`: `Test_NewsSnapshotCanonicalization`
+  renamed/migrated to `Test_NewsDecisionHash_DrivesContextHash` (asserts
+  `MarketContext_HashPayload` tracks `news_decision_hash`, not raw `news[]`
+  content) plus 2 new payload-completeness checks for the new hash fields.
+
+### Removed
+- `Market/MLQuantAI_NewsEngine.mqh`: `News_CsvImpactToInt`, `News_BuildSnapshots_Live`,
+  `News_BuildSnapshots_Csv`, `News_BuildSnapshots` - superseded by
+  `NewsEngine_Build()`'s shared pipeline; confirmed unused elsewhere.
+
 ## [Unreleased] - Phase B B3.5: Data Hub Determinism Seal
 
 Hardens B3's `context_hash` to actually satisfy the 5 seal criteria
