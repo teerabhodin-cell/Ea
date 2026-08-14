@@ -11,6 +11,14 @@
 //| Calendar from one read out of the Tester's static CSV fallback - |
 //| both populate the SAME struct shape, per News_HighImpactNear()'s |
 //| "one interface either way" convention (MLQuantAI_NewsEngine.mqh).|
+//|                                                                    |
+//| Phase B B4 added the lineage fields (normalized_event_key,        |
+//| revision_id, revision_timestamp, source_priority) additively -    |
+//| NewsSnapshot is now the FINAL, embeddable representation the new  |
+//| Raw -> Normalize -> Dedup -> Sort/Select pipeline produces (see   |
+//| Market/MLQuantAI_NewsCanonicalizer.mqh's NormalizedNewsEvent for  |
+//| the pipeline's internal working struct) - every pre-B4 field      |
+//| keeps its name/type/meaning unchanged.                            |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_NEWSSNAPSHOT_MQH__
 #define __MLQUANTAI_NEWSSNAPSHOT_MQH__
@@ -29,6 +37,12 @@ struct NewsSnapshot
 
    string   source_kind;        // "LIVE_CALENDAR" | "CSV_STATIC"
    string   source_version;     // e.g. news_schema_version at capture time, or CSV file name/tag
+
+   // --- Phase B B4: additive lineage/provenance ---
+   string   normalized_event_key; // currency|normalized_title|release_time_utc - identifies "the same event" across sources
+   string   revision_id;          // source-provided revision/correction id, "" if the source has none
+   datetime revision_timestamp;   // when this revision was published, 0 if unknown
+   int      source_priority;      // used by News_Deduplicate's tie-break when two sources report the same normalized_event_key
 };
 
 void NewsSnapshot_Init(NewsSnapshot &n)
@@ -41,6 +55,11 @@ void NewsSnapshot_Init(NewsSnapshot &n)
    n.minutes_to_event = 0;
    n.source_kind = "";
    n.source_version = "";
+
+   n.normalized_event_key = "";
+   n.revision_id = "";
+   n.revision_timestamp = 0;
+   n.source_priority = 0;
 }
 
 // Minimal JSON escaping - just enough for the quotes/backslashes a news
@@ -70,11 +89,14 @@ string NewsSnapshot_ToJson(const NewsSnapshot &n)
 {
    return StringFormat(
       "{\"calendar_event_id\":\"%s\",\"currency\":\"%s\",\"impact\":%d,\"title\":\"%s\","
-      "\"release_time\":\"%s\",\"minutes_to_event\":%d,\"source_kind\":\"%s\",\"source_version\":\"%s\"}",
+      "\"release_time\":\"%s\",\"minutes_to_event\":%d,\"source_kind\":\"%s\",\"source_version\":\"%s\","
+      "\"normalized_event_key\":\"%s\",\"revision_id\":\"%s\",\"revision_timestamp\":\"%s\",\"source_priority\":%d}",
       NewsSnapshot_JsonEscape(n.calendar_event_id), NewsSnapshot_JsonEscape(n.currency),
       n.impact, NewsSnapshot_JsonEscape(n.title),
       TimeToString(n.release_time, TIME_DATE|TIME_SECONDS), n.minutes_to_event,
-      NewsSnapshot_JsonEscape(n.source_kind), NewsSnapshot_JsonEscape(n.source_version));
+      NewsSnapshot_JsonEscape(n.source_kind), NewsSnapshot_JsonEscape(n.source_version),
+      NewsSnapshot_JsonEscape(n.normalized_event_key), NewsSnapshot_JsonEscape(n.revision_id),
+      TimeToString(n.revision_timestamp, TIME_DATE|TIME_SECONDS), n.source_priority);
 }
 
 // Phase B B3.5: canonical string fragment for ONE snapshot's IDENTITY
@@ -152,6 +174,10 @@ bool NewsSnapshot_FromJson(string json, NewsSnapshot &out)
    out.minutes_to_event      = (int)NewsSnapshot_JsonGetInt(json, "minutes_to_event");
    out.source_kind           = NewsSnapshot_JsonGetStr(json, "source_kind");
    out.source_version        = NewsSnapshot_JsonGetStr(json, "source_version");
+   out.normalized_event_key   = NewsSnapshot_JsonGetStr(json, "normalized_event_key");
+   out.revision_id             = NewsSnapshot_JsonGetStr(json, "revision_id");
+   out.revision_timestamp      = StringToTime(NewsSnapshot_JsonGetStr(json, "revision_timestamp"));
+   out.source_priority          = (int)NewsSnapshot_JsonGetInt(json, "source_priority");
    return true;
 }
 
