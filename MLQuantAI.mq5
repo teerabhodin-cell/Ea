@@ -1,15 +1,16 @@
 //+------------------------------------------------------------------+
 //| MLQuantAI.mq5                                                     |
-//| Phase A skeleton EA. No strategies, no AI, no order execution -   |
-//| this exists to prove the Core Engine (Event Store, State Machine, |
-//| Replay, Safe Mode, Broker Reconciliation) works inside a REAL EA  |
-//| lifecycle (OnInit/OnTick/OnDeinit), not just inside standalone    |
-//| test Scripts. Step 0's Definition of Done: "compile EA เปล่าได้,  |
-//| EA version แสดงบน chart/log ได้, ไม่มี strategy หรือ AI logic."   |
+//| Phase A: Core Engine (Event Store, State Machine, Replay, Safe    |
+//| Mode, Broker Reconciliation) proven inside a REAL EA lifecycle,   |
+//| not just standalone test Scripts - CLOSED.                        |
+//| Phase B Step 9: Data Hub + Feature Engine now build an immutable  |
+//| MarketContext from real MT5 price/indicators/session/news/account |
+//| on every new M15 bar and log MARKET_CONTEXT_READY. Still no       |
+//| strategies, no AI, no order execution - that's Step 10+.          |
 //+------------------------------------------------------------------+
 #property copyright "MLQuantAI"
 #property version   "1.00"
-#property description "MLQuantAI Phase A skeleton - Event Store + Replay + Safe Mode + Broker Reconciliation only."
+#property description "MLQuantAI - Event Store + Replay + Safe Mode + Broker Reconciliation + Market Context (Phase B Step 9)."
 
 #include <MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh>
 #include <MLQuantAI/Core/MLQuantAI_Enums.mqh>
@@ -18,13 +19,15 @@
 #include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_EventStoreHealth.mqh>
 #include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_ReplayEngine.mqh>
 #include <MLQuantAI/Infrastructure/MLQuantAI_BrokerReconciliation.mqh>
+#include <MLQuantAI/Market/MLQuantAI_FeatureEngine.mqh>
 
 input group "=== System ==="
 input bool   DebugMode                   = false;
 input string EventStoreFileNameOverride  = ""; // blank = auto date-stamped "MLQuantAI_events_YYYY-MM-DD.jsonl"
 input bool   RunLifecycleSmokeTest       = true; // Step 8.5: prove a candidate written by THIS EA replays correctly across restarts. Turn off once Phase B strategies produce real candidates.
 
-string g_EventStoreFileName = "";
+string   g_EventStoreFileName = "";
+datetime g_LastContextBarTime = 0;
 
 string BuildDefaultEventStoreFileName()
 {
@@ -102,7 +105,26 @@ int OnInit()
    g_EventStoreFileName = (EventStoreFileNameOverride != "") ? EventStoreFileNameOverride : BuildDefaultEventStoreFileName();
 
    LogInfo(StringFormat("%s v%s starting - event store file: %s", MLQUANTAI_EA_NAME, MLQUANTAI_EA_VERSION, g_EventStoreFileName));
-   LogInfo("Phase A skeleton: no strategies, no AI, no order execution in this build.");
+   LogInfo("Phase B Step 9: Data Hub + Feature Engine active. Still no strategies, no AI, no order execution.");
+
+   if(!FeatureEngine_Init(_Symbol))
+   {
+      LogError("FeatureEngine_Init failed (indicator handle creation) - EA will not run.");
+      return INIT_FAILED;
+   }
+
+   // News CSV fallback only matters inside Strategy Tester (live trading
+   // uses the real Economic Calendar) - load it once here and do a
+   // best-effort coverage check against however much M15 history this
+   // symbol has, so a gap between the CSV and the actual test range shows
+   // up as a warning before any candidate ever depends on the news filter.
+   if(UseNewsFilter && MQLInfoInteger(MQL_TESTER))
+   {
+      News_LoadCsv(NewsCsvFileName);
+      datetime seriesStart = (datetime)SeriesInfoInteger(_Symbol, PERIOD_M15, SERIES_FIRSTDATE);
+      if(seriesStart > 0)
+         News_ValidateCsvCoverage(seriesStart, TimeCurrent());
+   }
 
    // Validate whatever's already in the file BEFORE this session appends
    // anything to it - a corrupted history must not be silently built on
@@ -173,12 +195,26 @@ void OnDeinit(const int reason)
 {
    EventStore_LogSystem(EventTypeToString(EVENT_TYPE_SYSTEM_STOPPED), "EA deinit, reason=" + IntegerToString(reason));
    EventStore_Close();
+   FeatureEngine_Deinit();
    Comment("");
 }
 
 void OnTick()
 {
-   // Phase A: no strategies, no AI, no order logic - nothing to do per
-   // tick yet. OnTick exists only so this is a valid, runnable EA (and
-   // can be attached to a chart / run in Strategy Tester at all).
+   // Step 9: build one immutable MarketContext per new M15 bar and log
+   // MARKET_CONTEXT_READY - this is the start of the candidate dataset
+   // the whole project is built around. Still no strategies reading it
+   // yet (Step 10+), no AI, no order logic.
+   datetime barTime = iTime(_Symbol, PERIOD_M15, 0);
+   if(barTime == g_LastContextBarTime) return; // not a new bar yet
+   g_LastContextBarTime = barTime;
+
+   MarketContext ctx = FeatureEngine_Build(_Symbol);
+   if(!FeatureEngine_IsReady(ctx))
+   {
+      LogDebug("MarketContext not ready yet (no tick) - skipping this bar.");
+      return;
+   }
+
+   FeatureEngine_LogContextReady(ctx);
 }

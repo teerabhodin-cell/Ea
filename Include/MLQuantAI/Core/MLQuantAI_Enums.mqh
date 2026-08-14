@@ -126,6 +126,7 @@ enum ENUM_EVENT_TYPE
    EVENT_TYPE_SAFE_MODE_CLEARED,
    EVENT_TYPE_SYSTEM_EVENT_STORE_CORRUPTED,
    EVENT_TYPE_SYSTEM_ERROR,
+   EVENT_TYPE_MARKET_CONTEXT_READY,
 
    // candidate lifecycle - one per ENUM_CANDIDATE_STATE
    EVENT_TYPE_CANDIDATE_CREATED,
@@ -159,6 +160,7 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_SAFE_MODE_CLEARED:                  return "SAFE_MODE_CLEARED";
       case EVENT_TYPE_SYSTEM_EVENT_STORE_CORRUPTED:       return "SYSTEM_EVENT_STORE_CORRUPTED";
       case EVENT_TYPE_SYSTEM_ERROR:                       return "SYSTEM_ERROR";
+      case EVENT_TYPE_MARKET_CONTEXT_READY:               return "MARKET_CONTEXT_READY";
       case EVENT_TYPE_CANDIDATE_CREATED:                  return "CANDIDATE_CREATED";
       case EVENT_TYPE_CANDIDATE_ROUTED_OUT:               return "CANDIDATE_ROUTED_OUT";
       case EVENT_TYPE_CANDIDATE_MERGED:                   return "CANDIDATE_MERGED";
@@ -187,6 +189,7 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "SAFE_MODE_CLEARED")                 return EVENT_TYPE_SAFE_MODE_CLEARED;
    if(s == "SYSTEM_EVENT_STORE_CORRUPTED")      return EVENT_TYPE_SYSTEM_EVENT_STORE_CORRUPTED;
    if(s == "SYSTEM_ERROR")                      return EVENT_TYPE_SYSTEM_ERROR;
+   if(s == "MARKET_CONTEXT_READY")              return EVENT_TYPE_MARKET_CONTEXT_READY;
    if(s == "CANDIDATE_CREATED")                 return EVENT_TYPE_CANDIDATE_CREATED;
    if(s == "CANDIDATE_ROUTED_OUT")              return EVENT_TYPE_CANDIDATE_ROUTED_OUT;
    if(s == "CANDIDATE_MERGED")                  return EVENT_TYPE_CANDIDATE_MERGED;
