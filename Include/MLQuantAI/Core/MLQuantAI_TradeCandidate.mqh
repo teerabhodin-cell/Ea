@@ -18,6 +18,19 @@
 //| minutes), and an explainable reason tree (trigger_reason_mask /   |
 //| trigger_reasons[]) instead of just a score. `side` is additive    |
 //| alongside the existing `direction` field for the same reason.     |
+//|                                                                    |
+//| Phase B B5 Commit 4 added detector_hash/candidate_hash additively |
+//| (Strategies/MLQuantAI_CRT_V1_ToTradeCandidate.mqh):                |
+//| detector_hash is copied verbatim from CRTDetectionResult -         |
+//| CRT_ToTradeCandidate() must never recompute it, only carry it      |
+//| through. candidate_hash is a NEW canonical hash over this          |
+//| candidate's own deterministic, detection-derived content (identity,|
+//| context lineage, hints, reason tree, detector_hash) - deliberately |
+//| excludes account/spread/broker state/wall-clock and every B6/B7-   |
+//| owned mutable field (score/confidence/regime/state/entry/sl/tp/    |
+//| rr/atr/correlation_id/...), so it stays stable across everything   |
+//| that legitimately changes after creation. See                     |
+//| Docs/PhaseB_B5_Commit4.md for the frozen payload definition.       |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_TRADECANDIDATE_MQH__
 #define __MLQUANTAI_TRADECANDIDATE_MQH__
@@ -88,6 +101,10 @@ struct TradeCandidate
 
    ulong                   trigger_reason_mask; // bitmask of setup conditions (sweep/mss/fvg/ob/... - detector-defined)
    string                  trigger_reasons[];   // human-readable reason tree, e.g. {"liquidity_sweep","mss_confirmed"}
+
+   // --- Phase B B5 Commit 4: additive detector/candidate hash pair ---
+   string                  detector_hash;   // copied verbatim from CRTDetectionResult.detector_hash - never recomputed here
+   string                  candidate_hash;  // this candidate's own canonical content hash - see CRT_CandidateHash()
 };
 
 void TradeCandidate_Init(TradeCandidate &c)
@@ -138,6 +155,9 @@ void TradeCandidate_Init(TradeCandidate &c)
 
    c.trigger_reason_mask = 0;
    ArrayResize(c.trigger_reasons, 0);
+
+   c.detector_hash = "";
+   c.candidate_hash = "";
 }
 
 // The only place candidate.state should ever be assigned outside of
