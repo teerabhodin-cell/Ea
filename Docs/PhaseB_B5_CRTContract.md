@@ -67,6 +67,24 @@ CRT-detection-rule logic):
   `trigger_tf_recent[]` (or `m5_bar`/`m15_bar`/`h1_bar`/`h4_bar`/`pdh`/
   `pdl`/`asian_range_high`/`asian_range_low`, all already frozen).
 
+## 0. `setup_anchor_bar_time` — explicit definition
+
+Referenced throughout (§5's `root_event_id`, §7's `detector_hash`, §9's
+expiry) without ever being pinned down as its own definition — fixed
+here so Commit 2's struct comments and Commit 3's implementation can't
+diverge on what it means:
+
+```
+setup_anchor_bar_time := mss_confirmation_bar_time
+
+i.e. TradeCandidate.setup_anchor_bar_time (existing B1 field) IS
+CRTDetectionResult.mss_confirmation_bar_time (§12, new B5 field) - not a
+separate value, not "whichever bar the FVG/OB retest resolved on." The
+setup is anchored to the moment MSS confirms it exists; the retest zone
+(§8) is found by scanning backward from that same bar through the sweep
+bar, it doesn't move the anchor forward.
+```
+
 ## 1. Direction — canonical field and semantics
 
 `TradeCandidate.side` (`ENUM_ORDER_TYPE`: `ORDER_TYPE_BUY` |
@@ -97,16 +115,23 @@ bit 6 (0x40)  CRT_REASON_BIT_KILLZONE         anchor bar fell inside a kill zone
 bit 7 (0x80)  CRT_REASON_BIT_NEWS_RISK        high-impact news was near the anchor bar
 ```
 
-Bits 0–5 are **always all set together** on any `TradeCandidate` this
-module produces — they're the definition of "a CRT setup exists", not
-independent signals, with two frozen invariants inside that group:
+**Formal invariant for any `TradeCandidate` this module produces** (not
+"bits 0–5 all set" — bit 0/1 and bit 4/5 are each XOR pairs, so both
+literally being set is impossible; corrected from an earlier imprecise
+draft that said "always all set together"):
 
 ```
-exactly one of: bit 0 (SWEEP_LOW)  | bit 1 (SWEEP_HIGH)   - never both, never neither
-exactly one of: bit 4 (FVG_FOUND)  | bit 5 (OB_FOUND)     - never both, never neither
-                                                              (§8's FVG_PRIORITY_THEN_OB_FALLBACK
-                                                               always resolves to exactly ONE zone
-                                                               kind - this is an XOR, not "at least one")
+(bit 0 XOR bit 1)  AND  bit 2  AND  bit 3  AND  (bit 4 XOR bit 5)
+
+i.e. exactly one of SWEEP_LOW/SWEEP_HIGH, AND CLOSE_BACK_INSIDE, AND
+MSS_CONFIRMED, AND exactly one of FVG_FOUND/OB_FOUND - always all four
+conditions true together, with the two either/or pairs each resolving to
+exactly one bit (never both, never neither):
+
+  exactly one of: bit 0 (SWEEP_LOW)  | bit 1 (SWEEP_HIGH)
+  exactly one of: bit 4 (FVG_FOUND)  | bit 5 (OB_FOUND)     (§8's
+    FVG_PRIORITY_THEN_OB_FALLBACK always resolves to exactly ONE zone
+    kind)
 ```
 
 Bits 6–7 are informational/audit-only: **B5 never gates on them** (no
@@ -407,6 +432,11 @@ reject; B6/B7 rejection semantics only start once a candidate exists).
     replay identity - see §4 for what this does NOT claim across brokers)
 [ ] reason_labels are sorted by ascending reason bit
 [ ] detector_hash changes only when frozen rule inputs change
+[ ] candidate_id MUST differ across two different
+    MLQUANTAI_CRT_V1_RULES_VERSION strings for the same detector output,
+    even if detector_hash happens to stay the same for that output (§7's
+    version-vs-hash separation - candidate_id, not detector_hash alone,
+    is what namespaces "which rule version produced this")
 [ ] expiry follows bar progression, not wall clock
 [ ] FVG_OR_OB follows frozen resolution semantics
 [ ] Event replay reconstructs CANDIDATE_CREATED lineage
