@@ -4,6 +4,75 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B B6.3: Hash Contract Spec (Implemented, awaiting real compile/test confirmation)
+
+Scoped down from the original B6.3 proposal after a gap review with the
+user: most of the proposed work items (reject malformed/orphan/
+collision lines, block export on a corrupt store, deterministic
+byte-identical export, full row-lineage traceability) were confirmed
+already built and already passed in B6.1 (146/146) and B6.2 (75/75) -
+re-implementing them would have been duplicate work. See
+Docs/PhaseB_B6_3_HashContractSpec.md's "What's already covered"
+section for the full mapping.
+
+The 3 genuinely new deliverables:
+
+1. **A consolidated Hash Contract Spec** (Docs/PhaseB_B6_3_HashContractSpec.md) -
+   the exact payload/inclusion/exclusion rules for `context_hash`,
+   `detector_hash`, and `candidate_hash`, previously only scattered
+   across code comments in 3 different files. Corrects one loose claim
+   made during drafting: `digits` in `detector_hash`/`candidate_hash`
+   is not an independently "excluded" field - it's a formatting
+   multiplier on the included price fields, so changing it alone DOES
+   move the hash (different DoubleToString precision = different
+   string). Fixed before it became a test that would have asserted
+   something false.
+2. **Exhaustive inclusion/exclusion mutation-sweep tests** for
+   `context_hash` and `detector_hash`, matching the rigor
+   `candidate_hash` already had in Test_CandidateProjection.mq5.
+3. **A structured rejection-reason classification**, additive on top
+   of `CandidateProjection`'s existing free-text reason strings (which
+   are completely unchanged): `ENUM_CANDPROJ_REASON_CATEGORY` +
+   `CandidateProjection_ClassifyReason()` + a new
+   `CandidateProjectionReport.first_error_code` field.
+
+### Added
+- `Infrastructure/EventStore/MLQuantAI_CandidateProjection.mqh`
+  (additive): `ENUM_CANDPROJ_REASON_CATEGORY` (18 categories -
+  NONE/APPLIED/SKIPPED_NOT_RELEVANT/SKIPPED_DUPLICATE/MALFORMED_LINE/
+  NOT_GENESIS_SHAPE/EMPTY_CANDIDATE_ID/SCHEMA_VERSION/
+  MISSING_REQUIRED_FIELD/INVALID_SIDE/TIME_INTEGRITY/
+  NUMERICAL_INTEGRITY/REASON_CONSISTENCY/COLLISION/ORPHAN_CONTEXT/
+  CONTEXT_HASH_MISMATCH/STORE_VALIDATION_FAILED/UNKNOWN),
+  `CandidateProjection_ClassifyReason(reasonText)` (a pure classifier
+  over the reason strings this file's own rejection sites produce -
+  never used to change control flow, only to give callers a stable
+  machine-readable category instead of parsing prose),
+  `CandidateProjectionReport.first_error_code` (classified from the
+  RAW per-line reason, before the `"line %d: "` prefix
+  `RebuildFromFile` adds - so the prefix-anchored `"missing "` check
+  still matches correctly). `first_error`/`outReason` string behavior
+  is completely unchanged.
+- `Docs/PhaseB_B6_3_HashContractSpec.md` (new).
+- `Tests/MLQuantAI_Test_B6_3_HashContract.mq5` (new): `context_hash`
+  inclusion sweep (21 fields) + exclusion whitelist (11 fields);
+  `detector_hash` inclusion sweep (11 params) + a dedicated test
+  proving `digits` is NOT independently excluded (moves the hash via
+  reformatting, not directly); `CandidateProjection_ClassifyReason`
+  tested both directly against the real pure validator functions
+  (schema/required-fields/side/time/numerical/reason-consistency) and
+  end-to-end through `ApplyLine`/`ApplyLineWithContext`/
+  `RebuildFromFile` for every category (including collision, orphan,
+  context-hash-mismatch, and store-level validation failure); a
+  dedicated test confirming `report.first_error_code` and
+  `report.first_error` stay consistent on the same real rejection.
+
+### Status
+Statically checked (brace/paren balance, 63-char identifier limit,
+one identifier renamed for length). No real compile/test run confirmed
+yet - do not treat as PASSED until real MetaEditor test evidence is
+provided.
+
 ## [Unreleased] - Phase B B6.2: Canonical Dataset Export (PASSED 2026-08-15)
 
 Closes the 2 remaining gates named at B6.1's approval: dataset export
