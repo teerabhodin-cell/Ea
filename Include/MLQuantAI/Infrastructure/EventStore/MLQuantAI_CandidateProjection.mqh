@@ -288,6 +288,77 @@ string CandidateProjection_ValidateReasonConsistency(ulong reasonMask, const str
 }
 
 //---------------------------------------------------------------------
+// Phase B B6.3: structured rejection-reason category, additive on top
+// of the free-text `outReason`/`first_error` strings above (which are
+// UNCHANGED - every existing caller/test reading them keeps working
+// exactly as before). Tests previously had to substring-match the free
+// text ("StringFind(reason, \"identical candidate_hash\") ...") to tell
+// rejection classes apart, which is fragile against a wording edit.
+// CandidateProjection_ClassifyReason() maps a reason string this file
+// itself produced back to one of these categories - a pure, read-only
+// classifier, never used to change control flow, only to give callers
+// (dataset export, B7 tooling, audit reports) a stable machine-readable
+// category instead of parsing prose.
+enum ENUM_CANDPROJ_REASON_CATEGORY
+{
+   CANDPROJ_REASON_NONE = 0,               // reasonText == "" - nothing to classify
+   CANDPROJ_REASON_APPLIED,                // success: a new candidate was registered
+   CANDPROJ_REASON_SKIPPED_NOT_RELEVANT,   // not a CANDIDATE_CREATED line - correctly ignored
+   CANDPROJ_REASON_SKIPPED_DUPLICATE,      // same candidate_id, identical candidate_hash - idempotent no-op
+   CANDPROJ_REASON_MALFORMED_LINE,         // oversized, unparsable, or otherwise structurally broken
+   CANDPROJ_REASON_NOT_GENESIS_SHAPE,      // CANDIDATE_CREATED type but from/to state isn't CREATED->CREATED
+   CANDPROJ_REASON_EMPTY_CANDIDATE_ID,     // structural corruption
+   CANDPROJ_REASON_SCHEMA_VERSION,         // empty or unrecognized candidate_schema_version
+   CANDPROJ_REASON_MISSING_REQUIRED_FIELD, // root_event_id/context_event_id/context_hash/candidate_hash/detector_hash
+   CANDPROJ_REASON_INVALID_SIDE,           // side isn't exactly "BUY" or "SELL"
+   CANDPROJ_REASON_TIME_INTEGRITY,         // zero/negative/inverted timestamps
+   CANDPROJ_REASON_NUMERICAL_INTEGRITY,    // NaN/Inf, non-positive price, or SL/TP ordering violation
+   CANDPROJ_REASON_REASON_CONSISTENCY,     // trigger_reason_mask/trigger_reasons[] inconsistency
+   CANDPROJ_REASON_COLLISION,              // same candidate_id, DIFFERENT candidate_hash - a genuine conflict
+   CANDPROJ_REASON_ORPHAN_CONTEXT,         // context_event_id has no matching MARKET_CONTEXT_READY event
+   CANDPROJ_REASON_CONTEXT_HASH_MISMATCH,  // context_hash doesn't match the referenced context event's own hash
+   CANDPROJ_REASON_STORE_VALIDATION_FAILED,// EventStoreValidator itself rejected the file (ordering/atomicity)
+   CANDPROJ_REASON_UNKNOWN                 // non-empty reason text that doesn't match any known category - a
+                                            // classifier/message drift bug, not a real rejection class; the
+                                            // free-text outReason/first_error remains authoritative regardless
+};
+
+// Matches on stable, distinctive substrings from the exact reason
+// strings CandidateProjection_ApplyLine/_ApplyLineWithContext/
+// RebuildFromFile produce above - see each string's own call site for
+// the source of truth. Order matters where a substring could otherwise
+// be ambiguous (e.g. "missing " as a strict prefix, so it doesn't
+// collide with "trigger_reason_mask is missing ..." from the reason-
+// consistency checks, which is tested explicitly).
+ENUM_CANDPROJ_REASON_CATEGORY CandidateProjection_ClassifyReason(string reasonText)
+{
+   if(reasonText == "") return CANDPROJ_REASON_NONE;
+   if(reasonText == "applied - new candidate registered") return CANDPROJ_REASON_APPLIED;
+   if(StringFind(reasonText, "not a CANDIDATE_CREATED event - skipped") >= 0) return CANDPROJ_REASON_SKIPPED_NOT_RELEVANT;
+   if(StringFind(reasonText, "duplicate candidate_id") >= 0) return CANDPROJ_REASON_SKIPPED_DUPLICATE;
+   if(StringFind(reasonText, "candidate_id collision:") >= 0) return CANDPROJ_REASON_COLLISION;
+   if(StringFind(reasonText, "orphan candidate:") >= 0) return CANDPROJ_REASON_ORPHAN_CONTEXT;
+   if(StringFind(reasonText, "context_hash mismatch:") >= 0) return CANDPROJ_REASON_CONTEXT_HASH_MISMATCH;
+   if(StringFind(reasonText, "event store failed validation") >= 0) return CANDPROJ_REASON_STORE_VALIDATION_FAILED;
+   if(StringFind(reasonText, "rejected before parsing") >= 0) return CANDPROJ_REASON_MALFORMED_LINE;
+   if(StringFind(reasonText, "not a parsable lifecycle event line") >= 0) return CANDPROJ_REASON_MALFORMED_LINE;
+   if(StringFind(reasonText, "isn't the genesis shape") >= 0) return CANDPROJ_REASON_NOT_GENESIS_SHAPE;
+   if(StringFind(reasonText, "empty candidate_id on a CANDIDATE_CREATED line") >= 0) return CANDPROJ_REASON_EMPTY_CANDIDATE_ID;
+   if(StringFind(reasonText, "candidate_schema_version") >= 0) return CANDPROJ_REASON_SCHEMA_VERSION;
+   if(StringFind(reasonText, "missing ") == 0) return CANDPROJ_REASON_MISSING_REQUIRED_FIELD;
+   if(StringFind(reasonText, "invalid side '") >= 0) return CANDPROJ_REASON_INVALID_SIDE;
+   if(StringFind(reasonText, "trigger_reason_mask") >= 0 || StringFind(reasonText, "trigger_reasons[]") >= 0)
+      return CANDPROJ_REASON_REASON_CONSISTENCY;
+   if(StringFind(reasonText, "setup_anchor_bar_time is") >= 0 ||
+      StringFind(reasonText, "expiry_time is") >= 0 ||
+      StringFind(reasonText, "expiry_after_bars is") >= 0)
+      return CANDPROJ_REASON_TIME_INTEGRITY;
+   if(StringFind(reasonText, "entry_hint/sl_hint/tp_hint") >= 0 || StringFind(reasonText, "SL/TP ordering violates") >= 0)
+      return CANDPROJ_REASON_NUMERICAL_INTEGRITY;
+   return CANDPROJ_REASON_UNKNOWN;
+}
+
+//---------------------------------------------------------------------
 // Applies one raw persisted line to the registry.
 //---------------------------------------------------------------------
 //
@@ -538,6 +609,11 @@ struct CandidateProjectionReport
    int    lines_skipped;  // non-CANDIDATE_CREATED lines, or idempotent duplicates
    int    lines_failed;   // malformed/corrupt/invalid/orphaned CANDIDATE_CREATED-typed lines
    string first_error;
+   // Phase B B6.3, additive: the structured category of first_error,
+   // classified from the RAW reason text (before the "line %d: " prefix
+   // RebuildFromFile adds below) via CandidateProjection_ClassifyReason().
+   // first_error itself is completely unchanged by this addition.
+   ENUM_CANDPROJ_REASON_CATEGORY first_error_code;
 };
 
 void CandidateProjectionReport_Init(CandidateProjectionReport &r)
@@ -548,6 +624,7 @@ void CandidateProjectionReport_Init(CandidateProjectionReport &r)
    r.lines_skipped = 0;
    r.lines_failed = 0;
    r.first_error = "";
+   r.first_error_code = CANDPROJ_REASON_NONE;
 }
 
 CandidateProjectionReport CandidateProjection_RebuildFromFile(string fileName)
@@ -564,6 +641,7 @@ CandidateProjectionReport CandidateProjection_RebuildFromFile(string fileName)
    {
       report.ok = false;
       report.first_error = "event store failed validation - rebuild refused, registry left unchanged: " + validation.first_error;
+      report.first_error_code = CANDPROJ_REASON_STORE_VALIDATION_FAILED;
       return report;
    }
 
@@ -583,7 +661,14 @@ CandidateProjectionReport CandidateProjection_RebuildFromFile(string fileName)
          report.ok = false;
          report.lines_failed++;
          if(report.first_error == "")
+         {
+            // Classify the RAW reason (before the "line %d: " prefix is
+            // added) so CandidateProjection_ClassifyReason()'s prefix-
+            // anchored checks (e.g. "missing ") see the exact text the
+            // rejection sites above actually produced.
+            report.first_error_code = CandidateProjection_ClassifyReason(reason);
             report.first_error = StringFormat("line %d: %s", i, reason);
+         }
          continue;
       }
       if(CandidateProjection_Count() > beforeCount)
