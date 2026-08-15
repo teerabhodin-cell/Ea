@@ -1,10 +1,11 @@
 # Phase B — B6.2: Canonical Dataset Export
 
 **Status: Implemented, awaiting real compile/test confirmation.**
-`Tests/MLQuantAI_Test_CandidateDatasetExport.mq5` has been statically
-checked (brace/paren balance, 63-char identifier limit) but has not yet
-been run through a real MetaEditor compile — no test evidence exists
-yet. Do not treat this as PASSED until a real run is confirmed.
+First real run surfaced one test-fixture bug (see "Bugs found and fixed"
+below) in `Test_StableOrdering`; `CandidateDatasetExport.mqh` itself
+needed no change. Statically re-checked (brace/paren balance, 63-char
+identifier limit) after the fix. Do not treat this as PASSED until a
+full, clean real run is confirmed.
 
 Closes 2 of the 2 remaining gates the user named when approving B6.1:
 dataset export determinism, and an end-to-end audit path from
@@ -212,6 +213,58 @@ events via `EventStore_LogSystem`, never fabricated/synthetic rows.
   registry record's own value (no drift between registry and export),
   and the row's `row_hash` is confirmed reproducible from the row's own
   content via a fresh `CandidateDatasetExport_RowHash` call.
+
+## Bugs found and fixed during the first real test run
+
+**`Test_StableOrdering` failed** (`exactly 3 rows` FAIL, actual 2; then
+an array-out-of-range crash reading `rows[2]`) on the first real
+compile/test run. Root cause was in the **test fixture, not
+`CandidateDatasetExport.mqh` or any B6.1/B5 production code**:
+
+`Test_NoDuplicateCandidateIds`'s `"DUPA"` candidate and
+`Test_StableOrdering`'s `"ORDEREARLY"` candidate both used
+`dayOffset = 10`. `candidate_id`/`root_event_id`
+(`Core/MLQuantAI_Ids.mqh`) are computed from `(symbol, timeframe,
+eventType, swept_level, mss_confirmation_bar_time)` alone — never from
+the test's `suffix` string — and `Fixture_Bullish_Valid` always draws
+the identical price pattern, so two `BuildAndEmitCandidate` calls with
+the same `dayOffset` produce the **identical `candidate_id`**, even
+across two different test functions building "different" contexts.
+
+`StateProjector` — the live idempotency guard
+`CRT_EmitCandidateCreated` (B5 Commit 5, sealed) checks via
+`StateProjector_TryGetState(c.candidate_id, ...)` before every write —
+is a process-global that is deliberately never reset between test
+functions within one script run; that is correct, already-approved
+behavior (it's what makes live-session idempotency work at all without
+a replay pass). So when `Test_StableOrdering` ran after
+`Test_NoDuplicateCandidateIds` and tried to emit the same
+`candidate_id` again via `"ORDEREARLY"`, `CRT_EmitCandidateCreated`
+silently returned `false` — no event written, no error raised, exactly
+per its own documented contract (`Strategies/MLQuantAI_CRT_V1_EventEmission.mqh`'s
+own comment: "a duplicate call for the same candidate ... does NOT
+append a second creation event"). `Test_StableOrdering`'s
+`BuildAndEmitCandidate` calls weren't wrapped in `Check(...)`, so this
+went undetected until the row-count assertion failed downstream.
+
+Fixed in the test fixture only:
+- `Test_StableOrdering`'s `"ORDEREARLY"` now uses `dayOffset = 15`
+  (globally unused elsewhere in the file) instead of `10`.
+- Every `BuildAndEmitCandidate` call across the whole file is now
+  wrapped in a `Check(...)` sanity assertion, so a future dayOffset
+  collision fails loudly at the point of emission instead of silently
+  corrupting a downstream count.
+- Added a comment on `BuildAndEmitCandidate` itself stating the
+  constraint explicitly: `dayOffset` must be unique across every call
+  in the file, not just within one test function, precisely because
+  `candidate_id` never depends on `suffix`/context and `StateProjector`
+  persists across test functions by design.
+
+No change was needed to `CandidateDatasetExport.mqh`,
+`CandidateProjection.mqh`, or any B5 `Strategies/` file — the
+underlying `CRT_EmitCandidateCreated` idempotency behavior that caused
+this is exactly what B5 Commit 5 intentionally built and the user
+already approved.
 
 ## Open items for B6 closure
 

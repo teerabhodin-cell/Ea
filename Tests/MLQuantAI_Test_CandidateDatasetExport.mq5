@@ -71,6 +71,19 @@ void Fixture_Bullish_Valid(MqlRates &window[], datetime &outAnchor, datetime t0)
    outAnchor = window[63].time;
 }
 
+// IMPORTANT: dayOffset must be unique across EVERY BuildAndEmitCandidate
+// call in this entire file, not just within one test function.
+// candidate_id/root_event_id are computed from (symbol, timeframe,
+// eventType, swept_level, mss_confirmation_bar_time) alone - never from
+// `suffix` - and Fixture_Bullish_Valid always draws the identical price
+// pattern, so two calls with the same dayOffset produce the identical
+// candidate_id even with different suffixes/contexts. StateProjector
+// (CRT_EmitCandidateCreated's live idempotency guard) is a process-global
+// that is never reset between test functions in one script run - that's
+// deliberate, sealed B5 Commit 5 behavior, not a bug - so a reused
+// dayOffset makes the SECOND call silently return false (no event
+// written, no error) rather than throwing. Always check this function's
+// return value.
 bool BuildAndEmitCandidate(TradeCandidate &c, string suffix, int dayOffset, bool logContext = true)
 {
    MarketContext ctx; BuildBaseContext(ctx, suffix);
@@ -155,9 +168,9 @@ void Test_NoDuplicateCandidateIds()
    FileDelete(TEST_EVENT_STORE_FILE, FILE_COMMON);
    EventStore_Open(TEST_EVENT_STORE_FILE);
    TradeCandidate a, b, c;
-   BuildAndEmitCandidate(a, "DUPA", 10, true);
-   BuildAndEmitCandidate(b, "DUPB", 11, true);
-   BuildAndEmitCandidate(c, "DUPC", 12, true);
+   Check(BuildAndEmitCandidate(a, "DUPA", 10, true), "sanity: candidate a built+emitted");
+   Check(BuildAndEmitCandidate(b, "DUPB", 11, true), "sanity: candidate b built+emitted");
+   Check(BuildAndEmitCandidate(c, "DUPC", 12, true), "sanity: candidate c built+emitted");
    EventStore_Close();
 
    CandidateDatasetRow rows[];
@@ -178,11 +191,13 @@ void Test_StableOrdering()
    FileDelete(TEST_EVENT_STORE_FILE, FILE_COMMON);
    EventStore_Open(TEST_EVENT_STORE_FILE);
    // Emit deliberately OUT of chronological order: dayOffset 30 (latest
-   // anchor) first, then 20, then 10 (earliest anchor) last.
+   // anchor) first, then 20, then 15 (earliest anchor) last. dayOffset 15
+   // (not 10) deliberately - see BuildAndEmitCandidate's own comment on
+   // why dayOffset must be globally unique across the whole test file.
    TradeCandidate late, mid, early;
-   BuildAndEmitCandidate(late, "ORDERLATE", 30, true);
-   BuildAndEmitCandidate(mid, "ORDERMID", 20, true);
-   BuildAndEmitCandidate(early, "ORDEREARLY", 10, true);
+   Check(BuildAndEmitCandidate(late, "ORDERLATE", 30, true), "sanity: late candidate built+emitted");
+   Check(BuildAndEmitCandidate(mid, "ORDERMID", 20, true), "sanity: mid candidate built+emitted");
+   Check(BuildAndEmitCandidate(early, "ORDEREARLY", 15, true), "sanity: early candidate built+emitted");
    EventStore_Close();
 
    CandidateDatasetRow rows[];
@@ -204,8 +219,8 @@ void Test_DeterministicExport()
    FileDelete(TEST_EVENT_STORE_FILE, FILE_COMMON);
    EventStore_Open(TEST_EVENT_STORE_FILE);
    TradeCandidate a, b;
-   BuildAndEmitCandidate(a, "DETA", 40, true);
-   BuildAndEmitCandidate(b, "DETB", 41, true);
+   Check(BuildAndEmitCandidate(a, "DETA", 40, true), "sanity: candidate a built+emitted");
+   Check(BuildAndEmitCandidate(b, "DETB", 41, true), "sanity: candidate b built+emitted");
    EventStore_Close();
 
    CandidateDatasetRow rows1[];
@@ -237,7 +252,7 @@ void Test_HashChangesWithContent()
    FileDelete(TEST_EVENT_STORE_FILE, FILE_COMMON);
    EventStore_Open(TEST_EVENT_STORE_FILE);
    TradeCandidate a;
-   BuildAndEmitCandidate(a, "HASHCHANGE", 50, true);
+   Check(BuildAndEmitCandidate(a, "HASHCHANGE", 50, true), "sanity: candidate a built+emitted");
    EventStore_Close();
 
    CandidateDatasetRow rows[];
@@ -258,8 +273,8 @@ void Test_OrphanBlocksWholeExport()
    FileDelete(orphanFile, FILE_COMMON);
    EventStore_Open(orphanFile);
    TradeCandidate good, orphan;
-   BuildAndEmitCandidate(good, "EXPGOOD", 60, true);
-   BuildAndEmitCandidate(orphan, "EXPORPHAN", 61, false); // no context logged
+   Check(BuildAndEmitCandidate(good, "EXPGOOD", 60, true), "sanity: good candidate built+emitted");
+   Check(BuildAndEmitCandidate(orphan, "EXPORPHAN", 61, false), "sanity: orphan candidate built+emitted"); // no context logged
    EventStore_Close();
 
    CandidateDatasetRow rows[];
@@ -275,7 +290,7 @@ void Test_ReadOnly_NoStoreMutation()
    FileDelete(TEST_EVENT_STORE_FILE, FILE_COMMON);
    EventStore_Open(TEST_EVENT_STORE_FILE);
    TradeCandidate a;
-   BuildAndEmitCandidate(a, "READONLY", 70, true);
+   Check(BuildAndEmitCandidate(a, "READONLY", 70, true), "sanity: candidate a built+emitted");
    EventStore_Close();
 
    string linesBefore[];

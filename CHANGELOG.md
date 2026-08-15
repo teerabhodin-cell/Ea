@@ -62,10 +62,30 @@ contract.
   end-to-end lineage test tracing MARKET_CONTEXT_READY -> CANDIDATE_CREATED
   -> registry -> dataset row.
 
+### Fixed
+- `Tests/MLQuantAI_Test_CandidateDatasetExport.mq5`: `Test_StableOrdering`
+  reused `dayOffset = 10` (already used by `Test_NoDuplicateCandidateIds`'s
+  `"DUPA"`) for its `"ORDEREARLY"` candidate. Since `candidate_id`/
+  `root_event_id` depend only on `(symbol, timeframe, eventType,
+  swept_level, mss_confirmation_bar_time)` - never on the test's
+  `suffix` - and the fixture always draws identical price data, this
+  produced an identical `candidate_id` across two different test
+  functions. `StateProjector` (the live idempotency guard
+  `CRT_EmitCandidateCreated` uses) is a process-global never reset
+  between test functions within one script run - deliberate, sealed B5
+  Commit 5 behavior - so the second emission silently returned `false`
+  (no write, no error), leaving only 2 of 3 expected candidates in the
+  store. No production code (`CandidateDatasetExport.mqh`,
+  `CandidateProjection.mqh`, B5 `Strategies/`) needed any change.
+  Fixed by using a globally-unique `dayOffset` and wrapping every
+  `BuildAndEmitCandidate` call in the file in a `Check(...)` sanity
+  assertion so a future collision fails loudly instead of silently.
+
 ### Status
 Implemented and statically checked (brace/paren balance, 63-char
-identifier limit). No real compile/test run confirmed yet - do not
-treat as PASSED until real MetaEditor test evidence is provided.
+identifier limit) after the fixture fix above. No real compile/test run
+confirmed yet - do not treat as PASSED until real MetaEditor test
+evidence is provided.
 
 ## [Unreleased] - Phase B B6.1: Candidate Projection / Registry (hardened, PASSED 2026-08-15)
 
