@@ -1,11 +1,11 @@
 # Phase B — B6.2: Canonical Dataset Export
 
-**Status: Implemented, awaiting real compile/test confirmation.**
-First real run surfaced one test-fixture bug (see "Bugs found and fixed"
+**Status: PASSED (2026-08-15).** Confirmed on a real compile/test run:
+`MLQuantAI_Test_CandidateDatasetExport.mq5` 75/75 ALL PASS. The first
+real run surfaced one test-fixture bug (see "Bugs found and fixed"
 below) in `Test_StableOrdering`; `CandidateDatasetExport.mqh` itself
-needed no change. Statically re-checked (brace/paren balance, 63-char
-identifier limit) after the fix. Do not treat this as PASSED until a
-full, clean real run is confirmed.
+needed no change and passed unmodified. Closes both gates named at
+B6.1's approval (dataset export determinism, end-to-end audit path).
 
 Closes 2 of the 2 remaining gates the user named when approving B6.1:
 dataset export determinism, and an end-to-end audit path from
@@ -268,9 +268,8 @@ already approved.
 
 ## Open items for B6 closure
 
-- Real compile/test confirmation for this commit (none exists yet).
 - B6.3 (dataset integrity validator, per the B6.1 approval message) is
-  not part of this commit and remains unscoped until B6.2 is confirmed.
+  not part of this commit and remains unscoped.
 - No physical file is written by this layer — `CandidateDatasetExport_RowsToJsonLines`
   and `CandidateDatasetManifest_ToJson` return strings; a caller that
   wants a `.jsonl`/manifest file on disk writes it itself via

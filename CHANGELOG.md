@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B B6.2: Canonical Dataset Export (Implemented, awaiting real compile/test confirmation)
+## [Unreleased] - Phase B B6.2: Canonical Dataset Export (PASSED 2026-08-15)
 
 Closes the 2 remaining gates named at B6.1's approval: dataset export
 determinism, and an end-to-end audit path from MARKET_CONTEXT_READY
@@ -82,10 +82,8 @@ contract.
   assertion so a future collision fails loudly instead of silently.
 
 ### Status
-Implemented and statically checked (brace/paren balance, 63-char
-identifier limit) after the fixture fix above. No real compile/test run
-confirmed yet - do not treat as PASSED until real MetaEditor test
-evidence is provided.
+Confirmed on a real compile/test run: MLQuantAI_Test_CandidateDatasetExport.mq5
+75/75 ALL PASS.
 
 ## [Unreleased] - Phase B B6.1: Candidate Projection / Registry (hardened, PASSED 2026-08-15)
 
