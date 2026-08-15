@@ -4,6 +4,87 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B B6.2: Canonical Dataset Export (PASSED 2026-08-15)
+
+Closes the 2 remaining gates named at B6.1's approval: dataset export
+determinism, and an end-to-end audit path from MARKET_CONTEXT_READY
+through to a dataset row. Strictly additive, strictly read-only: reuses
+B6.1's sealed `CandidateProjection_RebuildFromFile` for the candidate
+set, reads the same store's lines a second time only to join each
+candidate against its own MARKET_CONTEXT_READY event - no B5
+Strategies/ file touched, no CRT detector call, no event appended, no
+existing line rewritten. See Docs/PhaseB_B6_2_DatasetExport.md.
+
+4 of the 9 dataset columns B6.1 flagged as missing (`instrument_id`/
+`trigger_timeframe`/`news_decision_hash`/`news_snapshot_identity`) are
+resolved by joining against already-persisted MARKET_CONTEXT_READY
+fields - not by reopening sealed B5 code. The remaining 5
+(`swept_level`/`mss_confirmation_price`/`resolved_zone_kind`/
+`resolved_zone_low`/`resolved_zone_high`), plus a 10th discovered during
+this commit (`strategy_version`), stay documented NOT AVAILABLE - no
+join can produce data nothing was ever persisted. `strategy_name` (not
+on the original gap list) is derived via the existing pure
+`StrategyIdToString(strategy_id)`.
+
+`row_hash` deliberately does not re-hash every field `candidate_hash`
+already covers - it rolls `candidate_hash` up as one value and adds
+only the export layer's own contribution (joined context fields,
+`candidate_state`). `dataset_hash` hashes every row's `row_hash` in
+final sorted order. `manifest.export_time` is populated last and
+deliberately excluded from `dataset_hash` - only row content
+determines it.
+
+Export stays all-or-nothing, consistent with B6.1's already-approved
+RebuildFromFile atomicity: any corrupt/orphaned/out-of-sequence line
+anywhere blocks the WHOLE export (`ok == false`, `rows[]` empty), never
+a silently-partial dataset. Flagged explicitly: this means
+`manifest.rejected_count` is always 0 on any export that returns
+`true` - the B6.2 spec's own wording could be read as implying a
+different, selective per-row quarantine model, which was deliberately
+not built here to stay consistent with the already-approved atomicity
+contract.
+
+### Added
+- `Infrastructure/EventStore/MLQuantAI_CandidateDatasetExport.mqh`
+  (new): `CandidateDatasetRow`, `CandidateDatasetManifest`,
+  `CandidateDatasetExport_BuildDataset` (entry point), plus context-join,
+  sort, row/dataset hash, and JSONL serialization helpers.
+- `Infrastructure/EventStore/MLQuantAI_CandidateProjection.mqh`
+  (additive): `CandidateProjection_GetAt(index, &out)` - bounds-checked
+  full-registry accessor for the export layer's iteration. B6.1's
+  sealed/tested behavior otherwise untouched.
+- `Tests/MLQuantAI_Test_CandidateDatasetExport.mq5` (new): row
+  projection (including all NOT-AVAILABLE fields and derived has_*
+  flags), no-duplicate-ids, stable ordering, deterministic export
+  (byte-identical JSONL + identical hashes across two builds of the
+  same store), hash-changes-with-content, orphan-blocks-whole-export,
+  read-only (store byte-identical before/after export), and a full
+  end-to-end lineage test tracing MARKET_CONTEXT_READY -> CANDIDATE_CREATED
+  -> registry -> dataset row.
+
+### Fixed
+- `Tests/MLQuantAI_Test_CandidateDatasetExport.mq5`: `Test_StableOrdering`
+  reused `dayOffset = 10` (already used by `Test_NoDuplicateCandidateIds`'s
+  `"DUPA"`) for its `"ORDEREARLY"` candidate. Since `candidate_id`/
+  `root_event_id` depend only on `(symbol, timeframe, eventType,
+  swept_level, mss_confirmation_bar_time)` - never on the test's
+  `suffix` - and the fixture always draws identical price data, this
+  produced an identical `candidate_id` across two different test
+  functions. `StateProjector` (the live idempotency guard
+  `CRT_EmitCandidateCreated` uses) is a process-global never reset
+  between test functions within one script run - deliberate, sealed B5
+  Commit 5 behavior - so the second emission silently returned `false`
+  (no write, no error), leaving only 2 of 3 expected candidates in the
+  store. No production code (`CandidateDatasetExport.mqh`,
+  `CandidateProjection.mqh`, B5 `Strategies/`) needed any change.
+  Fixed by using a globally-unique `dayOffset` and wrapping every
+  `BuildAndEmitCandidate` call in the file in a `Check(...)` sanity
+  assertion so a future collision fails loudly instead of silently.
+
+### Status
+Confirmed on a real compile/test run: MLQuantAI_Test_CandidateDatasetExport.mq5
+75/75 ALL PASS.
+
 ## [Unreleased] - Phase B B6.1: Candidate Projection / Registry (hardened, PASSED 2026-08-15)
 
 Opens B6 ("Candidate Dataset QA & Analytics"). Strictly additive,
