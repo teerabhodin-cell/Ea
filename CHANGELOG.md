@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B B6.3: Hash Contract Spec (Implemented, awaiting real compile/test confirmation)
+## [Unreleased] - Phase B B6.3: Hash Contract Spec (PASSED 2026-08-15)
 
 Scoped down from the original B6.3 proposal after a gap review with the
 user: most of the proposed work items (reject malformed/orphan/
@@ -68,10 +68,8 @@ The 3 genuinely new deliverables:
   `report.first_error` stay consistent on the same real rejection.
 
 ### Status
-Statically checked (brace/paren balance, 63-char identifier limit,
-one identifier renamed for length). No real compile/test run confirmed
-yet - do not treat as PASSED until real MetaEditor test evidence is
-provided.
+Confirmed on a real compile/test run: MLQuantAI_Test_B6_3_HashContract.mq5
+89/89 ALL PASS.
 
 ## [Unreleased] - Phase B B6.2: Canonical Dataset Export (PASSED 2026-08-15)
 

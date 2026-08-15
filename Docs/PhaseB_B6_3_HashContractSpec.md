@@ -1,6 +1,7 @@
 # Phase B — B6.3: Hash Contract Spec
 
-**Status: Implemented, awaiting real compile/test confirmation.**
+**Status: PASSED (2026-08-15).** Confirmed on a real compile/test run:
+`MLQuantAI_Test_B6_3_HashContract.mq5` 89/89 ALL PASS.
 
 Scoped down from the original B6.3 proposal after a gap review: most of
 the proposed work items (reject malformed/orphan/collision lines, block
