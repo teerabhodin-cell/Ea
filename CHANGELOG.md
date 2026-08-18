@@ -4,6 +4,36 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B7 Commit 3: Full-Chain Integration + Regression Proof (Implemented, awaiting test confirmation)
+
+Implements the B7 Commit 3 addendum in
+`Docs/PhaseB_B7_RiskPlanContract.md`, per the confirmed
+`Docs/PhaseB_Architecture_Baseline.md` scoping. Adds zero new
+production behavior - purely a test-suite commit proving the full
+`MARKET_CONTEXT_READY` -> `CANDIDATE_CREATED` -> `CandidateProjection`
+-> `Candidate_ToRiskPlan` -> `RISK_PLAN_CREATED` -> `RiskPlanProjection`
+-> restart/replay chain composes correctly end to end. See
+`Docs/PhaseB_B7_Commit3_IntegrationRegression.md`.
+
+### Added
+- `Tests/MLQuantAI_Test_B7_Commit3_IntegrationRegression.mq5` (new):
+  end-to-end hash/ID linkage across all three layers in one assertion
+  sequence; cross-layer failure propagation (a corrupted
+  `CANDIDATE_CREATED` line also fails `RiskPlanProjection`'s rebuild,
+  via its `CandidateProjection_RebuildFromFile` prerequisite);
+  full-chain restart simulation across a 3-candidate store, both
+  `CandidateProjection` and `RiskPlanProjection` compared
+  byte-identical across two rebuilds; multi-candidate cross-linking
+  (every plan checked against every candidate, not just its own).
+
+### Notes
+- `B7 SEALED` will be declared once this commit is confirmed PASSED
+  AND the full manual regression checklist in
+  `Docs/PhaseB_B7_Commit3_IntegrationRegression.md` (every existing
+  B5/B6/B7 test file re-run clean in the same MetaEditor session) is
+  confirmed - MQL5 has no cross-script test runner, so this checklist
+  is manual, not automated by the new script alone.
+
 ## [Unreleased] - Phase B7 Commit 2: RISK_PLAN_CREATED Event + RiskPlanProjection (PASSED 2026-08-18)
 
 Implements B7.4 (`RISK_PLAN_CREATED` event emission) and B7.5
