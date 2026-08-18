@@ -1,11 +1,18 @@
-# Phase B7 — RiskPlan / Deterministic Position Sizing: Contract (FROZEN)
+# Phase B7 — RiskPlan / Deterministic Position Sizing: Contract (SEALED)
 
-**Status: FROZEN, before any code exists.** Written per explicit
-instruction: freeze the contract before writing `Candidate_ToRiskPlan`.
-This document is the B7 analogue of `Docs/PhaseB_B5_CRTContract.md` —
-every implementation commit under B7 must conform to it; a genuine rule
-change requires a new frozen revision (B7_V2), never a silent in-place
-edit, same discipline CRT_V1 already established.
+**Status: B7 SEALED (2026-08-18).** Commits 1 through 3 (B7.1–B7.5,
+plus the full-chain integration/regression proof) are all PASSED with
+real test evidence and merged to `mlquantai`: Commit 1 98/98, Commit 2
+65/65, Commit 3 40/40 plus the full B5/B6/B7 manual regression
+checklist (146/146, 76/76, 89/89, 98/98, 65/65) all re-run clean in
+the same MetaEditor session, zero regressions. See
+`Docs/PhaseB_B7_Commit3_IntegrationRegression.md` for the full
+evidence and `Docs/PhaseB_Architecture_Baseline.md` for what opens
+next (B8.1). This document stays frozen going forward exactly as
+before — a genuine rule change still requires a new frozen revision
+(B7_V2), never a silent in-place edit, same discipline CRT_V1 already
+established; "sealed" means proven and closed, not "no longer a
+contract."
 
 B7 opens only after B6 closed in full: B6.1 (146/146), B6.2 (75/75),
 B6.3 (89/89) are all PASSED and merged to `mlquantai`. B7 must not

@@ -10,10 +10,16 @@ arrived at; this doc is the one to read for "what's frozen right now."
 
 Sealing this baseline does not itself mark any phase PASSED or
 complete — it fixes the phase boundaries and the rules each phase must
-obey. B7 Commit 2 in particular is still awaiting a confirmed re-test
-result as of this doc's creation (see
-`Docs/PhaseB_B7_Commit2_RiskPlanEvent.md`); this baseline governs what
-comes after that confirmation, not a claim that it already happened.
+obey.
+
+**Update (2026-08-18, same day): B7 is now SEALED.** Commits 1–3
+(B7.1 through B7.5, plus the full-chain integration/regression proof)
+are all PASSED with real test evidence and merged to `mlquantai` —
+Commit 1 98/98, Commit 2 65/65, Commit 3 40/40 plus the full B5/B6/B7
+manual regression checklist re-run clean, zero regressions. See
+`Docs/PhaseB_B7_RiskPlanContract.md` (now marked SEALED) and
+`Docs/PhaseB_B7_Commit3_IntegrationRegression.md` for the full
+evidence. B8.1 (`FeatureSnapshot`) is open next.
 
 ## The phase table
 
@@ -80,7 +86,7 @@ phase invents a second identity/lineage mechanism.
   reconciliation. Nothing upstream of C ever talks to a broker
   directly.
 
-## B7 Commit 3 (next, once B7 Commit 2 lands)
+## B7 Commit 3 (PASSED 2026-08-18, 40/40 — see the update above)
 
 Integration/regression proof of the full B5-through-B7 chain — no new
 sizing rule, lifecycle, re-plan capability, AI dependency, or
@@ -108,17 +114,15 @@ Definition of Done:
   no partial commit.
 - The full B5/B6/B7 regression suite passes.
 
-This addendum will be written into
-`Docs/PhaseB_B7_RiskPlanContract.md` itself (matching how the Commit 2
-addendum was appended there) once `feat/phase-b7-commit2-risk-plan-event`
-is merged to `mlquantai` — writing it on a branch cut before that merge
-would only create a document conflict at merge time, since Commit 2's
-own addendum to that same file doesn't exist on `mlquantai` yet.
+This addendum was written into `Docs/PhaseB_B7_RiskPlanContract.md`
+itself (matching how the Commit 2 addendum was appended there) once
+Commit 2 was merged to `mlquantai`, then confirmed PASSED (40/40) and
+merged in turn.
 
-## B8.1 (after B7 is sealed)
+## B8.1 (open next)
 
 `FeatureSnapshot` — the immutable, candidate-time input contract for
-B8, first deliverable of the intelligence layer once B7 Commit 3's
+B8, first deliverable of the intelligence layer now that B7 Commit 3's
 regression proof and B7 SEALED are both real. Full field-level
 contract to be frozen in its own doc before any B8 code, per this
 project's standing "freeze before code" discipline — not written yet.

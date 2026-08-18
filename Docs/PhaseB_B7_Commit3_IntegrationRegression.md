@@ -1,9 +1,15 @@
 # Phase B7 — Commit 3: Full-Chain Integration + Regression Proof
 
-**Status: Implemented, awaiting real compile/test confirmation.**
-No test has been run yet — this doc will be updated to PASSED, and
-`B7 SEALED` declared, once a clean run is reported back for both the
-new test file AND the manual regression checklist below.
+**Status: PASSED (2026-08-18). B7 SEALED.** Confirmed on a real
+compile/test run: `MLQuantAI_Test_B7_Commit3_IntegrationRegression.mq5`
+40/40 ALL PASS, plus the full manual regression checklist re-run clean
+in the same MetaEditor session: `Test_CandidateProjection.mq5` 146/146,
+`Test_CandidateDatasetExport.mq5` 76/76, `Test_B6_3_HashContract.mq5`
+89/89, `Test_B7_Commit1_RiskPlan.mq5` 98/98,
+`Test_B7_Commit2_RiskPlanEvent.mq5` 65/65 — all ALL PASS, zero
+regressions. B7 (B7.1 through B7.5) is now sealed in full. B8.1
+(`FeatureSnapshot`) is open next, per
+`Docs/PhaseB_Architecture_Baseline.md`.
 
 Implements the B7 Commit 3 addendum in
 `Docs/PhaseB_B7_RiskPlanContract.md`, per
