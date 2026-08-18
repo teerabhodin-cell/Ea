@@ -30,4 +30,13 @@
 // Strategies/MLQuantAI_CRT_V1_Contract.mqh ever change.
 #define MLQUANTAI_CRT_V1_RULES_VERSION     "CRT_V1"
 
+// B7: RiskContext/RiskPlan additive schema stamps - distinct from
+// MLQUANTAI_RISK_SCHEMA_V1 (Phase A's original RiskPlan shape, kept
+// unchanged), the same way MLQUANTAI_CANDIDATE_SCHEMA_V1 is distinct
+// from MLQUANTAI_CRT_V1_RULES_VERSION. See
+// Docs/PhaseB_B7_RiskPlanContract.md.
+#define MLQUANTAI_RISK_CONTEXT_SCHEMA_V1   "RISK_CONTEXT_V1"
+#define MLQUANTAI_RISK_PLAN_SCHEMA_V1      "RISK_PLAN_V1"
+#define MLQUANTAI_RISK_SIZING_RULES_V1     "FIXED_PERCENT_RISK_V1"
+
 #endif // __MLQUANTAI_CONTRACTVERSIONS_MQH__

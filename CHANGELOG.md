@@ -4,6 +4,61 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B7 Commit 1: RiskContext / RiskPlan / Candidate_ToRiskPlan (Implemented, awaiting real compile/test confirmation)
+
+Opens Phase B7 ("deterministic RiskPlan sizing") after B6 closed in
+full (B6.1 146/146, B6.2 75/75, B6.3 89/89, all PASSED and merged).
+Implements B7.1 (RiskContext) + B7.2 (RiskPlan schema/identity) + B7.3
+(`Candidate_ToRiskPlan`, pure sizing) together, per
+`Docs/PhaseB_B7_RiskPlanContract.md` (frozen before any code was
+written). B7.4 (event emission) and B7.5 (replay/recovery) are not
+part of this commit.
+
+A real naming collision was found and resolved before writing any
+code: `Core/MLQuantAI_RiskPlan.mqh` already existed from Phase A
+(`decision`/`allowed`/`lot`/`risk_money`/`risk_percent`/
+`reject_reason`), unused but sealed, and `Core/MLQuantAI_RiskDecision.mqh`
+(Phase B1) had already flagged "B7 reconciles how the two relate when
+the Risk Manager is built." Resolved by extending the existing struct
+additively rather than declaring a second, differently-shaped
+`RiskPlan` - every Phase A field kept unchanged, new B7 fields added
+alongside, `Candidate_ToRiskPlan` fills both groups from the same
+computation. See `Docs/PhaseB_B7_Commit1_RiskPlan.md`.
+
+### Added
+- `Core/MLQuantAI_CanonicalFormat.mqh` (new): `CanonicalPrice`/
+  `CanonicalDouble`/`CanonicalPercent` - fixed-literal-precision
+  formatting for every B7 hash payload double, never `Digits()`/
+  `_Digits`.
+- `Core/MLQuantAI_ContractVersions.mqh` (additive):
+  `MLQUANTAI_RISK_CONTEXT_SCHEMA_V1`, `MLQUANTAI_RISK_PLAN_SCHEMA_V1`,
+  `MLQUANTAI_RISK_SIZING_RULES_V1`.
+- `Core/MLQuantAI_Ids.mqh` (additive): `Ids_RiskPlanId(candidateId,
+  sizingRulesVersion)`.
+- `Core/MLQuantAI_RiskContext.mqh` (new): `RiskContext` struct
+  (embeds `AccountSnapshot`/`SymbolSpec` verbatim, snapshot-only),
+  `RiskContext_Init`, `RiskContext_HashPayload`/`_ComputeHash`.
+- `Core/MLQuantAI_RiskPlan.mqh` (additive): 12 new fields alongside
+  the unchanged Phase A ones, `RiskPlan_HashPayload`/`_ComputeHash`.
+- `Core/MLQuantAI_RiskSizing.mqh` (new): `Candidate_ToRiskPlan` - the
+  frozen fixed-fractional-risk sizing formula (stop distance via
+  `tick_size`, risk amount from `balance * target_risk_percent`, raw
+  lot via `tick_value`, floor to `volume_step`, reject below
+  `volume_min`, clamp above `volume_max`).
+- `Tests/MLQuantAI_Test_B7_Commit1_RiskPlan.mq5` (new): sizing formula
+  exact-number correctness, `risk_plan_id`/`plan_hash`
+  identity-vs-content independence, `risk_context_hash`/`plan_hash`
+  inclusion/exclusion mutation sweeps, fail-closed validation (NaN via
+  real float division, zero/negative prices, wrong-side SL/TP
+  ordering, non-positive symbol/account fields), volume normalization
+  edge cases (below-min rejects, above-max clamps), a 10,000-iteration
+  determinism loop, and input-immutability checks.
+
+### Status
+Implemented and statically checked (brace/paren balance, 63-char
+identifier limit). No real compile/test run confirmed yet - do not
+treat as PASSED until real MetaEditor test evidence is provided.
+
 ## [Unreleased] - Phase B B6.3: Hash Contract Spec (PASSED 2026-08-15)
 
 Scoped down from the original B6.3 proposal after a gap review with the

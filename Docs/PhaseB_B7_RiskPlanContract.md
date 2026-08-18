@@ -169,11 +169,43 @@ is what lets a later phase (B7.5, or B8's risk-contract auditing)
 detect "same identity, different content" as a genuine drift signal
 rather than a normal identity change.
 
-**Struct:**
+### `RiskPlan` already exists (Phase A) — this is an ADDITIVE extension, not a new struct
+
+`Core/MLQuantAI_RiskPlan.mqh` already defines `RiskPlan` (`decision`/
+`allowed`/`lot`/`risk_money`/`risk_percent`/`reject_reason`/
+`risk_schema_version`) and `Core/MLQuantAI_RiskDecision.mqh`'s own
+comment already named this exact moment: *"RiskDecision is the AUDIT
+record; RiskPlan is the SIZING output for one that passed. B7
+reconciles how the two relate when the Risk Manager is built."*
+Neither the original proposal nor its follow-up accounted for this —
+both described a struct also named `RiskPlan` with a materially
+different shape, which would either fail to compile (duplicate type)
+or silently duplicate the concept under one name.
+
+**Resolution: extend the existing sealed struct additively.** Every
+existing field stays exactly as it is — same discipline every other
+phase in this project has applied to every prior sealed file. New
+fields are added alongside them. `Candidate_ToRiskPlan` (B7.3) fills
+BOTH the existing fields and the new ones from the same computation,
+which is what actually reconciles the two: the pure sizing function's
+output IS what belongs in `lot`/`risk_money`/`decision`/`allowed`/
+`reject_reason` — there was never a second, competing answer to what
+those fields should hold, just a Phase A placeholder waiting for B7 to
+exist.
 
 ```cpp
 struct RiskPlan
 {
+   // --- Phase A, sealed, UNCHANGED ---
+   ENUM_RISK_DECISION  decision;
+   bool                allowed;
+   double              lot;
+   double              risk_money;
+   double              risk_percent;
+   ENUM_REASON_CODE    reject_reason;
+   string              risk_schema_version;
+
+   // --- Phase B7, additive ---
    string risk_plan_schema_version;
    string risk_plan_id;
    string candidate_id;
@@ -187,9 +219,8 @@ struct RiskPlan
    double stop_distance_points;
    double rr_ratio;
 
-   double risk_percent;        // copied from RiskContext.target_risk_percent (B7.3's only sizing method uses it as-is)
-   double risk_amount;
-   double lot_size;
+   double risk_amount;         // same value as risk_money, kept both to leave the old field untouched
+   double lot_size;            // same value as lot, kept both to leave the old field untouched
 
    string sizing_method;       // copied verbatim from RiskContext.sizing_method
    string sizing_rules_version;// copied verbatim from RiskContext.sizing_rules_version
@@ -198,11 +229,27 @@ struct RiskPlan
 };
 ```
 
+`risk_money`/`lot` and `risk_amount`/`lot_size` are deliberately kept
+as two names for the same value rather than picking one — the old
+names stay because Phase A code (however dormant) was written against
+them; the new names stay because they match `plan_hash`'s own payload
+vocabulary and the B7.3 formula's own working names. A future commit
+that finds a real consumer of one or the other can collapse this once
+it's no longer a guess.
+
+On a **fail-closed** path (B7.3's validation steps below), the
+function still returns `false`/leaves `outPlan` at `RiskPlan_Init()`
+defaults — it does NOT set `allowed=false`/`decision=RISK_DECISION_BLOCK`
+on a half-filled struct with everything else still populated. A
+rejected plan is a rejected plan; it doesn't get a `plan_hash` or an
+`risk_plan_id` either, matching the "no partial output" rule every
+other B5/B6 mapping function already follows.
+
 **`plan_hash` payload — exact field order** (adopts the proposal's
-list, corrected per the proposal's own follow-up: `lot_size` IS
-included — the first draft omitted it, which would have let two plans
-with different `lot_size` hash identically, exactly the silent-drift
-risk the follow-up correctly flagged):
+list, corrected per its own follow-up: `lot_size` IS included — an
+earlier draft omitted it, which would have let two plans with
+different `lot_size` hash identically, exactly the silent-drift risk
+the follow-up correctly flagged):
 
 `candidate_id`, `candidate_hash`, `risk_context_hash`, `planned_entry`,
 `planned_sl`, `planned_tp`, `stop_distance_points`, `rr_ratio`,
@@ -211,11 +258,14 @@ risk the follow-up correctly flagged):
 
 **Excluded from `plan_hash`, with reason:** `risk_plan_schema_version`/
 `risk_plan_id` (derived-from/identity, not content, same exclusion
-every other hash in this project applies to its own identity fields),
-debug text, labels, timestamps, QA notes, runtime counters (none of
-which exist as fields on this frozen struct in the first place — the
-struct itself has no such fields, so there is nothing to accidentally
-include).
+every other hash in this project applies to its own identity fields);
+`decision`/`allowed`/`reject_reason`/`risk_schema_version`/`lot`/
+`risk_money` (the Phase A fields — duplicates of values already in the
+payload under their B7 names, hashing both would be redundant, same
+"don't hash the same thing twice" rule this project has used
+consistently since B2); debug text, labels, timestamps, QA notes,
+runtime counters (no such fields exist on this struct at all, so
+there's nothing to accidentally include).
 
 ## 4. `Candidate_ToRiskPlan`: the sizing formula (B7.3)
 
@@ -278,14 +328,29 @@ bool Candidate_ToRiskPlan(const TradeCandidate &candidate, const RiskContext &ct
    clamp down to `volume_max` (the opposite direction is safe — it
    only ever reduces risk below the target, never exceeds it) and
    proceed.
-9. **Fill the rest of the struct** (`risk_percent` = `ctx.target_risk_percent`,
-   `sizing_method`/`sizing_rules_version` copied from `ctx`,
-   `risk_plan_id` via `Ids_RiskPlanId`, `candidate_hash`/`risk_context_hash`
-   copied verbatim) and compute `plan_hash` LAST, over the finished
-   struct — same "hash the finished object" convention every other
-   hash in this project follows.
+9. **Fill the rest of the struct** — both vocabularies at once, same
+   values: `risk_percent` = `ctx.target_risk_percent` (B7 field) AND
+   Phase A's own `risk_percent` (already the same field name, no
+   duplication needed there); `lot_size` = `stepped_lot` AND `lot` =
+   `stepped_lot`; `risk_amount` = the computed amount AND `risk_money`
+   = the same value; `sizing_method`/`sizing_rules_version` copied from
+   `ctx`; `risk_plan_id` via `Ids_RiskPlanId`; `candidate_hash`/
+   `risk_context_hash` copied verbatim; Phase A's `decision` =
+   `RISK_DECISION_ALLOW`, `allowed` = `true`, `reject_reason` =
+   `REASON_NONE`. Compute `plan_hash` LAST, over the finished struct —
+   same "hash the finished object" convention every other hash in this
+   project follows.
 10. Return `true`. No event append, no broker/order/history call, no
-    mutation of `candidate` or `ctx` (both passed `const &`).
+    mutation of `candidate` or `ctx` (both passed `const &`). On any
+    fail-closed path in steps 1/3/8 above, `outPlan` stays at
+    `RiskPlan_Init()` defaults — including Phase A's own defaults
+    (`decision = RISK_DECISION_NONE`, `allowed = false`) — the function
+    does NOT set `decision = RISK_DECISION_BLOCK` with a reject reason
+    on a rejection; a rejected candidate simply gets no plan at all
+    from this pure function, matching every other B5/B6 "no partial
+    output" mapping rule. (A future Risk Manager phase, per
+    `RiskDecision`'s own stated role, is what would record WHY a
+    candidate was rejected as an audit trail — not B7.3's job.)
 
 ## 5. QA gate for B7.3 (binding on its test suite)
 
