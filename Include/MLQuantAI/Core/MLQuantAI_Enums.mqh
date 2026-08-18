@@ -147,7 +147,18 @@ enum ENUM_EVENT_TYPE
    EVENT_TYPE_ORDER_FILLED,
    EVENT_TYPE_ORDER_REJECTED,
    EVENT_TYPE_POSITION_CLOSED,
-   EVENT_TYPE_TRADE_OUTCOME_LABELED
+   EVENT_TYPE_TRADE_OUTCOME_LABELED,
+
+   // Phase B7: RiskPlan - a SystemEvent (see
+   // Docs/PhaseB_B7_RiskPlanContract.md's B7 Commit 2 addendum), not a
+   // candidate lifecycle transition. Appended at the very end of the
+   // enum, not inserted earlier - the persisted event store format
+   // only ever stores/compares the STRING form via
+   // EventTypeToString/EventTypeFromString, never the raw ordinal, so
+   // an insertion wouldn't actually break anything in practice, but
+   // appending at the end keeps that guarantee trivially true rather
+   // than relying on it.
+   EVENT_TYPE_RISK_PLAN_CREATED
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -177,6 +188,7 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_ORDER_REJECTED:                     return "ORDER_REJECTED";
       case EVENT_TYPE_POSITION_CLOSED:                    return "POSITION_CLOSED";
       case EVENT_TYPE_TRADE_OUTCOME_LABELED:               return "TRADE_OUTCOME_LABELED";
+      case EVENT_TYPE_RISK_PLAN_CREATED:                  return "RISK_PLAN_CREATED";
    }
    return "UNKNOWN";
 }
@@ -206,6 +218,7 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "ORDER_REJECTED")                    return EVENT_TYPE_ORDER_REJECTED;
    if(s == "POSITION_CLOSED")                   return EVENT_TYPE_POSITION_CLOSED;
    if(s == "TRADE_OUTCOME_LABELED")             return EVENT_TYPE_TRADE_OUTCOME_LABELED;
+   if(s == "RISK_PLAN_CREATED")                 return EVENT_TYPE_RISK_PLAN_CREATED;
    return EVENT_TYPE_UNKNOWN;
 }
 
