@@ -4,6 +4,42 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B7 Commit 3: Full-Chain Integration + Regression Proof (PASSED 2026-08-18) - B7 SEALED
+
+Implements the B7 Commit 3 addendum in
+`Docs/PhaseB_B7_RiskPlanContract.md`, per the confirmed
+`Docs/PhaseB_Architecture_Baseline.md` scoping. Adds zero new
+production behavior - purely a test-suite commit proving the full
+`MARKET_CONTEXT_READY` -> `CANDIDATE_CREATED` -> `CandidateProjection`
+-> `Candidate_ToRiskPlan` -> `RISK_PLAN_CREATED` -> `RiskPlanProjection`
+-> restart/replay chain composes correctly end to end. See
+`Docs/PhaseB_B7_Commit3_IntegrationRegression.md`.
+
+### Added
+- `Tests/MLQuantAI_Test_B7_Commit3_IntegrationRegression.mq5` (new):
+  end-to-end hash/ID linkage across all three layers in one assertion
+  sequence; cross-layer failure propagation (a corrupted
+  `CANDIDATE_CREATED` line also fails `RiskPlanProjection`'s rebuild,
+  via its `CandidateProjection_RebuildFromFile` prerequisite);
+  full-chain restart simulation across a 3-candidate store, both
+  `CandidateProjection` and `RiskPlanProjection` compared
+  byte-identical across two rebuilds; multi-candidate cross-linking
+  (every plan checked against every candidate, not just its own).
+
+### Status
+Confirmed on a real compile/test run:
+`MLQuantAI_Test_B7_Commit3_IntegrationRegression.mq5` 40/40 ALL PASS,
+plus the full manual regression checklist re-run clean in the same
+MetaEditor session: `Test_CandidateProjection.mq5` 146/146,
+`Test_CandidateDatasetExport.mq5` 76/76, `Test_B6_3_HashContract.mq5`
+89/89, `Test_B7_Commit1_RiskPlan.mq5` 98/98,
+`Test_B7_Commit2_RiskPlanEvent.mq5` 65/65 - all ALL PASS, zero
+regressions.
+
+**B7 SEALED.** B7.1 through B7.5 are all PASSED and merged. B8.1
+(`FeatureSnapshot`) opens next, per
+`Docs/PhaseB_Architecture_Baseline.md`.
+
 ## [Unreleased] - Phase B7 Commit 2: RISK_PLAN_CREATED Event + RiskPlanProjection (PASSED 2026-08-18)
 
 Implements B7.4 (`RISK_PLAN_CREATED` event emission) and B7.5

@@ -1,11 +1,18 @@
-# Phase B7 — RiskPlan / Deterministic Position Sizing: Contract (FROZEN)
+# Phase B7 — RiskPlan / Deterministic Position Sizing: Contract (SEALED)
 
-**Status: FROZEN, before any code exists.** Written per explicit
-instruction: freeze the contract before writing `Candidate_ToRiskPlan`.
-This document is the B7 analogue of `Docs/PhaseB_B5_CRTContract.md` —
-every implementation commit under B7 must conform to it; a genuine rule
-change requires a new frozen revision (B7_V2), never a silent in-place
-edit, same discipline CRT_V1 already established.
+**Status: B7 SEALED (2026-08-18).** Commits 1 through 3 (B7.1–B7.5,
+plus the full-chain integration/regression proof) are all PASSED with
+real test evidence and merged to `mlquantai`: Commit 1 98/98, Commit 2
+65/65, Commit 3 40/40 plus the full B5/B6/B7 manual regression
+checklist (146/146, 76/76, 89/89, 98/98, 65/65) all re-run clean in
+the same MetaEditor session, zero regressions. See
+`Docs/PhaseB_B7_Commit3_IntegrationRegression.md` for the full
+evidence and `Docs/PhaseB_Architecture_Baseline.md` for what opens
+next (B8.1). This document stays frozen going forward exactly as
+before — a genuine rule change still requires a new frozen revision
+(B7_V2), never a silent in-place edit, same discipline CRT_V1 already
+established; "sealed" means proven and closed, not "no longer a
+contract."
 
 B7 opens only after B6 closed in full: B6.1 (146/146), B6.2 (75/75),
 B6.3 (89/89) are all PASSED and merged to `mlquantai`. B7 must not
@@ -596,3 +603,99 @@ already carries).
   test.
 - Every field on a rebuilt `RiskPlanProjectionRecord` matches the
   original `RiskPlan` that was emitted, exactly — no drift.
+
+## B7 Commit 3 addendum: full-chain integration + regression proof
+
+Per `Docs/PhaseB_Architecture_Baseline.md`'s confirmed scoping. This
+commit adds **zero new production behavior** — no new sizing rule,
+lifecycle, re-plan capability, AI dependency, or execution path. It is
+purely a test-suite commit proving the already-shipped B5/B6/B7 pieces
+compose correctly end to end, plus one integration seam Commit 2's own
+test suite didn't exercise (see below).
+
+### The chain being proven
+
+```
+MARKET_CONTEXT_READY
+    -> CANDIDATE_CREATED
+    -> CandidateProjection
+    -> Candidate_ToRiskPlan
+    -> RISK_PLAN_CREATED
+    -> RiskPlanProjection
+    -> Restart / Replay
+    -> identical lineage + state
+```
+
+### What Commit 2's own suite already covers (not re-proven here)
+
+`Test_B7_Commit2_RiskPlanEvent.mq5` already builds every fixture
+through the real B5 pipeline (`CRT_DetectV1` -> `CRT_ToTradeCandidate`
+-> `CRT_EmitCandidateCreated` -> `Candidate_ToRiskPlan` ->
+`RiskPlan_EmitRiskPlanCreated`), already proves `RiskPlanProjection`'s
+own restart/multi-session/duplicate/collision/orphan/hash-mismatch
+behavior, and already proves field-by-field replay fidelity. Commit 3
+does not repeat any of that.
+
+### What's genuinely new in Commit 3
+
+1. **Explicit end-to-end linkage assertion in one place.** A single
+   test that, after a full rebuild, walks the whole chain forward from
+   a real `MARKET_CONTEXT_READY` event and asserts every hash/ID
+   matches its neighbor: the candidate's `context_hash` matches the
+   real `MarketContext`'s own `context_hash`; the plan's
+   `candidate_id`/`candidate_hash` match the real `CandidateProjection`
+   record; the plan's `risk_plan_id` is deterministically derived from
+   that same `candidate_id`. Commit 2's tests check each hash exists
+   and round-trips correctly in isolation; this test checks the chain
+   of custody across all three layers in one assertion sequence.
+2. **Cross-layer failure propagation** — not tested by Commit 2 or
+   B6.1/B6.2/B6.3 individually: a corrupted/colliding
+   `CANDIDATE_CREATED` line (the candidate layer, not the plan layer)
+   must cause `RiskPlanProjection_RebuildFromFile` to ALSO fail
+   closed, since its own documented contract makes
+   `CandidateProjection_RebuildFromFile` on the same file a hard
+   prerequisite. This proves the B6->B7 dependency direction actually
+   holds under failure, not just under the happy path.
+3. **Full-chain restart/crash simulation** — reopening the store fresh
+   (simulating an EA process restart) and rebuilding BOTH
+   `CandidateProjection` and `RiskPlanProjection` from scratch twice,
+   asserting both layers' state is byte-identical across both
+   rebuilds, for a store holding multiple candidates/plans together
+   (not one at a time as Commit 2's restart test did).
+4. **Multi-candidate cross-linking check** — several candidates each
+   with their own risk plan in the same store; after a full rebuild,
+   every plan must link to exactly its own candidate, never a
+   neighboring one (guards against an index/ordering bug that a
+   single-candidate test structurally cannot catch).
+
+### Definition of Done
+
+- The full chain rebuilds state from the store alone (no in-memory
+  carry-over assumed).
+- Candidate/projection/plan linkage matches on every hash and ID
+  across the chain, for every candidate in a multi-candidate store.
+- A restart followed by replay reproduces byte-identical state in
+  BOTH `CandidateProjection` and `RiskPlanProjection`.
+- Duplicate and collision policy still hold correctly across the
+  candidate/plan layer boundary — a candidate-layer failure closes the
+  plan-layer rebuild too.
+- A corrupted/truncated line anywhere fails the rebuild closed, with
+  no partial commit, regardless of which layer's line it corrupts.
+- The full B5/B6/B7 regression suite passes: every existing test file
+  (`Test_CandidateProjection.mq5`, `Test_CandidateDatasetExport.mq5`,
+  `Test_B6_3_HashContract.mq5`, `Test_B7_Commit1_RiskPlan.mq5`,
+  `Test_B7_Commit2_RiskPlanEvent.mq5`) plus the new
+  `Test_B7_Commit3_IntegrationRegression.mq5` all re-run clean in the
+  same MetaEditor session — this is a manual re-run checklist for
+  whoever confirms this commit, not something one script can automate,
+  since MQL5 has no cross-script test runner.
+
+### Explicitly out of scope for this commit
+
+Any new sizing rule, any lifecycle change, any re-plan/overwrite
+capability, any AI dependency, any broker/order/execution call, any
+change to an already-sealed B5/B6/B7 production file. If self-review
+during this commit surfaces an actual product-level gap (not just a
+test-coverage gap), that gets flagged to the user before any
+production file is touched — same discipline as every commit before
+this one.
