@@ -114,6 +114,18 @@ string Ids_RiskPlanId(string candidateId, string sizingRulesVersion)
    return Ids_Deterministic("RPLAN", key);
 }
 
+// feature_snapshot_id (Phase B8.1): one candidate's AI feature vector.
+// Same candidate_id -> same feature_snapshot_id, always - depends on
+// nothing else, since Candidate_ToFeatureSnapshot is a pure verbatim
+// copy with no methodology choice yet (unlike risk_plan_id, which
+// depends on sizing_rules_version because B7 has more than one
+// possible sizing methodology). See
+// Docs/PhaseB_B8_1_FeatureSnapshotContract.md section 2.
+string Ids_FeatureSnapshotId(string candidateId)
+{
+   return Ids_Deterministic("FSNAP", candidateId);
+}
+
 int g_Ids_SessionCounter = 0;
 
 // runtime_session_id: identifies one EA run. Deliberately NOT deterministic
