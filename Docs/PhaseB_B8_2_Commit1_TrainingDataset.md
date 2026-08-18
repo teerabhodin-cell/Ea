@@ -1,8 +1,10 @@
 # Phase B8.2 — Commit 1: Training Dataset Row/Manifest Contract
 
-**Status: Implemented, awaiting real compile/test confirmation.**
-No test has been run yet — this doc will be updated to PASSED only
-after a real MetaEditor compile/test log is reported back.
+**Status: PASSED (2026-08-19).** Confirmed on a real compile/test run:
+`MLQuantAI_Test_B8_2_Commit1_TrainingDataset.mq5` 76/76 ALL PASS. The
+2,000-sample split-distribution sanity check landed at
+TRAIN=70.5%/VALIDATION=14.3%/TEST=15.2% against the frozen 70/15/15
+target. No production code needed any change.
 
 Implements `Docs/PhaseB_B8_2_TrainingDatasetContract.md`. Opens B8.2
 after B8.1 PASSED (66/66) and merged. Scoped to schema, identity,

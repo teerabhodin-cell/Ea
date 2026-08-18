@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B8.2 Commit 1: Training Dataset Row/Manifest Contract (Implemented, awaiting test confirmation)
+## [Unreleased] - Phase B8.2 Commit 1: Training Dataset Row/Manifest Contract (PASSED 2026-08-19)
 
 Opens Phase B8.2 ("training dataset contract") after B8.1 PASSED
 (66/66) and merged. Implements
@@ -51,6 +51,13 @@ collision, separately named. `MLQUANTAI_LABEL_SCHEMA_VERSION =
   statistical distribution sanity check, `dataset_hash`
   stability/reordering/tamper checks, input immutability, and
   structural no-event-store/no-label-leakage checks.
+
+### Status
+Confirmed on a real compile/test run:
+`MLQuantAI_Test_B8_2_Commit1_TrainingDataset.mq5` 76/76 ALL PASS. The
+2,000-sample split-distribution check landed at TRAIN=70.5%/
+VALIDATION=14.3%/TEST=15.2% against the frozen 70/15/15 target. No
+production code needed any change.
 
 ## [Unreleased] - Phase B8.1: FeatureSnapshot Identity/Lineage/Hash (PASSED 2026-08-19)
 
