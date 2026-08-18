@@ -140,6 +140,16 @@ string Ids_TrainingDatasetRowId(string featureSnapshotId, string labelSchemaVers
    return Ids_Deterministic("TDROW", key);
 }
 
+// dataset_id (Phase B8.2 Commit 2): one export run's dataset.
+// Deterministic from the source file + modelTarget + dataset_hash -
+// re-exporting the identical store with the identical modelTarget
+// always gets the identical dataset_id.
+string Ids_TrainingDatasetId(string fileName, string modelTarget, string datasetHash)
+{
+   string key = fileName + "|" + modelTarget + "|" + datasetHash;
+   return Ids_Deterministic("TDSET", key);
+}
+
 int g_Ids_SessionCounter = 0;
 
 // runtime_session_id: identifies one EA run. Deliberately NOT deterministic
