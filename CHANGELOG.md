@@ -48,16 +48,33 @@ computation. See `Docs/PhaseB_B7_Commit1_RiskPlan.md`.
 - `Tests/MLQuantAI_Test_B7_Commit1_RiskPlan.mq5` (new): sizing formula
   exact-number correctness, `risk_plan_id`/`plan_hash`
   identity-vs-content independence, `risk_context_hash`/`plan_hash`
-  inclusion/exclusion mutation sweeps, fail-closed validation (NaN via
-  real float division, zero/negative prices, wrong-side SL/TP
+  inclusion/exclusion mutation sweeps, fail-closed validation
+  (non-finite price via real +Inf multiplication overflow -
+  0.0/0.0 traps as a hard runtime error in MQL5, unlike Python/C -
+  fixed after the first real test run caught it, zero/negative
+  prices, wrong-side SL/TP
   ordering, non-positive symbol/account fields), volume normalization
   edge cases (below-min rejects, above-max clamps), a 10,000-iteration
   determinism loop, and input-immutability checks.
 
+### Fixed
+- `Tests/MLQuantAI_Test_B7_Commit1_RiskPlan.mq5`: the fail-closed
+  "invalid number" test tried to construct a NaN entry_hint via
+  `0.0/0.0`, assuming MQL5 follows IEEE754 silently the way Python/C
+  do. It doesn't - MQL5 traps `0.0/0.0` as a hard "zero divide"
+  runtime error and halts the script, caught on the first real
+  compile/test run (the log stopped mid-suite at that exact line).
+  Fixed by constructing `+Inf` via a real multiplication overflow
+  (`1.0e307 * 1.0e307`) instead, which does not trap - both are
+  "not a valid number" as far as `RiskSizing_ValidateInput`'s
+  `MathIsValidNumber` check is concerned, so the fix still exercises
+  the same code path. No production code needed any change.
+
 ### Status
 Implemented and statically checked (brace/paren balance, 63-char
-identifier limit). No real compile/test run confirmed yet - do not
-treat as PASSED until real MetaEditor test evidence is provided.
+identifier limit) after the fixture fix above. No real compile/test
+run confirmed yet - do not treat as PASSED until real MetaEditor test
+evidence is provided.
 
 ## [Unreleased] - Phase B B6.3: Hash Contract Spec (PASSED 2026-08-15)
 

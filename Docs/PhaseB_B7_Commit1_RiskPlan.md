@@ -79,7 +79,10 @@ computation (`lot == lot_size`, `risk_money == risk_amount`,
   counterparts in the test to prove they're independently excluded,
   not just coincidentally equal).
 - **Fail-closed validation** — empty `candidate_id`, wrong `state`,
-  NaN price (via real IEEE754 `0.0/0.0` float division, not a fake
+  a non-finite price (via `+Inf` from a real multiplication overflow -
+  `0.0/0.0` was tried first and rejected: MQL5 traps it as a hard
+  "zero divide" runtime error and halts the script, unlike Python/C's
+  silent NaN, caught on the first real compile/test run), not a fake
   cast), zero price, wrong-side SL/TP ordering (both BUY and SELL),
   non-positive `tick_size`/`tick_value`/`volume_step`/
   `target_risk_percent`/`balance`.

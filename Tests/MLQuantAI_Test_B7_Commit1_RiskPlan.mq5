@@ -334,11 +334,17 @@ void Test_FailClosed_InvalidCandidate()
    RiskPlan plan2;
    Check(!Candidate_ToRiskPlan(notCreated, ctx, plan2), "candidate.state != CANDIDATE_CREATED is rejected");
 
-   TradeCandidate nanEntry; BuildValidCandidate(nanEntry, "NANENTRY");
-   double zeroForNan = 0.0;
-   nanEntry.entry_hint = zeroForNan / zeroForNan; // IEEE754 float division, not integer - yields NaN, not a runtime error
+   // MQL5 traps 0.0/0.0 as a hard "zero divide" runtime error (unlike
+   // Python/C's silent IEEE754 NaN) - it halts the script, so it can't be
+   // used to construct a NaN test value. Multiplication overflow does not
+   // trap the same way, so it's used here to reach the same
+   // !MathIsValidNumber(...) code path via +Inf instead of NaN - both are
+   // "not a valid number" as far as RiskSizing_ValidateInput is concerned.
+   TradeCandidate infEntry; BuildValidCandidate(infEntry, "INFENTRY");
+   double huge = 1.0e307;
+   infEntry.entry_hint = huge * huge; // overflows to +Inf, no trap
    RiskPlan plan3;
-   Check(!Candidate_ToRiskPlan(nanEntry, ctx, plan3), "NaN entry_hint is rejected");
+   Check(!Candidate_ToRiskPlan(infEntry, ctx, plan3), "+Inf entry_hint is rejected");
 
    TradeCandidate zeroSl; BuildValidCandidate(zeroSl, "ZEROSL");
    zeroSl.sl_hint = 0;
