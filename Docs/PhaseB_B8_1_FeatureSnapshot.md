@@ -1,8 +1,13 @@
 # Phase B8.1 — FeatureSnapshot Identity/Lineage/Hash
 
-**Status: Implemented, awaiting real compile/test confirmation.**
-No test has been run yet — this doc will be updated to PASSED only
-after a real MetaEditor compile/test log is reported back.
+**Status: PASSED (2026-08-19).** Confirmed on a real compile/test run:
+`MLQuantAI_Test_B8_1_FeatureSnapshot.mq5` 66/66 ALL PASS. No
+production code needed any change after the include-graph fix below —
+the only other obstacles on the way to a clean run were file-placement/
+sync issues on the test machine (multiple stale copies of
+`MLQuantAI_Ids.mqh`), resolved by sending a full zip of
+`Include/MLQuantAI/` + `Tests/` to extract-and-replace in one step
+instead of copying files one at a time.
 
 Implements the frozen `Docs/PhaseB_B8_1_FeatureSnapshotContract.md`.
 Opens after B7 SEALED (Commits 1-3, 203/203, full B5/B6/B7 regression

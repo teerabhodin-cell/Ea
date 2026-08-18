@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B8.1: FeatureSnapshot Identity/Lineage/Hash (Implemented, awaiting test confirmation)
+## [Unreleased] - Phase B8.1: FeatureSnapshot Identity/Lineage/Hash (PASSED 2026-08-19)
 
 Opens Phase B8 ("AI/ML intelligence layer") after B7 SEALED (203/203,
 full B5/B6/B7 regression suite 474/474, zero regressions). Implements
@@ -61,6 +61,15 @@ additively.
   `MLQuantAI_CRT_V1_ToTradeCandidate.mqh`). Fixed by including that
   file directly. Caught during self-review, before any user test run -
   no production code involved.
+
+### Status
+Confirmed on a real compile/test run:
+`MLQuantAI_Test_B8_1_FeatureSnapshot.mq5` 66/66 ALL PASS. The only
+other obstacles before a clean run were file-placement/sync issues on
+the test machine (stale copies of `MLQuantAI_Ids.mqh` surviving
+multiple individual file replacements) - resolved by sending a full
+zip of `Include/MLQuantAI/` + `Tests/` to extract-and-replace in one
+step. No further production code changes were needed.
 
 ## [Unreleased] - Phase B7 Commit 3: Full-Chain Integration + Regression Proof (PASSED 2026-08-18) - B7 SEALED
 
