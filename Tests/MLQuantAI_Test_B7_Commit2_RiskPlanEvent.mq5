@@ -153,6 +153,19 @@ string TamperStringField(string line, string key, string newValue)
    return StringSubstr(line, 0, start) + newValue + StringSubstr(line, end);
 }
 
+// Arithmetic-derived doubles (division/multiplication) can carry
+// floating-point noise below CanonicalDouble's 8-decimal persisted
+// precision - the round trip through RiskPlan_ToExtraJson's canonical
+// string and back is correctly lossy at that precision (plan_hash
+// itself is computed from the SAME canonical string, so plan_hash
+// matching already proves canonical fidelity exactly). An exact `==`
+// against the raw, unrounded in-memory double is stricter than that
+// contract promises, so field-fidelity checks on these fields use a
+// tolerance comfortably above the ~5e-9 worst-case 8-decimal rounding
+// bound and far below any real field-mapping bug's magnitude.
+#define MLQUANTAI_TEST_B7C2_EPS 0.000001
+bool DoubleClose(double a, double b) { return MathAbs(a - b) < MLQUANTAI_TEST_B7C2_EPS; }
+
 void ResetProjections()
 {
    CandidateProjection_Reset();
@@ -348,9 +361,18 @@ void Test_MalformedLine_BlocksWholeRebuild()
    FileWriteString(h, "{\"schema_version\":\"EVENTS_V1\",\"type\":\"RISK_PLAN_CREATED\",truncated_garbage");
    FileClose(h);
 
+   // Not necessarily 0: RiskPlan_EmitRiskPlanCreated's own live-sync
+   // (RiskPlanProjection_ApplyLiveRecord) already put one record into
+   // this SAME global registry the moment it was called above, before
+   // this rebuild was ever attempted. The actual documented contract
+   // (see RiskPlanProjection_RebuildFromFile's own header comment) is
+   // "left completely untouched" on failure, not "empty" - so this
+   // test asserts the count is unchanged by the failed rebuild,
+   // whatever it was beforehand, rather than assuming it was 0.
+   int countBefore = RiskPlanProjection_Count();
    RiskPlanProjectionReport report = RiskPlanProjection_RebuildFromFile(file);
    Check(!report.ok, "rebuild fails entirely on the truncated line");
-   Check(RiskPlanProjection_Count() == 0, "registry stays empty - not even the one good record survives a failed rebuild");
+   Check(RiskPlanProjection_Count() == countBefore, "registry is left completely untouched by a failed rebuild");
 }
 
 void Test_RestartCrashSimulation()
@@ -432,11 +454,11 @@ void Test_ReplayFieldsMatchOriginal()
    Check(rec.risk_context_hash == plan.risk_context_hash, "risk_context_hash matches");
    Check(rec.planned_entry == plan.planned_entry && rec.planned_sl == plan.planned_sl && rec.planned_tp == plan.planned_tp,
          "planned_entry/sl/tp match");
-   Check(rec.stop_distance_points == plan.stop_distance_points, "stop_distance_points matches");
-   Check(rec.rr_ratio == plan.rr_ratio, "rr_ratio matches");
+   Check(DoubleClose(rec.stop_distance_points, plan.stop_distance_points), "stop_distance_points matches");
+   Check(DoubleClose(rec.rr_ratio, plan.rr_ratio), "rr_ratio matches");
    Check(rec.risk_percent == plan.risk_percent, "risk_percent matches");
-   Check(rec.risk_amount == plan.risk_amount, "risk_amount matches");
-   Check(rec.lot_size == plan.lot_size, "lot_size matches");
+   Check(DoubleClose(rec.risk_amount, plan.risk_amount), "risk_amount matches");
+   Check(DoubleClose(rec.lot_size, plan.lot_size), "lot_size matches");
    Check(rec.sizing_method == plan.sizing_method, "sizing_method matches");
    Check(rec.sizing_rules_version == plan.sizing_rules_version, "sizing_rules_version matches");
    Check(rec.plan_hash == plan.plan_hash, "plan_hash matches - no drift between emission and replay");

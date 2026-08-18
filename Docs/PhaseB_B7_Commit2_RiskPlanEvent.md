@@ -1,8 +1,10 @@
 # Phase B7 — Commit 2: RISK_PLAN_CREATED Event + RiskPlanProjection
 
 **Status: Implemented, awaiting real compile/test confirmation.**
-No test has been run yet — this doc will be updated to PASSED only
-after a real MetaEditor compile/test log is reported back.
+First real run: 63/65 (2 test-fixture bugs found and fixed, see
+"Bugs found on the first real test run" below) — no production code
+changed. This doc will be updated to PASSED once a clean re-run is
+reported back.
 
 Implements B7.4 (`RISK_PLAN_CREATED` event emission) and B7.5
 (`RiskPlanProjection` replay/recovery), per
@@ -136,6 +138,38 @@ compile/test failure — no production code needed any change:
    what each test actually means to prove, and additionally exercises
    the full end-to-end `RebuildFromFile` pipeline rather than an
    isolated `ApplyLine` call.
+
+## Bugs found on the first real test run (63/65)
+
+Both are test-fixture bugs; no production code changed.
+
+1. **`Test_MalformedLine_BlocksWholeRebuild`** assumed the registry
+   would be *empty* after a rebuild fails on a truncated line. It
+   isn't necessarily: `RiskPlan_EmitRiskPlanCreated`'s own live-sync
+   (`RiskPlanProjection_ApplyLiveRecord`) already put one record into
+   this SAME global registry the moment it was called earlier in the
+   test, before the rebuild was ever attempted. The actual documented
+   contract (`RiskPlanProjection_RebuildFromFile`'s own header
+   comment) is "left completely untouched" on failure, not "empty" —
+   a stronger, more meaningful invariant than the test originally
+   checked. Fixed by capturing the count before the rebuild and
+   asserting it is unchanged afterward, whatever it was.
+2. **`Test_ReplayFieldsMatchOriginal`** compared `stop_distance_points`,
+   `rr_ratio`, `risk_amount`, and `lot_size` (all derived via
+   division/multiplication) with exact `==` against the raw in-memory
+   `RiskPlan` double. `stop_distance_points` failed: the value carries
+   floating-point noise below `CanonicalDouble`'s 8-decimal persisted
+   precision, so the round trip through the canonical JSON string is
+   correctly lossy at that precision — `plan_hash` matching (which
+   passed) already proves canonical fidelity exactly, since `plan_hash`
+   is itself computed from the same canonical string. An exact `==`
+   against the unrounded double was stricter than the canonical
+   contract promises. Fixed with a `DoubleClose` helper (tolerance
+   `1e-6`, comfortably above the ~5e-9 worst-case 8-decimal rounding
+   bound and far below any real field-mapping bug's magnitude) for the
+   four arithmetic-derived fields; pass-through fields (`planned_entry`/
+   `sl`/`tp`, `risk_percent`) keep exact `==` since they carry no
+   arithmetic noise.
 
 ## Explicitly out of scope for this commit
 

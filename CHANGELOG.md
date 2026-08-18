@@ -54,6 +54,15 @@ structurally and behaviorally, adapted for a `SystemEvent` since a
   before any user compile/test run - no production code changed. See
   "Bugs found and fixed during self-review" in
   `Docs/PhaseB_B7_Commit2_RiskPlanEvent.md`.
+- First real run: 63/65. Two more test-fixture bugs found and fixed
+  (still no production code changed): a malformed-line-rebuild test
+  wrongly assumed the registry would be empty rather than "left
+  completely untouched" (the actual documented contract) after a
+  failed rebuild; a field-fidelity test used exact `==` on
+  arithmetic-derived doubles against their canonically-rounded
+  (8-decimal) round-tripped values, which is stricter than
+  `CanonicalDouble`'s own precision guarantee - fixed with an epsilon
+  comparison. See `Docs/PhaseB_B7_Commit2_RiskPlanEvent.md`.
 
 ## [Unreleased] - Phase B7 Commit 1: RiskContext / RiskPlan / Candidate_ToRiskPlan (PASSED 2026-08-18)
 
