@@ -415,3 +415,184 @@ CRT_V1's own entry/exit decision. B7.4/B7.5 will each get their own
 frozen addendum (or a `B7_V2` revision of this document) when they
 open, mirroring exactly how B5 Commits 3/4/5 each built on one shared
 contract without needing to re-litigate it.
+
+---
+
+# Addendum — B7 Commit 2: `RISK_PLAN_CREATED` event + `RiskPlanProjection` (B7.4 + B7.5)
+
+**Status: FROZEN, before any code exists.** Written the moment B7
+Commit 1 was confirmed PASSED (98/98) and Commit 2 was confirmed to
+proceed. Mirrors B5 Commit 5 (`CRT_EmitCandidateCreated`) for
+emission and B6.1 (`CandidateProjection`) for replay/projection —
+both already sealed, both already hardened through a real adversarial
+QA pass. This addendum does not re-derive those patterns from
+scratch; it maps them onto `RiskPlan`.
+
+## Why `RISK_PLAN_CREATED` is a `SystemEvent`, not a `LifecycleEvent`
+
+`CANDIDATE_CREATED` reuses `LifecycleEvent` because a candidate
+genuinely IS a lifecycle state machine (`from_state`/`to_state`,
+tracked by `StateProjector`). A `RiskPlan` is not a candidate state
+transition — it's a derived artifact tied to one candidate, the same
+relationship `MarketContext` has to the candidate that later
+references it via `context_event_id`. `RISK_PLAN_CREATED` therefore
+follows `MARKET_CONTEXT_READY`'s precedent: a `SystemEvent`
+(`EventStore_LogSystem`), with every `RiskPlan` field flattened into
+`extra_json` as top-level JSON keys (not nested), read back later via
+plain `EventSerializer_GetStr`/`GetDouble`/`GetLong` calls on the raw
+line — exactly how `CandidateDatasetExport` already reads
+`MARKET_CONTEXT_READY` fields, and exactly how `CandidateProjection`
+already reads `CANDIDATE_CREATED`'s `extra_json` fields.
+
+## Event type
+
+`Core/MLQuantAI_Enums.mqh` (additive, Phase A's sealed `ENUM_EVENT_TYPE`
+extended the same way B7 Commit 1 extended `RiskPlan`): a new
+`EVENT_TYPE_RISK_PLAN_CREATED` value appended after the candidate
+lifecycle block, with `EventTypeToString`/`EventTypeFromString` cases
+added — never inserted before an existing value (would silently
+renumber every later enum constant across a running system's
+persisted event history), always appended at the end of its
+logical section.
+
+## `RISK_PLAN_CREATED`'s `extra_json` — every `RiskPlan` field, both groups
+
+The full struct as it exists after B7 Commit 1: `risk_plan_id`,
+`candidate_id`, `candidate_hash`, `risk_context_hash`,
+`planned_entry`/`planned_sl`/`planned_tp`, `stop_distance_points`,
+`rr_ratio`, `risk_percent`, `risk_amount`, `lot_size`, `sizing_method`,
+`sizing_rules_version`, `plan_hash`, `risk_plan_schema_version`. The
+Phase A shadow fields (`lot`, `risk_money`, `decision`, `allowed`,
+`reject_reason`, `risk_schema_version`) are NOT separately persisted —
+they're always recoverable from the B7 fields already in the event
+(`lot == lot_size`, `risk_money == risk_amount`, and a
+`RISK_PLAN_CREATED` event only ever exists for an ALLOWED plan in the
+first place, so `decision`/`allowed`/`reject_reason` are implied, not
+ambiguous). This mirrors B6.1's own precedent: `CandidateProjectionRecord`
+doesn't persist fields nothing durably needs a second copy of.
+
+## Live emission: `RiskPlan_EmitRiskPlanCreated` (B7.4)
+
+```cpp
+bool RiskPlan_EmitRiskPlanCreated(const RiskPlan &p);
+```
+
+Mirrors `CRT_EmitCandidateCreated` exactly:
+
+1. Returns `false` (no write attempted) if `p.risk_plan_id == ""` or
+   `!p.allowed` — a rejected/unfilled plan emits no event, same as a
+   non-detection candidate emits nothing.
+2. Checks `RiskPlanProjection_TryGet(p.risk_plan_id, existing)` — a
+   **live, in-session, coarse guard**: if this `risk_plan_id` already
+   has ANY record (regardless of `plan_hash`), returns `false`,
+   nothing written. This is deliberately the SAME coarseness
+   `CRT_EmitCandidateCreated`'s `StateProjector_TryGetState` guard
+   uses — the finer duplicate-vs-collision distinction (comparing
+   `plan_hash`) is the REPLAY/PROJECTION layer's job
+   (`RiskPlanProjection_ApplyLine`), not emission's, exactly
+   preserving the division of responsibility B6.1 already established
+   for candidates.
+3. Builds `extra_json` via `RiskPlan_ToExtraJson(p)`, appends via
+   `EventStore_LogSystem(EventTypeToString(EVENT_TYPE_RISK_PLAN_CREATED), "risk plan created", extraJson)`.
+4. On a successful durable write, applies the equivalent record
+   directly to `RiskPlanProjection`'s live in-memory registry —
+   the SAME fix B5 Commit 5 needed for `StateProjector` (without it,
+   two same-session emit calls for the same `risk_plan_id`, before any
+   replay, would both see an empty registry and both durably write a
+   duplicate genesis event).
+5. Returns `true`.
+
+No referential-integrity check against `CandidateProjection` happens
+at emission time — same "trust the caller, verify independently on
+replay" split B5/B6.1 already use (emission just durably writes what
+it's given; `RiskPlanProjection_RebuildFromFile`, below, is where
+integrity is independently re-derived from the persisted store).
+
+## Replay/projection: `RiskPlanProjection` (B7.5)
+
+`RiskPlanProjectionRecord`: every `RiskPlan` field above, plus
+`source_sequence_number`/`source_log_event_id` (audit trail — which
+event this record came from, same fields `CandidateProjectionRecord`
+already carries).
+
+`RiskPlanProjection_ApplyLine(line, &outReason) -> bool` — mirrors
+`CandidateProjection_ApplyLine`'s exact validation ladder:
+
+1. Line-length defensive bound.
+2. Type-gate: `EventSerializer_HasKey(line, "type") && GetStr(line, "type") != "RISK_PLAN_CREATED"` →
+   skip as irrelevant (the exact two-part gate B6.1's hardening pass
+   fixed after finding both failure modes for real — a bare `GetStr`
+   check alone misclassifies a line with no `type` key at all as
+   "irrelevant" instead of failing closed).
+3. `EventSerializer_ParseSystem` (requires `HasKey(line, "seq")`) — a
+   line that fails this is "not a parsable event line", rejected.
+4. Required-field presence: `risk_plan_id`, `candidate_id`,
+   `candidate_hash`, `risk_context_hash`, `plan_hash`,
+   `sizing_method`, `sizing_rules_version` all non-empty.
+5. Numerical integrity: `planned_entry`/`planned_sl`/`planned_tp`/
+   `stop_distance_points`/`rr_ratio`/`risk_percent`/`risk_amount`/
+   `lot_size` all `MathIsValidNumber` and non-negative (`rr_ratio`
+   can legitimately be very small but never negative or NaN/Inf);
+   `stop_distance_points > 0`, `lot_size > 0`.
+6. **Referential integrity against `CandidateProjection`** (the new
+   piece this addendum adds, requested explicitly): the referenced
+   `candidate_id` must exist in `CandidateProjection`'s own registry
+   (already rebuilt from the SAME file — see
+   `RiskPlanProjection_RebuildFromFile` below), and its
+   `candidate_hash` must equal the line's own `candidate_hash`.
+   Missing → **orphan candidate**, rejected. Mismatched → **candidate
+   hash mismatch**, rejected. Both fail closed, same as B6.1's own
+   orphan-context/context-hash-mismatch checks.
+7. **Collision-vs-duplicate** (payload-aware, same rule B6.1 already
+   proved out for `candidate_id`/`candidate_hash`): `risk_plan_id`
+   already registered with an IDENTICAL `plan_hash` → duplicate,
+   idempotent no-op, returns `true`. Already registered with a
+   DIFFERENT `plan_hash` → **collision**, rejected, returns `false` —
+   never silently treated as a duplicate, since that would hide a
+   genuine `risk_plan_id` collision or data corruption.
+
+`RiskPlanProjection_RebuildFromFile(fileName) -> RiskPlanProjectionReport`:
+
+1. `EventStoreValidator_ValidateLines` first — any malformed/
+   out-of-order/truncated line anywhere in the WHOLE file (not just
+   `RISK_PLAN_CREATED` lines) refuses the entire rebuild, registry
+   left completely untouched. Same atomicity guarantee B6.1
+   established, applied here too.
+2. `CandidateProjection_RebuildFromFile(fileName)` — rebuilt from the
+   SAME file, as a prerequisite step. If that fails, THIS rebuild also
+   fails closed (a `RiskPlan` registry can't be trusted if the
+   candidate registry it references can't be trusted). This is a
+   deliberate, flagged dependency: `RiskPlanProjection` depends on
+   `CandidateProjection` being rebuilt from the same file immediately
+   before it, the same dependency direction `CandidateDatasetExport`
+   (B6.2) already has on `CandidateProjection`.
+3. Reset `RiskPlanProjection`'s own registry, apply every line via
+   `RiskPlanProjection_ApplyLine`, referential-integrity-checked
+   against the now-current `CandidateProjection` registry.
+
+## QA gate for B7 Commit 2 (binding on its test suite)
+
+- A valid `RiskPlan` emits exactly one `RISK_PLAN_CREATED` event.
+- Re-emitting the identical plan (same `risk_plan_id`, same
+  `plan_hash`) live, same session, is a no-op (no second event
+  written) — the `RiskPlanProjection`-live-sync guard, mirroring B5
+  Commit 5's `StateProjector` fix.
+- On replay: same `risk_plan_id` + same `plan_hash` → duplicate,
+  idempotent no-op. Same `risk_plan_id` + DIFFERENT `plan_hash` →
+  collision, rejected, registry unchanged for that record.
+- A `RISK_PLAN_CREATED` line referencing a `candidate_id` with no
+  matching `CANDIDATE_CREATED` anywhere in the file → orphan,
+  rejected, whole rebuild fails closed.
+- A `RISK_PLAN_CREATED` line whose `candidate_hash` doesn't match the
+  referenced candidate's own `candidate_hash` in the registry →
+  mismatch, rejected, whole rebuild fails closed.
+- A truncated/malformed line anywhere in the file (even one unrelated
+  to any `RiskPlan`) blocks the ENTIRE rebuild — registry left at
+  last-known-good state, never partial.
+- Replaying the same store repeatedly (restart/crash simulation)
+  reconstructs byte-identical `RiskPlanProjectionRecord`s every time.
+- A store with candidates from multiple sessions (multiple
+  `session_id`s) rebuilds correctly, same as B6.1's multi-session
+  test.
+- Every field on a rebuilt `RiskPlanProjectionRecord` matches the
+  original `RiskPlan` that was emitted, exactly — no drift.

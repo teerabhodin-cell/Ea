@@ -4,6 +4,70 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B7 Commit 2: RISK_PLAN_CREATED Event + RiskPlanProjection (PASSED 2026-08-18)
+
+Implements B7.4 (`RISK_PLAN_CREATED` event emission) and B7.5
+(`RiskPlanProjection` replay/recovery), per
+`Docs/PhaseB_B7_RiskPlanContract.md`'s B7 Commit 2 addendum. Mirrors
+`CANDIDATE_CREATED`/`CandidateProjection` (B5 Commit 5 / B6.1)
+structurally and behaviorally, adapted for a `SystemEvent` since a
+`RiskPlan` is a derived artifact tied to a candidate (like
+`MarketContext`), not a candidate lifecycle transition. See
+`Docs/PhaseB_B7_Commit2_RiskPlanEvent.md`.
+
+### Added
+- `Core/MLQuantAI_Enums.mqh` (additive): `EVENT_TYPE_RISK_PLAN_CREATED`
+  appended at the end of `ENUM_EVENT_TYPE` (not inserted mid-enum),
+  with matching `EventTypeToString`/`EventTypeFromString` cases.
+- `Infrastructure/EventStore/MLQuantAI_RiskPlanEventEmission.mqh`
+  (new): `RiskPlan_ToExtraJson` (every B7 `RiskPlan` field flattened as
+  top-level JSON keys via the existing `CanonicalPrice`/
+  `CanonicalDouble`/`CanonicalPercent` helpers), `RiskPlan_EmitRiskPlanCreated`
+  (fail-closed on an unfilled/rejected plan; coarse live-session
+  duplicate guard via `RiskPlanProjection_TryGet`; live-registry sync
+  via `RiskPlanProjection_ApplyLiveRecord` after a successful durable
+  write - the same live-sync fix B5 Commit 5 needed for
+  `StateProjector`).
+- `Infrastructure/EventStore/MLQuantAI_RiskPlanProjection.mqh` (new):
+  `RiskPlanProjectionRecord`, the live in-memory registry,
+  `RiskPlanProjection_ApplyLine` (line-length bound, type gate, parse,
+  required-field/numerical-integrity validation, payload-aware
+  collision-vs-duplicate detection on `risk_plan_id`/`plan_hash`),
+  `RiskPlanProjection_ApplyLineWithCandidates` (orphan-candidate and
+  candidate-hash-mismatch rejection against `CandidateProjection`),
+  `RiskPlanProjection_RebuildFromFile` (`EventStoreValidator`-gated,
+  then `CandidateProjection_RebuildFromFile` on the same file as a
+  referential-integrity prerequisite, then its own rebuild - any stage
+  failing leaves the registry untouched).
+- `Tests/MLQuantAI_Test_B7_Commit2_RiskPlanEvent.mq5` (new): exactly-
+  once emission, live-session duplicate no-op, rejected-plan-emits-
+  nothing, replay duplicate (same `risk_plan_id`+`plan_hash`) no-op,
+  replay collision (same `risk_plan_id`, different `plan_hash`)
+  rejection, replay orphan-candidate rejection, replay candidate-hash-
+  mismatch rejection, malformed-line-blocks-whole-rebuild, restart/
+  crash-simulation record fidelity across repeated rebuilds, multi-
+  session rebuild, and full field-by-field replay fidelity against the
+  original in-memory `RiskPlan` (including `plan_hash` itself).
+
+### Notes
+- Three bugs were found and fixed in the test file during self-review,
+  before any user compile/test run - no production code changed. See
+  "Bugs found and fixed during self-review" in
+  `Docs/PhaseB_B7_Commit2_RiskPlanEvent.md`.
+- First real run: 63/65. Two more test-fixture bugs found and fixed
+  (still no production code changed): a malformed-line-rebuild test
+  wrongly assumed the registry would be empty rather than "left
+  completely untouched" (the actual documented contract) after a
+  failed rebuild; a field-fidelity test used exact `==` on
+  arithmetic-derived doubles against their canonically-rounded
+  (8-decimal) round-tripped values, which is stricter than
+  `CanonicalDouble`'s own precision guarantee - fixed with an epsilon
+  comparison. See `Docs/PhaseB_B7_Commit2_RiskPlanEvent.md`.
+
+### Status
+Confirmed on a real compile/test run:
+`MLQuantAI_Test_B7_Commit2_RiskPlanEvent.mq5` 65/65 ALL PASS.
+
 ## [Unreleased] - Phase B7 Commit 1: RiskContext / RiskPlan / Candidate_ToRiskPlan (PASSED 2026-08-18)
 
 Opens Phase B7 ("deterministic RiskPlan sizing") after B6 closed in
