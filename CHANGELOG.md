@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B7 Commit 2: RISK_PLAN_CREATED Event + RiskPlanProjection (Implemented, awaiting test confirmation)
+## [Unreleased] - Phase B7 Commit 2: RISK_PLAN_CREATED Event + RiskPlanProjection (PASSED 2026-08-18)
 
 Implements B7.4 (`RISK_PLAN_CREATED` event emission) and B7.5
 (`RiskPlanProjection` replay/recovery), per
@@ -63,6 +63,10 @@ structurally and behaviorally, adapted for a `SystemEvent` since a
   (8-decimal) round-tripped values, which is stricter than
   `CanonicalDouble`'s own precision guarantee - fixed with an epsilon
   comparison. See `Docs/PhaseB_B7_Commit2_RiskPlanEvent.md`.
+
+### Status
+Confirmed on a real compile/test run:
+`MLQuantAI_Test_B7_Commit2_RiskPlanEvent.mq5` 65/65 ALL PASS.
 
 ## [Unreleased] - Phase B7 Commit 1: RiskContext / RiskPlan / Candidate_ToRiskPlan (PASSED 2026-08-18)
 

@@ -1,10 +1,10 @@
 # Phase B7 — Commit 2: RISK_PLAN_CREATED Event + RiskPlanProjection
 
-**Status: Implemented, awaiting real compile/test confirmation.**
-First real run: 63/65 (2 test-fixture bugs found and fixed, see
+**Status: PASSED (2026-08-18).** Confirmed on a real compile/test run:
+`MLQuantAI_Test_B7_Commit2_RiskPlanEvent.mq5` 65/65 ALL PASS. First
+real run was 63/65 with 2 test-fixture bugs found and fixed (see
 "Bugs found on the first real test run" below) — no production code
-changed. This doc will be updated to PASSED once a clean re-run is
-reported back.
+needed any change on either run.
 
 Implements B7.4 (`RISK_PLAN_CREATED` event emission) and B7.5
 (`RiskPlanProjection` replay/recovery), per
