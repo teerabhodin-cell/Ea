@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B7 Commit 1: RiskContext / RiskPlan / Candidate_ToRiskPlan (Implemented, awaiting real compile/test confirmation)
+## [Unreleased] - Phase B7 Commit 1: RiskContext / RiskPlan / Candidate_ToRiskPlan (PASSED 2026-08-18)
 
 Opens Phase B7 ("deterministic RiskPlan sizing") after B6 closed in
 full (B6.1 146/146, B6.2 75/75, B6.3 89/89, all PASSED and merged).
@@ -71,10 +71,14 @@ computation. See `Docs/PhaseB_B7_Commit1_RiskPlan.md`.
   the same code path. No production code needed any change.
 
 ### Status
-Implemented and statically checked (brace/paren balance, 63-char
-identifier limit) after the fixture fix above. No real compile/test
-run confirmed yet - do not treat as PASSED until real MetaEditor test
-evidence is provided.
+Confirmed on a real compile/test run: MLQuantAI_Test_B7_Commit1_RiskPlan.mq5
+98/98 ALL PASS. Two clarifications added to the contract doc and code
+comments per QA review: risk_context_hash is a rules/spec snapshot
+hash (not a full sizing-input hash - equal risk_context_hash values
+do not guarantee equal plan_hash, since account.balance/equity
+legitimately move plan_hash without moving risk_context_hash); lot/
+risk_money (Phase A fields) are compatibility shadow fields, not the
+canonical source of truth - risk_amount/lot_size are.
 
 ## [Unreleased] - Phase B B6.3: Hash Contract Spec (PASSED 2026-08-15)
 

@@ -17,6 +17,14 @@
 //| was written against them; new names kept because they match        |
 //| plan_hash's own payload vocabulary). See                           |
 //| Docs/PhaseB_B7_RiskPlanContract.md section 3 for the full contract.|
+//|                                                                    |
+//| IMPORTANT: lot/risk_money are COMPATIBILITY SHADOW FIELDS, not the |
+//| canonical source of truth - risk_amount/lot_size are what          |
+//| Candidate_ToRiskPlan actually computes and what plan_hash actually |
+//| hashes. Any future code should read/write risk_amount/lot_size;    |
+//| lot/risk_money exist only so Phase A's original field names keep   |
+//| resolving correctly if anything ever reads them - never write to   |
+//| lot/risk_money independently of risk_amount/lot_size.              |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_RISKPLAN_MQH__
 #define __MLQUANTAI_RISKPLAN_MQH__

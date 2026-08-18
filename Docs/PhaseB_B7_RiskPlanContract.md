@@ -42,6 +42,20 @@ the trade CRT_V1 already decided on.
 
 ## 1. `RiskContext`: ownership + snapshot contract (B7.1)
 
+**`risk_context_hash` is a rules/spec snapshot hash, NOT a full
+sizing-input hash — stated explicitly per Commit 1's QA review.**
+`account.balance`/`account.equity` genuinely feed the sizing formula
+(step 5 below) and genuinely move `plan_hash` through `risk_amount`/
+`lot_size`, but they do NOT move `risk_context_hash` itself — see the
+EXCLUDED list below. Two `RiskContext` values with the identical
+`risk_context_hash` can legitimately produce different `RiskPlan`
+outputs if their `account.balance` differs. `risk_context_hash`
+answers "is this the same sizing RULE SET" (same symbol constraints,
+same risk percent, same method/version) — it does NOT answer "will
+this produce the same plan." Only `plan_hash` (section 3) answers
+that. Do not read equal `risk_context_hash` values as a promise of
+equal sizing output.
+
 **Ownership rule, stated as a hard boundary:** `RiskContext` is built
 ONCE, by a caller OUTSIDE `Candidate_ToRiskPlan`, from live
 `AccountInfoDouble`/`SymbolInfoDouble` reads — exactly the same
@@ -236,6 +250,18 @@ them; the new names stay because they match `plan_hash`'s own payload
 vocabulary and the B7.3 formula's own working names. A future commit
 that finds a real consumer of one or the other can collapse this once
 it's no longer a guess.
+
+**`risk_money`/`lot` are compatibility shadow fields, not the
+canonical source of truth — stated explicitly per Commit 1's QA
+review.** `risk_amount`/`lot_size` are what `Candidate_ToRiskPlan`
+actually computes and what `plan_hash` actually hashes;
+`risk_money`/`lot` are copies written alongside them purely so Phase
+A's original field names keep resolving to the right value if
+anything ever reads them. Any future code with a choice of which pair
+to read or write should read/write `risk_amount`/`lot_size` — treat
+`risk_money`/`lot` as a legacy alias to be collapsed once a real
+consumer of one or the other exists, never as a second place to
+independently set a value from.
 
 On a **fail-closed** path (B7.3's validation steps below), the
 function still returns `false`/leaves `outPlan` at `RiskPlan_Init()`

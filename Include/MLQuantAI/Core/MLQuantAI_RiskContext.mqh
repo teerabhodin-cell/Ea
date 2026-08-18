@@ -9,6 +9,15 @@
 //| SymbolInfoDouble(), or TimeCurrent() - every value it needs must   |
 //| already be sitting on this struct or on TradeCandidate. See        |
 //| Docs/PhaseB_B7_RiskPlanContract.md section 1.                      |
+//|                                                                    |
+//| IMPORTANT: risk_context_hash is a RULES/SPEC snapshot hash, not a |
+//| full sizing-input hash - it deliberately excludes account.balance/|
+//| equity (same precedent MarketContext_HashPayload already set for  |
+//| its own .account field). Two RiskContext values with the IDENTICAL|
+//| risk_context_hash can legitimately produce DIFFERENT RiskPlan      |
+//| outputs if their account.balance differs. It answers "is this the |
+//| same sizing rule set", never "will this produce the same plan" -   |
+//| only RiskPlan.plan_hash answers that.                              |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_RISKCONTEXT_MQH__
 #define __MLQUANTAI_RISKCONTEXT_MQH__

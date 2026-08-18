@@ -1,9 +1,25 @@
 # Phase B7 — Commit 1: RiskContext / RiskPlan / Candidate_ToRiskPlan
 
-**Status: Implemented, awaiting real compile/test confirmation.**
-Statically checked (brace/paren balance, 63-char identifier limit). No
-real MetaEditor compile/test run exists yet — do not treat as PASSED
-until real evidence is provided.
+**Status: PASSED (2026-08-18).** Confirmed on a real compile/test run:
+`MLQuantAI_Test_B7_Commit1_RiskPlan.mq5` 98/98 ALL PASS. One real test
+bug was found and fixed on the first run (see "Bugs found and fixed"
+below) — no production code needed any change.
+
+Two clarifications added to the contract doc and to the code's own
+header comments per QA review of the 98/98 result, both already true
+of the shipped design and now stated explicitly rather than left
+implicit:
+- `risk_context_hash` is a rules/spec snapshot hash, not a full
+  sizing-input hash — it deliberately excludes `account.balance`/
+  `equity` (same precedent `MarketContext_HashPayload` already set),
+  so two `RiskContext` values with the identical `risk_context_hash`
+  can legitimately produce different `RiskPlan` outputs. It answers
+  "same sizing rule set," never "same plan" — only `plan_hash` answers
+  that.
+- `lot`/`risk_money` (the Phase A fields) are compatibility shadow
+  fields, not the canonical source of truth — `risk_amount`/`lot_size`
+  are what `Candidate_ToRiskPlan` actually computes and `plan_hash`
+  actually hashes.
 
 Implements B7.1 (RiskContext), B7.2 (RiskPlan schema + identity), and
 B7.3 (`Candidate_ToRiskPlan`, the pure sizing function) as one
@@ -97,8 +113,32 @@ computation (`lot == lot_size`, `risk_money == risk_amount`,
   unchanged before/after the call (on top of the `const &` signature's
   own compile-time guarantee).
 
+## Bugs found and fixed during the first real test run
+
+**The fail-closed "invalid number" test halted the whole script**
+on the first real run. It tried to construct a NaN `entry_hint` via
+`0.0/0.0`, assuming MQL5 follows IEEE754 silently the way Python/C
+do. It doesn't: MQL5 traps `0.0/0.0` as a hard "zero divide" runtime
+error and halts the script outright — the log stopped mid-suite at
+that exact line. Fixed by constructing `+Inf` via a real
+multiplication overflow (`1.0e307 * 1.0e307`) instead, which does not
+trap; both NaN and Inf are "not a valid number" as far as
+`RiskSizing_ValidateInput`'s `MathIsValidNumber` check is concerned,
+so the fix still exercises the same code path. No production code
+(`RiskContext.mqh`, `RiskPlan.mqh`, `RiskSizing.mqh`) needed any
+change — this was purely a test-fixture bug, the same class of
+mistake (assuming a language/platform behavior instead of checking
+it) already seen once before in this project (B6.2's `dayOffset`
+collision), just a different flavor of it.
+
 ## Explicitly out of scope for this commit
 
 `RISK_PLAN_CREATED` event emission (B7.4), `RiskPlanProjection`/
 replay/recovery (B7.5), any broker/order/execution call, any AI
-scoring, any change to CRT_V1's own entry/exit decision.
+scoring, any change to CRT_V1's own entry/exit decision. A detailed
+test-first checklist for B7 Commit 2 (event emission + replayable
+projection, mirroring the `CANDIDATE_CREATED`/`CandidateProjection`
+pattern B5/B6.1 already proved out — exactly-once emission,
+duplicate/no-op, collision rejection on same-`risk_plan_id`-different-
+`plan_hash`, orphan-candidate-reference rejection, atomic replay) is
+the natural next step once this commit is confirmed and merged.
