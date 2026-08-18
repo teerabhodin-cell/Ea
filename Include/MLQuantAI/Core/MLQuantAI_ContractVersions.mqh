@@ -39,4 +39,14 @@
 #define MLQUANTAI_RISK_PLAN_SCHEMA_V1      "RISK_PLAN_V1"
 #define MLQUANTAI_RISK_SIZING_RULES_V1     "FIXED_PERCENT_RISK_V1"
 
+// B8.1: the canonical AI feature-vector contract version - distinct
+// from MLQUANTAI_FEATURE_SCHEMA_V1 (Phase B1's dormant, unwired stub
+// default), the same way MLQUANTAI_RISK_PLAN_SCHEMA_V1 is distinct
+// from Phase A's MLQUANTAI_RISK_SCHEMA_V1. FeatureSnapshot_Init()
+// still stamps MLQUANTAI_FEATURE_SCHEMA_V1 (unchanged, keeps
+// Test_PhaseBContracts.mq5's sealed assertion true);
+// Candidate_ToFeatureSnapshot() overwrites it with this constant on a
+// successful build. See Docs/PhaseB_B8_1_FeatureSnapshotContract.md.
+#define MLQUANTAI_FEATURE_SCHEMA_B8_1_V1   "FEATURES_B8_1_V1"
+
 #endif // __MLQUANTAI_CONTRACTVERSIONS_MQH__

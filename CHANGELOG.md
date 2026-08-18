@@ -4,6 +4,73 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B8.1: FeatureSnapshot Identity/Lineage/Hash (PASSED 2026-08-19)
+
+Opens Phase B8 ("AI/ML intelligence layer") after B7 SEALED (203/203,
+full B5/B6/B7 regression suite 474/474, zero regressions). Implements
+`Docs/PhaseB_B8_1_FeatureSnapshotContract.md` (frozen before code, then
+revised once more before code per review - see that doc's revision
+note). See `Docs/PhaseB_B8_1_FeatureSnapshot.md`.
+
+A real naming collision was found and resolved before writing any
+code, the same discipline that caught the B7 `RiskPlan` collision:
+`Market/MLQuantAI_FeatureSnapshot.mqh` already existed from Phase B1 -
+sealed, unwired, fixed named feature fields, no identity/hash/
+candidate-lineage at all. Resolved by extending the existing struct
+additively.
+
+### Added
+- `Core/MLQuantAI_ContractVersions.mqh` (additive):
+  `MLQUANTAI_FEATURE_SCHEMA_B8_1_V1` - distinct from Phase B1's dormant
+  `MLQUANTAI_FEATURE_SCHEMA_V1`, which `FeatureSnapshot_Init()` still
+  stamps unchanged (keeps `Test_PhaseBContracts.mq5`'s sealed
+  assertion true); `Candidate_ToFeatureSnapshot` overwrites it on
+  success.
+- `Core/MLQuantAI_Ids.mqh` (additive): `Ids_FeatureSnapshotId(candidateId)`
+  - single-argument, since B8.1 has no feature-computation methodology
+  choice yet to depend on.
+- `Market/MLQuantAI_FeatureSnapshot.mqh` (additive): 7 new fields
+  (`feature_snapshot_id`, `candidate_id`, `candidate_hash`,
+  `context_hash`, `detector_hash`, `feature_vector_hash`,
+  `feature_snapshot_hash`) alongside the unchanged Phase B1 ones;
+  `FeatureSnapshot_VectorHashPayload`/`_ComputeVectorHash` (pure
+  ML-input content, no lineage) and `FeatureSnapshot_HashPayload`/
+  `_ComputeHash` (full record - identity+lineage+content) - a
+  two-hash split `RiskPlan` never needed, since a feature vector can
+  genuinely be "the same" across two different candidates in a way a
+  `RiskPlan` never is.
+- `Market/MLQuantAI_FeatureSnapshotBuilder.mqh` (new):
+  `Candidate_ToFeatureSnapshot` - the pure candidate-time copy
+  function (fail-closed validation, referential-integrity check
+  against the supplied `MarketContext`, verbatim copy of every feature
+  and lineage field, identity + both hashes computed last).
+- `Tests/MLQuantAI_Test_B8_1_FeatureSnapshot.mq5` (new): determinism
+  (10,000 iterations), `feature_snapshot_id` identity, `feature_vector_hash`
+  inclusion sweep, lineage-only mutation sweep (proves the two-hash
+  split - lineage changes move `feature_snapshot_hash` but never
+  `feature_vector_hash`), verbatim-lineage-copy checks, cross-candidate
+  identity distinctness, referential-integrity rejection, fail-closed
+  validation (empty `candidate_id`, wrong `state`, `+Inf` via real
+  multiplication overflow), input immutability, and structural
+  no-event-store/no-future-field checks.
+
+### Fixed
+- `Tests/MLQuantAI_Test_B8_1_FeatureSnapshot.mq5`: originally included
+  only `MLQuantAI_CRT_V1_Rules.mqh`, which doesn't transitively provide
+  `CRT_ToTradeCandidate` (that lives in the separate
+  `MLQuantAI_CRT_V1_ToTradeCandidate.mqh`). Fixed by including that
+  file directly. Caught during self-review, before any user test run -
+  no production code involved.
+
+### Status
+Confirmed on a real compile/test run:
+`MLQuantAI_Test_B8_1_FeatureSnapshot.mq5` 66/66 ALL PASS. The only
+other obstacles before a clean run were file-placement/sync issues on
+the test machine (stale copies of `MLQuantAI_Ids.mqh` surviving
+multiple individual file replacements) - resolved by sending a full
+zip of `Include/MLQuantAI/` + `Tests/` to extract-and-replace in one
+step. No further production code changes were needed.
+
 ## [Unreleased] - Phase B7 Commit 3: Full-Chain Integration + Regression Proof (PASSED 2026-08-18) - B7 SEALED
 
 Implements the B7 Commit 3 addendum in
