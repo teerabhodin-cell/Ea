@@ -4,6 +4,82 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B7 Commit 1: RiskContext / RiskPlan / Candidate_ToRiskPlan (PASSED 2026-08-18)
+
+Opens Phase B7 ("deterministic RiskPlan sizing") after B6 closed in
+full (B6.1 146/146, B6.2 75/75, B6.3 89/89, all PASSED and merged).
+Implements B7.1 (RiskContext) + B7.2 (RiskPlan schema/identity) + B7.3
+(`Candidate_ToRiskPlan`, pure sizing) together, per
+`Docs/PhaseB_B7_RiskPlanContract.md` (frozen before any code was
+written). B7.4 (event emission) and B7.5 (replay/recovery) are not
+part of this commit.
+
+A real naming collision was found and resolved before writing any
+code: `Core/MLQuantAI_RiskPlan.mqh` already existed from Phase A
+(`decision`/`allowed`/`lot`/`risk_money`/`risk_percent`/
+`reject_reason`), unused but sealed, and `Core/MLQuantAI_RiskDecision.mqh`
+(Phase B1) had already flagged "B7 reconciles how the two relate when
+the Risk Manager is built." Resolved by extending the existing struct
+additively rather than declaring a second, differently-shaped
+`RiskPlan` - every Phase A field kept unchanged, new B7 fields added
+alongside, `Candidate_ToRiskPlan` fills both groups from the same
+computation. See `Docs/PhaseB_B7_Commit1_RiskPlan.md`.
+
+### Added
+- `Core/MLQuantAI_CanonicalFormat.mqh` (new): `CanonicalPrice`/
+  `CanonicalDouble`/`CanonicalPercent` - fixed-literal-precision
+  formatting for every B7 hash payload double, never `Digits()`/
+  `_Digits`.
+- `Core/MLQuantAI_ContractVersions.mqh` (additive):
+  `MLQUANTAI_RISK_CONTEXT_SCHEMA_V1`, `MLQUANTAI_RISK_PLAN_SCHEMA_V1`,
+  `MLQUANTAI_RISK_SIZING_RULES_V1`.
+- `Core/MLQuantAI_Ids.mqh` (additive): `Ids_RiskPlanId(candidateId,
+  sizingRulesVersion)`.
+- `Core/MLQuantAI_RiskContext.mqh` (new): `RiskContext` struct
+  (embeds `AccountSnapshot`/`SymbolSpec` verbatim, snapshot-only),
+  `RiskContext_Init`, `RiskContext_HashPayload`/`_ComputeHash`.
+- `Core/MLQuantAI_RiskPlan.mqh` (additive): 12 new fields alongside
+  the unchanged Phase A ones, `RiskPlan_HashPayload`/`_ComputeHash`.
+- `Core/MLQuantAI_RiskSizing.mqh` (new): `Candidate_ToRiskPlan` - the
+  frozen fixed-fractional-risk sizing formula (stop distance via
+  `tick_size`, risk amount from `balance * target_risk_percent`, raw
+  lot via `tick_value`, floor to `volume_step`, reject below
+  `volume_min`, clamp above `volume_max`).
+- `Tests/MLQuantAI_Test_B7_Commit1_RiskPlan.mq5` (new): sizing formula
+  exact-number correctness, `risk_plan_id`/`plan_hash`
+  identity-vs-content independence, `risk_context_hash`/`plan_hash`
+  inclusion/exclusion mutation sweeps, fail-closed validation
+  (non-finite price via real +Inf multiplication overflow -
+  0.0/0.0 traps as a hard runtime error in MQL5, unlike Python/C -
+  fixed after the first real test run caught it, zero/negative
+  prices, wrong-side SL/TP
+  ordering, non-positive symbol/account fields), volume normalization
+  edge cases (below-min rejects, above-max clamps), a 10,000-iteration
+  determinism loop, and input-immutability checks.
+
+### Fixed
+- `Tests/MLQuantAI_Test_B7_Commit1_RiskPlan.mq5`: the fail-closed
+  "invalid number" test tried to construct a NaN entry_hint via
+  `0.0/0.0`, assuming MQL5 follows IEEE754 silently the way Python/C
+  do. It doesn't - MQL5 traps `0.0/0.0` as a hard "zero divide"
+  runtime error and halts the script, caught on the first real
+  compile/test run (the log stopped mid-suite at that exact line).
+  Fixed by constructing `+Inf` via a real multiplication overflow
+  (`1.0e307 * 1.0e307`) instead, which does not trap - both are
+  "not a valid number" as far as `RiskSizing_ValidateInput`'s
+  `MathIsValidNumber` check is concerned, so the fix still exercises
+  the same code path. No production code needed any change.
+
+### Status
+Confirmed on a real compile/test run: MLQuantAI_Test_B7_Commit1_RiskPlan.mq5
+98/98 ALL PASS. Two clarifications added to the contract doc and code
+comments per QA review: risk_context_hash is a rules/spec snapshot
+hash (not a full sizing-input hash - equal risk_context_hash values
+do not guarantee equal plan_hash, since account.balance/equity
+legitimately move plan_hash without moving risk_context_hash); lot/
+risk_money (Phase A fields) are compatibility shadow fields, not the
+canonical source of truth - risk_amount/lot_size are.
+
 ## [Unreleased] - Phase B B6.3: Hash Contract Spec (PASSED 2026-08-15)
 
 Scoped down from the original B6.3 proposal after a gap review with the

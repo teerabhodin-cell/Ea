@@ -101,6 +101,19 @@ string Ids_CorrelationId(string candidateId, int submitAttempt=1)
    return Ids_Deterministic("CORR", key);
 }
 
+// risk_plan_id (Phase B7): one candidate's risk plan under one sizing
+// rules version. Same candidate_id + same sizing_rules_version -> same
+// risk_plan_id, always - deliberately independent of risk_context_hash,
+// balance/equity, or any computed sizing output, so a later replay/audit
+// pass can detect "same identity, different content" as a genuine drift
+// signal instead of a normal identity change. See
+// Docs/PhaseB_B7_RiskPlanContract.md section 3.
+string Ids_RiskPlanId(string candidateId, string sizingRulesVersion)
+{
+   string key = candidateId + "|" + sizingRulesVersion;
+   return Ids_Deterministic("RPLAN", key);
+}
+
 int g_Ids_SessionCounter = 0;
 
 // runtime_session_id: identifies one EA run. Deliberately NOT deterministic
