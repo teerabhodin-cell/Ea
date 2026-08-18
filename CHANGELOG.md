@@ -4,6 +4,54 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B8.2 Commit 1: Training Dataset Row/Manifest Contract (Implemented, awaiting test confirmation)
+
+Opens Phase B8.2 ("training dataset contract") after B8.1 PASSED
+(66/66) and merged. Implements
+`Docs/PhaseB_B8_2_TrainingDatasetContract.md` (frozen before code).
+Scoped to schema/identity/hash/split/pure-builder only - no event
+store export orchestration, no real label/outcome computation. See
+`Docs/PhaseB_B8_2_Commit1_TrainingDataset.md`.
+
+A collision check (same discipline that caught B7's `RiskPlan` and
+B8.1's `FeatureSnapshot`) confirmed `CandidateDatasetRow`/
+`CandidateDatasetManifest` (B6.2, sealed) are a different concept - no
+collision, separately named. `MLQUANTAI_LABEL_SCHEMA_VERSION =
+"TBM_V1"` (a dormant Phase A placeholder) is not reused - mints
+`MLQUANTAI_LABEL_SCHEMA_B8_2_V1` instead, same precedent B8.1 set for
+`MLQUANTAI_FEATURE_SCHEMA_V1`.
+
+### Added
+- `Core/MLQuantAI_ContractVersions.mqh` (additive):
+  `MLQUANTAI_DATASET_SCHEMA_B8_2_V1`, `MLQUANTAI_LABEL_SCHEMA_B8_2_V1`,
+  `MLQUANTAI_DATASET_SPLIT_POLICY_V1`.
+- `Core/MLQuantAI_Ids.mqh` (additive):
+  `Ids_TrainingDatasetRowId(featureSnapshotId, labelSchemaVersion, modelTarget)`.
+- `AI/MLQuantAI_TrainingDatasetRow.mqh` (new, first file in the
+  pre-existing empty `AI/` folder): `TrainingDatasetRow`/
+  `TrainingDatasetManifest` structs, `ENUM_DATASET_SPLIT`,
+  `TrainingDatasetRow_HashPayload`/`_ComputeHash` (a full-record hash -
+  lineage + label/outcome + split + target), `TrainingDatasetManifest_DatasetHash`
+  (same style B6.2's `CandidateDatasetExport_DatasetHash` already
+  established), `TrainingDatasetSplit_Assign` (deterministic,
+  hash-derived, keyed on `candidate_id` so the same setup always lands
+  in the same split even if re-labeled later under a different
+  schema/target).
+- `AI/MLQuantAI_TrainingDatasetBuilder.mqh` (new):
+  `BuildTrainingDatasetRow` - fail-closed validation, referential-
+  integrity checks against the supplied `FeatureSnapshot`/`RiskPlan`
+  (an unallowed `RiskPlan` rejected outright - no training row without
+  one), verbatim lineage copy, identity + split + hash computed last.
+- `Tests/MLQuantAI_Test_B8_2_Commit1_TrainingDataset.mq5` (new):
+  determinism (10,000 iterations), `dataset_row_id` dependency checks,
+  `row_hash` inclusion/exclusion sweeps, referential integrity,
+  fail-closed validation (including both directions of an inconsistent
+  `labelAvailable`/label-fields combination), `label_available == false`
+  as a valid first-class row, split determinism + a 2,000-sample
+  statistical distribution sanity check, `dataset_hash`
+  stability/reordering/tamper checks, input immutability, and
+  structural no-event-store/no-label-leakage checks.
+
 ## [Unreleased] - Phase B8.1: FeatureSnapshot Identity/Lineage/Hash (PASSED 2026-08-19)
 
 Opens Phase B8 ("AI/ML intelligence layer") after B7 SEALED (203/203,

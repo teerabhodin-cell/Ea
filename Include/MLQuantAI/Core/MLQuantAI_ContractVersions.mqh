@@ -49,4 +49,14 @@
 // successful build. See Docs/PhaseB_B8_1_FeatureSnapshotContract.md.
 #define MLQUANTAI_FEATURE_SCHEMA_B8_1_V1   "FEATURES_B8_1_V1"
 
+// B8.2: the training-dataset row/manifest contract, its label-schema
+// version, and its split policy - all distinct from any Phase A
+// placeholder (MLQUANTAI_LABEL_SCHEMA_VERSION = "TBM_V1" in
+// VersionRegistry.mqh is never wired to a real struct; B8.2 mints its
+// own rather than reuse it, same precedent MLQUANTAI_FEATURE_SCHEMA_B8_1_V1
+// already set). See Docs/PhaseB_B8_2_TrainingDatasetContract.md.
+#define MLQUANTAI_DATASET_SCHEMA_B8_2_V1   "TRAINING_DATASET_B8_2_V1"
+#define MLQUANTAI_LABEL_SCHEMA_B8_2_V1     "LABEL_B8_2_V1"
+#define MLQUANTAI_DATASET_SPLIT_POLICY_V1  "SPLIT_70_15_15_V1"
+
 #endif // __MLQUANTAI_CONTRACTVERSIONS_MQH__

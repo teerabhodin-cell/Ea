@@ -126,6 +126,20 @@ string Ids_FeatureSnapshotId(string candidateId)
    return Ids_Deterministic("FSNAP", candidateId);
 }
 
+// dataset_row_id (Phase B8.2): one training-dataset row. Depends on
+// feature_snapshot_id (not candidate_id directly - a FeatureSnapshot
+// already has 1:1 identity with its candidate, this keeps the
+// dependency chain explicit) plus label_schema_version and
+// model_target - the same underlying setup can legitimately produce
+// more than one training row if labeled under a different schema
+// version or targeting a different model_target later. See
+// Docs/PhaseB_B8_2_TrainingDatasetContract.md section 2.
+string Ids_TrainingDatasetRowId(string featureSnapshotId, string labelSchemaVersion, string modelTarget)
+{
+   string key = featureSnapshotId + "|" + labelSchemaVersion + "|" + modelTarget;
+   return Ids_Deterministic("TDROW", key);
+}
+
 int g_Ids_SessionCounter = 0;
 
 // runtime_session_id: identifies one EA run. Deliberately NOT deterministic
