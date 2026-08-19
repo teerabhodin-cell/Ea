@@ -19,7 +19,30 @@ Commit 1 98/98, Commit 2 65/65, Commit 3 40/40 plus the full B5/B6/B7
 manual regression checklist re-run clean, zero regressions. See
 `Docs/PhaseB_B7_RiskPlanContract.md` (now marked SEALED) and
 `Docs/PhaseB_B7_Commit3_IntegrationRegression.md` for the full
-evidence. B8.1 (`FeatureSnapshot`) is open next.
+evidence.
+
+**Update (2026-08-19): B8.1 and B8.2 are now SEALED.** B8.1
+(`FeatureSnapshot` identity/lineage/hash) PASSED 66/66 and merged. B8.2
+(Training Dataset + Outcome Boundary, Commits 1–4) PASSED in full —
+Commit 1 76/76, Commit 2 105/105, Commit 3 109/109, Commit 4 104/104,
+total **394/394** — with the full manual regression checklist re-run
+clean and zero regressions in the same MetaEditor session as Commit
+4's own suite. See `Docs/PhaseB_B8_1_FeatureSnapshot.md` and
+`Docs/PhaseB_B8_2_Commit4_Seal.md` for the full evidence. Current
+status:
+
+```
+B5    Candidate Provenance                 SEALED
+B6    Candidate Projection / Lineage       SEALED
+B7    Deterministic RiskPlan               SEALED
+B8.1  Immutable FeatureSnapshot            SEALED
+B8.2  Training Dataset + Outcome Boundary  SEALED (394/394)
+B8.3  Model Registry + Artifact Contract   NEXT
+```
+
+B8.3 is open next, registry/compatibility-contract only — no ONNX
+loading, no inference, no scoring. See the B8.3 direction note at the
+bottom of this doc.
 
 ## The phase table
 
@@ -119,16 +142,108 @@ itself (matching how the Commit 2 addendum was appended there) once
 Commit 2 was merged to `mlquantai`, then confirmed PASSED (40/40) and
 merged in turn.
 
-## B8.1 (open next)
+## B8.1 (SEALED — 66/66)
 
 `FeatureSnapshot` — the immutable, candidate-time input contract for
-B8, first deliverable of the intelligence layer now that B7 Commit 3's
-regression proof and B7 SEALED are both real. Full field-level
-contract to be frozen in its own doc before any B8 code, per this
-project's standing "freeze before code" discipline — not written yet.
-One open question flagged for that freezing pass: `feature_vector_hash`
-should very likely exclude `snapshot_time` from its payload, mirroring
-the precedent `risk_context_hash` already set by excluding
-`account.balance`/`equity` — a wall-clock/bar-time field moving
-shouldn't move a content-integrity hash. To be settled when B8.1 is
-actually frozen, not before.
+B8. Extended the pre-existing, dormant Phase B1 `FeatureSnapshot`
+struct additively with identity/lineage/hash fields
+(`feature_snapshot_id`, `candidate_id`, `candidate_hash`,
+`context_hash`, `detector_hash`, `feature_vector_hash`,
+`feature_snapshot_hash`) rather than reusing Phase A's dormant
+`MLQUANTAI_FEATURE_SCHEMA_V1` constant. See
+`Docs/PhaseB_B8_1_FeatureSnapshotContract.md` (SEALED) and
+`Docs/PhaseB_B8_1_FeatureSnapshot.md` for the full evidence.
+
+## B8.2 (SEALED — 394/394)
+
+Training Dataset Row/Manifest contract, deterministic persisted-artifact
+export, and the Outcome/Label boundary — four commits:
+
+- **Commit 1** (76/76): `TrainingDatasetRow`/`TrainingDatasetManifest`
+  schema, identity, content hash, deterministic split policy, and the
+  pure `BuildTrainingDatasetRow` builder. No event store involvement.
+- **Commit 2** (105/105): resolved a real gap found before writing any
+  code — `FeatureSnapshotProjection` never existed, so B8.1's
+  `FeatureSnapshot` had no persistence layer at all. Added
+  `FEATURE_SNAPSHOT_CREATED` emission + `FeatureSnapshotProjection`
+  (Part 0, mirroring `RiskPlan`'s own B7 Commit 2 pattern), then built
+  `TrainingDatasetExport_BuildDataset` — deterministic, read-only
+  export from persisted artifacts only, fail-closed on any corruption
+  or mixed-schema cohort (Part 1).
+- **Commit 3** (109/109): `RealizedOutcome` — the only sanctioned
+  source of a training row's label. Identity independent of outcome
+  content (same philosophy as `Ids_RiskPlanId`), a strict temporal
+  boundary (`outcome_time` must be after the candidate's own
+  `setup_anchor_bar_time`), reuses the dormant Phase A
+  `EVENT_TYPE_TRADE_OUTCOME_LABELED` slot. Proved both structurally
+  and empirically that a `RealizedOutcome` can never move a
+  candidate-time feature hash.
+- **Commit 4** (104/104): zero new production behavior — proved the
+  full B8.2 chain (context through exported row) composes correctly
+  end to end, and proved 4 critical gates compositionally across a
+  multi-candidate cohort: outcome-never-touches-AI-input,
+  incomplete-vs-corrupt are genuinely different outcomes, a collision
+  at any single layer blocks the whole export, and export atomicity
+  (valid store -> full output, corrupted store -> zero output +
+  `Init()` manifest). Also proved `LABELED_ONLY` as a pure client-side
+  filter over already-shipped fields, adding no new production filter
+  function.
+
+See `Docs/PhaseB_B8_2_Commit4_Seal.md` for the full evidence and the
+final 394/394 tally. **No further change to any B8.2 production file
+is permitted** — anything B8.3+ needs goes through its own new
+contract/version there, never a retroactive edit to a sealed B8.2 file.
+
+## B8.3 (open next)
+
+Model Registry / Artifact Contract — **registry/compatibility contract
+only**. No ONNX loading, no inference, no scoring, no threshold, no
+BUY/SELL/execution decision of any kind in this commit; all of that is
+later layers' job:
+
+```
+B7    -> RiskPlan
+B8.3  -> Artifact compatibility (this commit)
+B8.4  -> Inference
+B8.5  -> AI Decision
+B9    -> Execution Eligibility
+C     -> Broker Execution
+```
+
+```
+TrainingDataset (B8.2, sealed)
+    dataset_id / dataset_hash / feature_schema_version / model_target
+            |
+            v
+      Model Artifact
+            |
+            v
+      Model Registry
+            |
+            v
+   Compatibility validation
+       COMPATIBLE -> B8.4
+       else       -> FAIL-CLOSED (no silent fallback)
+```
+
+Minimum fields to freeze, per the confirmed direction:
+
+- **Model identity** (separate from dataset identity): `model_id`,
+  `model_version`, `artifact_hash`.
+- **Training lineage**: `training_dataset_id`, `training_dataset_hash`,
+  `feature_schema_version`, `model_target`.
+- **Runtime/compatibility**: `input_schema_version`,
+  `output_schema_version`, `runtime_framework`, `runtime_version`,
+  `promotion_state`.
+
+Hard rule to freeze verbatim into the B8.3 contract: *A model artifact
+whose declared feature schema, model target, input/output schema,
+runtime, or training-dataset lineage is incompatible with the
+requested inference contract MUST be rejected fail-closed. The system
+MUST NOT silently select, downgrade to, or fall back to another model
+artifact.*
+
+Same collision-check discipline as every prior commit (B7/B8.1/B8.2's
+own gap) applies before writing anything: check the codebase for any
+dormant Phase A model/registry scaffolding first, resolve any
+collision found, then freeze the contract doc before any code.
