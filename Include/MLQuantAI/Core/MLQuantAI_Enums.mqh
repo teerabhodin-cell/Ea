@@ -164,7 +164,12 @@ enum ENUM_EVENT_TYPE
    // EVENT_TYPE_RISK_PLAN_CREATED above - a FeatureSnapshot is a
    // derived artifact tied to a candidate (SystemEvent), not a
    // candidate lifecycle transition.
-   EVENT_TYPE_FEATURE_SNAPSHOT_CREATED
+   EVENT_TYPE_FEATURE_SNAPSHOT_CREATED,
+
+   // Phase B8.3: same append-at-end rule. A ModelArtifact is a
+   // SystemEvent tied to a registered model, not a candidate lifecycle
+   // transition or even candidate-tied at all.
+   EVENT_TYPE_MODEL_ARTIFACT_REGISTERED
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -196,6 +201,7 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_TRADE_OUTCOME_LABELED:               return "TRADE_OUTCOME_LABELED";
       case EVENT_TYPE_RISK_PLAN_CREATED:                  return "RISK_PLAN_CREATED";
       case EVENT_TYPE_FEATURE_SNAPSHOT_CREATED:           return "FEATURE_SNAPSHOT_CREATED";
+      case EVENT_TYPE_MODEL_ARTIFACT_REGISTERED:          return "MODEL_ARTIFACT_REGISTERED";
    }
    return "UNKNOWN";
 }
@@ -227,6 +233,7 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "TRADE_OUTCOME_LABELED")             return EVENT_TYPE_TRADE_OUTCOME_LABELED;
    if(s == "RISK_PLAN_CREATED")                 return EVENT_TYPE_RISK_PLAN_CREATED;
    if(s == "FEATURE_SNAPSHOT_CREATED")          return EVENT_TYPE_FEATURE_SNAPSHOT_CREATED;
+   if(s == "MODEL_ARTIFACT_REGISTERED")         return EVENT_TYPE_MODEL_ARTIFACT_REGISTERED;
    return EVENT_TYPE_UNKNOWN;
 }
 

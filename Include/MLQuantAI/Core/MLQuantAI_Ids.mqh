@@ -165,6 +165,19 @@ string Ids_RealizedOutcomeId(string candidateId, string labelSchemaVersion)
    return Ids_Deterministic("OUT", key);
 }
 
+// model_registry_id (Phase B8.3): one declared model artifact.
+// Depends only on model_id + model_version - deliberately independent
+// of the artifact's own computed content (model_artifact_hash,
+// training lineage, schema/runtime fields, promotion_state), the same
+// identity philosophy Ids_RiskPlanId/Ids_FeatureSnapshotId/
+// Ids_RealizedOutcomeId already established. See
+// Docs/PhaseB_B8_3_ModelRegistryContract.md's "Identity" section.
+string Ids_ModelRegistryId(string modelId, string modelVersion)
+{
+   string key = modelId + "|" + modelVersion;
+   return Ids_Deterministic("MREG", key);
+}
+
 int g_Ids_SessionCounter = 0;
 
 // runtime_session_id: identifies one EA run. Deliberately NOT deterministic

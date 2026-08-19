@@ -69,4 +69,11 @@
 // already play for their own structs.
 #define MLQUANTAI_REALIZED_OUTCOME_SCHEMA_B8_2_V1 "REALIZED_OUTCOME_B8_2_V1"
 
+// B8.3: ModelArtifact's own record-shape stamp. Unlike every prior
+// schema-version constant, this one is DELIBERATELY included in its
+// own struct's content hash (model_registry_hash) rather than
+// excluded - see Docs/PhaseB_B8_3_ModelRegistryContract.md's "two
+// hashes" section for the reasoning.
+#define MLQUANTAI_MODEL_REGISTRY_SCHEMA_B8_3_V1 "MODEL_REGISTRY_B8_3_V1"
+
 #endif // __MLQUANTAI_CONTRACTVERSIONS_MQH__
