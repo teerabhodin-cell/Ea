@@ -4,13 +4,19 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B8.2 Commit 4: Full-Chain Integration + Regression Proof (Implemented) - B8.2 SEAL
+## [Unreleased] - Phase B8.2 Commit 4: Full-Chain Integration + Regression Proof (PASSED 2026-08-19) - B8.2 SEALED
 
-Opens after B8.2 Commit 3 PASSED (109/109) and merged. Pre-seal total:
-76 + 105 + 109 = 290/290. Implements
+Opens after B8.2 Commit 3 PASSED (109/109) and merged. Implements
 `Docs/PhaseB_B8_2_Commit4_SealRegression.md` (frozen before code). See
-`Docs/PhaseB_B8_2_Commit4_Seal.md`. Not yet compiled/run by the user -
-status is Implemented, not PASSED; B8.2 is not yet declared SEALED.
+`Docs/PhaseB_B8_2_Commit4_Seal.md`. Confirmed on a real compile/test
+run: `MLQuantAI_Test_B8_2_Commit4_SealRegression.mq5` 104/104 ALL PASS,
+plus the full manual regression checklist (Commit 1: 76/76, Commit 2:
+105/105, Commit 3: 109/109) re-run clean in the same session, zero
+regressions.
+
+**B8.2 Training Dataset + Outcome Boundary is now SEALED. Total:
+76 + 105 + 109 + 104 = 394/394.** No further change to any B8.2
+production file is permitted going forward.
 
 Adds zero new production behavior - purely a test-suite commit proving
 the already-shipped B8.2 pieces (Commits 1-3) compose correctly end to

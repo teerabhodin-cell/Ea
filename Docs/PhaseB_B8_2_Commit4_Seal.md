@@ -1,14 +1,30 @@
 # Phase B8.2 — Commit 4: Full-Chain Integration + Regression Proof — B8.2 SEAL
 
-**Status: Implemented, awaiting real compile/test confirmation.**
-`Tests/MLQuantAI_Test_B8_2_Commit4_SealRegression.mq5` written (8 test
-functions), balance/identifier-length checked, and self-reviewed
-line-by-line against the real struct/function shapes it calls and
-against the proven techniques already used successfully in Commits
-2/3. Not yet compiled/run by the user — do not treat as PASSED, do not
-declare B8.2 SEALED, and do not merge until a real MetaEditor log
-confirms it (plus the manual regression re-run of Commits 1–3's own
-suites in the same session).
+**Status: PASSED (2026-08-19). B8.2 SEALED.** Confirmed on a real
+compile/test run: `MLQuantAI_Test_B8_2_Commit4_SealRegression.mq5`
+104/104 ALL PASS, plus the full manual regression checklist re-run
+clean in the same MetaEditor session: `MLQuantAI_Test_B8_2_Commit1_TrainingDataset.mq5`
+76/76, `MLQuantAI_Test_B8_2_Commit2_Export.mq5` 105/105,
+`MLQuantAI_Test_B8_2_Commit3_OutcomeLabel.mq5` 109/109 — all ALL PASS,
+zero regressions.
+
+```
+B8.2 Training Dataset + Outcome Boundary
+Status: SEALED
+
+Commit 1:  76/76 PASS
+Commit 2: 105/105 PASS
+Commit 3: 109/109 PASS
+Commit 4: 104/104 PASS
+
+B8.2 Total: 394/394
+```
+
+B8.2 (Commits 1 through 4) is now sealed in full. No further change to
+any B8.2 production file is permitted — any new requirement B8.3+
+needs goes through a new contract/version there, never a retroactive
+edit here. B8.3 (Model Registry / Artifact Contract) is open next, per
+`Docs/PhaseB_Architecture_Baseline.md`.
 
 Implements `Docs/PhaseB_B8_2_Commit4_SealRegression.md`. Opens after
 B8.2 Commit 3 PASSED (109/109) and merged. Pre-seal total: 76 + 105 +
