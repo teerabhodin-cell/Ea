@@ -34,8 +34,10 @@ both the test file and every `Include/MLQuantAI` production file
 confirms no other use of `vector`/`matrix`/`vectorf`/`matrixf` as a
 code identifier anywhere (only harmless mentions inside comments).
 
-Still not compiled clean by the user — do not treat as PASSED or merge
-until a fresh real MetaEditor log confirms it.
+**Update: PASSED.** The user's second real MetaEditor compile/run
+confirmed `MLQuantAI_Test_B8_4_InferenceTierA.mq5` at **111/111 ALL
+PASS** (18 test functions, 111 individual `Check()` assertions). Merged
+to `mlquantai`.
 
 Implements `Docs/PhaseB_B8_4_InferenceContract.md`. Opens after B8.3
 PASSED (106/106). **Tier A only** — no ONNX session, no model file

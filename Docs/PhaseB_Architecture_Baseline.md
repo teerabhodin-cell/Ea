@@ -34,7 +34,20 @@ clean and zero regressions in the same MetaEditor session as Commit
 Registry / Compatibility Contract — 106/106 ALL PASS, merged to
 `mlquantai`. Registry/compatibility only, as scoped: no ONNX loading,
 no inference, no scoring. See `Docs/PhaseB_B8_3_ModelRegistry.md` for
-the full evidence. Current status:
+the full evidence.
+
+**Update (2026-08-19, same day): B8.4 Commit 1 (Tier A) is now
+PASSED.** Inference Contract, runtime-independent half — 111/111 ALL
+PASS on a real MetaEditor run, merged to `mlquantai`. The first real
+compile attempt failed with 121 errors (a `vector`-reserved-word
+identifier collision in the test file only); root-caused, fixed,
+re-verified, and confirmed clean on the user's second real compile.
+See `Docs/PhaseB_B8_4_InferenceTierA.md` for the full evidence
+including that fix. Tier A only: pinned `InferenceRequest` ->
+`ModelArtifact` compatibility + `FeatureSnapshot` lineage -> canonical
+12-value input vector -> typed output validation -> `InferenceResult`.
+No ONNX session, no model file I/O, no real runtime call anywhere in
+this commit. Current status:
 
 ```
 B5    Candidate Provenance                 SEALED
@@ -43,11 +56,13 @@ B7    Deterministic RiskPlan               SEALED
 B8.1  Immutable FeatureSnapshot            SEALED
 B8.2  Training Dataset + Outcome Boundary  SEALED (394/394)
 B8.3  Model Registry + Artifact Contract   PASSED (106/106)
-B8.4  Inference Contract                   NEXT
+B8.4  Commit 1 - Inference Contract, Tier A  PASSED (111/111)
+      Commit 2 - Artifact Integrity + Runtime Adapter (Tier B)  NEXT
 ```
 
-B8.4 is open next. See the B8.3 direction note at the bottom of this
-doc for the pipeline B8.4 attaches to.
+B8.4 Commit 2 (Tier B: real ONNX runtime adapter) is proposed next but
+not yet frozen. See the B8.3 direction note at the bottom of this doc
+for the pipeline B8.4 attaches to.
 
 ## The phase table
 
@@ -210,11 +225,30 @@ no threshold, no BUY/SELL/execution decision of any kind. See
 ```
 B7    -> RiskPlan
 B8.3  -> Artifact compatibility (SEALED - see above)
-B8.4  -> Inference (open next)
+B8.4  -> Inference
+          Commit 1 - Tier A (PASSED - see above)
+          Commit 2 - Tier B, runtime adapter (proposed, not frozen)
 B8.5  -> AI Decision
 B9    -> Execution Eligibility
 C     -> Broker Execution
 ```
+
+## B8.4 Commit 1 (PASSED — 111/111, see the update above)
+
+Inference Contract, Tier A (runtime-independent) — pinned
+`InferenceRequest` (no "latest," no fallback) -> `ModelArtifact`
+compatibility via the sealed `ModelRegistry_FindCompatible` ->
+referential check against the supplied `FeatureSnapshot` -> canonical
+12-value `float[]` input vector (B8.1's own sealed field order,
+reused not reinvented) -> typed output validation (exactly one frozen
+schema, `OUTPUT_P_SUCCESS_V1`) -> `InferenceResult` (`output_hash`
+depends only on `output_schema_version` + values, never
+lineage/time/path). Two pure orchestration halves,
+`ModelInference_ResolveAndPrepare` / `ModelInference_ValidateAndBuildResult`,
+since no real runtime call happens in Tier A. See
+`Docs/PhaseB_B8_4_InferenceContract.md` (frozen contract) and
+`Docs/PhaseB_B8_4_InferenceTierA.md` (implementation + evidence,
+including the real compile-failure-and-fix) for the full record.
 
 ```
 TrainingDataset (B8.2, sealed)

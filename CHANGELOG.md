@@ -4,13 +4,14 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B8.4 Commit 1: Inference Contract, Tier A (Fixed after real compile failure)
+## [Unreleased] - Phase B8.4 Commit 1: Inference Contract, Tier A (PASSED 2026-08-19)
 
 Opens after B8.3 PASSED (106/106). Implements
 `Docs/PhaseB_B8_4_InferenceContract.md` (frozen before code). See
 `Docs/PhaseB_B8_4_InferenceTierA.md`. The user's first real compile
-failed (121 errors, see Fixed section below); status is now Fixed,
-awaiting a fresh compile/test confirmation - not PASSED.
+failed (121 errors, see Fixed section below); after the fix, confirmed
+on a real MetaEditor run: `MLQuantAI_Test_B8_4_InferenceTierA.mq5`
+111/111 ALL PASS. Merged to `mlquantai`.
 
 Tier A only - no ONNX session, no model file I/O, no real runtime
 call. Collision check clean; `AIResult` confirmed decision-level
