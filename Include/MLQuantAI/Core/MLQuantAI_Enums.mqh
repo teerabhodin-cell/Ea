@@ -117,6 +117,15 @@ string AiDecisionOutcomeToString(ENUM_AI_DECISION_OUTCOME o)
    return "UNKNOWN";
 }
 
+ENUM_AI_DECISION_OUTCOME AiDecisionOutcomeFromString(string s)
+{
+   if(s == "NONE")    return AI_DECISION_OUTCOME_NONE;
+   if(s == "ALLOW")   return AI_DECISION_OUTCOME_ALLOW;
+   if(s == "REJECT")  return AI_DECISION_OUTCOME_REJECT;
+   if(s == "ABSTAIN") return AI_DECISION_OUTCOME_ABSTAIN;
+   return AI_DECISION_OUTCOME_NONE;
+}
+
 // The Global Risk Manager's final verdict on a candidate.
 enum ENUM_RISK_DECISION
 {
@@ -195,7 +204,15 @@ enum ENUM_EVENT_TYPE
    // Phase B8.3: same append-at-end rule. A ModelArtifact is a
    // SystemEvent tied to a registered model, not a candidate lifecycle
    // transition or even candidate-tied at all.
-   EVENT_TYPE_MODEL_ARTIFACT_REGISTERED
+   EVENT_TYPE_MODEL_ARTIFACT_REGISTERED,
+
+   // Phase B8.5 Commit 2: same append-at-end rule. An AIDecision is a
+   // SystemEvent tied to a candidate (via the FeatureSnapshot it was
+   // built from) - a derived artifact, not a candidate lifecycle
+   // transition. Deliberately NOT the same thing as the dormant,
+   // Phase-A EVENT_TYPE_CANDIDATE_REJECTED_BY_AI candidate-state value
+   // above - that is a state-machine transition B8.5 does not drive.
+   EVENT_TYPE_AI_DECISION_CREATED
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -228,6 +245,7 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_RISK_PLAN_CREATED:                  return "RISK_PLAN_CREATED";
       case EVENT_TYPE_FEATURE_SNAPSHOT_CREATED:           return "FEATURE_SNAPSHOT_CREATED";
       case EVENT_TYPE_MODEL_ARTIFACT_REGISTERED:          return "MODEL_ARTIFACT_REGISTERED";
+      case EVENT_TYPE_AI_DECISION_CREATED:                return "AI_DECISION_CREATED";
    }
    return "UNKNOWN";
 }
@@ -260,6 +278,7 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "RISK_PLAN_CREATED")                 return EVENT_TYPE_RISK_PLAN_CREATED;
    if(s == "FEATURE_SNAPSHOT_CREATED")          return EVENT_TYPE_FEATURE_SNAPSHOT_CREATED;
    if(s == "MODEL_ARTIFACT_REGISTERED")         return EVENT_TYPE_MODEL_ARTIFACT_REGISTERED;
+   if(s == "AI_DECISION_CREATED")               return EVENT_TYPE_AI_DECISION_CREATED;
    return EVENT_TYPE_UNKNOWN;
 }
 
