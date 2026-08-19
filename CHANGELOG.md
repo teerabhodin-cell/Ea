@@ -4,12 +4,13 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B8.4 Commit 1: Inference Contract, Tier A (Implemented)
+## [Unreleased] - Phase B8.4 Commit 1: Inference Contract, Tier A (Fixed after real compile failure)
 
 Opens after B8.3 PASSED (106/106). Implements
 `Docs/PhaseB_B8_4_InferenceContract.md` (frozen before code). See
-`Docs/PhaseB_B8_4_InferenceTierA.md`. Not yet compiled/run by the user
-- status is Implemented, not PASSED.
+`Docs/PhaseB_B8_4_InferenceTierA.md`. The user's first real compile
+failed (121 errors, see Fixed section below); status is now Fixed,
+awaiting a fresh compile/test confirmation - not PASSED.
 
 Tier A only - no ONNX session, no model file I/O, no real runtime
 call. Collision check clean; `AIResult` confirmed decision-level
@@ -50,6 +51,25 @@ order rather than reinventing one.
   the 6 field comparisons - that case would always have surfaced
   `MODEL_NOT_PROMOTED` instead. Fixed by registering a separate,
   genuinely `PROMOTED` artifact for that specific test.
+
+### Fixed (caught by the user's real MetaEditor compile - NOT by self-review)
+- `vector` is a reserved/built-in MQL5 type (native matrix/vector
+  math; the compiler's own error suggestions listed built-in
+  `vector`/`matrix` overloads). `Tests/MLQuantAI_Test_B8_4_InferenceTierA.mq5`
+  used the bare identifier `vector` as an ordinary local variable name
+  in six test functions, causing a cascading 121-error compile
+  failure. Production `.mqh` files were unaffected - they already used
+  `outVector`/`canonicalVector`, never bare `vector`. Fixed by
+  renaming every bare `vector` local in the test file to
+  `canonicalVec` (word-boundary-safe rename; the distinctly named
+  `vector2` fixture was correctly left untouched), then restoring the
+  original wording in the string-literal test labels the mechanical
+  rename had also altered. Re-verified: balance/identifier-length
+  check clean, full re-read confirms no argument-order regressions and
+  the STAGING-vs-PROMOTED isolation fix above is still intact, and a
+  repo-wide grep confirms no other `vector`/`matrix`/`vectorf`/`matrixf`
+  identifier collisions anywhere in `Include/MLQuantAI` or the test
+  file (only harmless mentions inside comments).
 
 ## [Unreleased] - Phase B8.3: Model Registry / Artifact Contract (PASSED 2026-08-19)
 

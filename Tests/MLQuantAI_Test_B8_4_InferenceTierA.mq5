@@ -122,13 +122,13 @@ void Test_ResolveAndPrepare_AcceptPath()
    Check(BuildValidRequestForSnapshot(snapshot, MODEL_ID_TEST, MODEL_VERSION_TEST, MLQUANTAI_OUTPUT_SCHEMA_P_SUCCESS_V1, request),
          "sanity: request built");
 
-   ModelArtifact resolvedArtifact; float vector[];
+   ModelArtifact resolvedArtifact; float canonicalVec[];
    ENUM_INFERENCE_FAIL_REASON reasonCode; string reasonDetail;
-   Check(ModelInference_ResolveAndPrepare(request, snapshot, resolvedArtifact, vector, reasonCode, reasonDetail),
+   Check(ModelInference_ResolveAndPrepare(request, snapshot, resolvedArtifact, canonicalVec, reasonCode, reasonDetail),
          "compatible request + matching snapshot resolves and prepares successfully");
    Check(reasonCode == INFERENCE_FAIL_NONE, "reasonCode is NONE on success");
    Check(resolvedArtifact.model_registry_id == artifact.model_registry_id, "resolved artifact is the right one");
-   Check(ArraySize(vector) == MLQUANTAI_INFERENCE_INPUT_LENGTH_B8_1_V1, "canonical vector has exactly 12 elements");
+   Check(ArraySize(canonicalVec) == MLQUANTAI_INFERENCE_INPUT_LENGTH_B8_1_V1, "canonical vector has exactly 12 elements");
 }
 
 void Test_ResolveAndPrepare_RegistryRejections()
@@ -197,12 +197,12 @@ void Test_ResolveAndPrepare_SnapshotMismatch()
    Check(BuildValidRequestForSnapshot(snapshotA, MODEL_ID_TEST, MODEL_VERSION_TEST, MLQUANTAI_OUTPUT_SCHEMA_P_SUCCESS_V1, request),
          "sanity: request pinned to snapshot A");
 
-   ModelArtifact resolvedArtifact; float vector[];
+   ModelArtifact resolvedArtifact; float canonicalVec[];
    ENUM_INFERENCE_FAIL_REASON reasonCode; string reasonDetail;
-   Check(!ModelInference_ResolveAndPrepare(request, snapshotB, resolvedArtifact, vector, reasonCode, reasonDetail),
+   Check(!ModelInference_ResolveAndPrepare(request, snapshotB, resolvedArtifact, canonicalVec, reasonCode, reasonDetail),
          "supplying snapshot B against a request pinned to snapshot A is rejected");
    Check(reasonCode == INPUT_SCHEMA_MISMATCH, "reasonCode is INPUT_SCHEMA_MISMATCH");
-   Check(ArraySize(vector) == 0, "no partial vector output on rejection");
+   Check(ArraySize(canonicalVec) == 0, "no partial vector output on rejection");
 }
 
 //=====================================================================
@@ -213,22 +213,22 @@ void Test_CanonicalVector_FieldOrder()
    Print("--- canonical vector: exact field order matches B8.1's own sealed FeatureSnapshot_VectorHashPayload order ---");
    FeatureSnapshot snapshot; BuildValidSnapshot(snapshot, "ORDER");
 
-   float vector[]; ENUM_INFERENCE_FAIL_REASON reasonCode; string reasonDetail;
-   Check(CanonicalFeatureVector_FromSnapshot(snapshot, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, vector, reasonCode, reasonDetail),
+   float canonicalVec[]; ENUM_INFERENCE_FAIL_REASON reasonCode; string reasonDetail;
+   Check(CanonicalFeatureVector_FromSnapshot(snapshot, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, canonicalVec, reasonCode, reasonDetail),
          "sanity: conversion succeeds");
-   Check(ArraySize(vector) == 12, "sanity: 12 elements");
-   Check(MathAbs(vector[0]  - (float)snapshot.atr_m15) < 0.0001f, "index 0 == atr_m15");
-   Check(MathAbs(vector[1]  - (float)snapshot.adx_m15) < 0.0001f, "index 1 == adx_m15");
-   Check(MathAbs(vector[2]  - (float)snapshot.ema_slope_m15) < 0.0001f, "index 2 == ema_slope_m15");
-   Check(MathAbs(vector[3]  - (float)snapshot.pdh) < 0.0001f, "index 3 == pdh");
-   Check(MathAbs(vector[4]  - (float)snapshot.pdl) < 0.0001f, "index 4 == pdl");
-   Check(MathAbs(vector[5]  - (float)snapshot.asian_range_high) < 0.0001f, "index 5 == asian_range_high");
-   Check(MathAbs(vector[6]  - (float)snapshot.asian_range_low) < 0.0001f, "index 6 == asian_range_low");
-   Check(MathAbs(vector[7]  - (float)snapshot.spread_points_at_anchor) < 0.0001f, "index 7 == spread_points_at_anchor");
-   Check(vector[8]  == (float)(double)snapshot.news_count, "index 8 == news_count");
-   Check(vector[9]  == (float)(double)snapshot.max_news_impact, "index 9 == max_news_impact");
-   Check(vector[10] == (float)(double)snapshot.nearest_news_minutes, "index 10 == nearest_news_minutes");
-   Check(vector[11] == 0.0f, "index 11 == is_kill_zone (false -> 0.0)");
+   Check(ArraySize(canonicalVec) == 12, "sanity: 12 elements");
+   Check(MathAbs(canonicalVec[0]  - (float)snapshot.atr_m15) < 0.0001f, "index 0 == atr_m15");
+   Check(MathAbs(canonicalVec[1]  - (float)snapshot.adx_m15) < 0.0001f, "index 1 == adx_m15");
+   Check(MathAbs(canonicalVec[2]  - (float)snapshot.ema_slope_m15) < 0.0001f, "index 2 == ema_slope_m15");
+   Check(MathAbs(canonicalVec[3]  - (float)snapshot.pdh) < 0.0001f, "index 3 == pdh");
+   Check(MathAbs(canonicalVec[4]  - (float)snapshot.pdl) < 0.0001f, "index 4 == pdl");
+   Check(MathAbs(canonicalVec[5]  - (float)snapshot.asian_range_high) < 0.0001f, "index 5 == asian_range_high");
+   Check(MathAbs(canonicalVec[6]  - (float)snapshot.asian_range_low) < 0.0001f, "index 6 == asian_range_low");
+   Check(MathAbs(canonicalVec[7]  - (float)snapshot.spread_points_at_anchor) < 0.0001f, "index 7 == spread_points_at_anchor");
+   Check(canonicalVec[8]  == (float)(double)snapshot.news_count, "index 8 == news_count");
+   Check(canonicalVec[9]  == (float)(double)snapshot.max_news_impact, "index 9 == max_news_impact");
+   Check(canonicalVec[10] == (float)(double)snapshot.nearest_news_minutes, "index 10 == nearest_news_minutes");
+   Check(canonicalVec[11] == 0.0f, "index 11 == is_kill_zone (false -> 0.0)");
 
    snapshot.is_kill_zone = true;
    snapshot.feature_vector_hash = FeatureSnapshot_ComputeVectorHash(snapshot);
@@ -243,16 +243,16 @@ void Test_CanonicalVector_WrongSchemaRejected()
 {
    Print("--- canonical vector: any schema other than FEATURES_B8_1_V1 is rejected, both directions ---");
    FeatureSnapshot snapshot; BuildValidSnapshot(snapshot, "SCHEMA");
-   float vector[]; ENUM_INFERENCE_FAIL_REASON reasonCode; string reasonDetail;
+   float canonicalVec[]; ENUM_INFERENCE_FAIL_REASON reasonCode; string reasonDetail;
 
-   Check(!CanonicalFeatureVector_FromSnapshot(snapshot, "FEATURES_V2_HYPOTHETICAL", vector, reasonCode, reasonDetail),
+   Check(!CanonicalFeatureVector_FromSnapshot(snapshot, "FEATURES_V2_HYPOTHETICAL", canonicalVec, reasonCode, reasonDetail),
          "a requested schema other than FEATURES_B8_1_V1 is rejected");
    Check(reasonCode == INPUT_SCHEMA_MISMATCH, "reasonCode is INPUT_SCHEMA_MISMATCH");
-   Check(ArraySize(vector) == 0, "no partial vector output on rejection");
+   Check(ArraySize(canonicalVec) == 0, "no partial vector output on rejection");
 
    FeatureSnapshot mismatchedSnapshot = snapshot;
    mismatchedSnapshot.feature_schema_version = "FEATURES_V2_HYPOTHETICAL";
-   Check(!CanonicalFeatureVector_FromSnapshot(mismatchedSnapshot, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, vector, reasonCode, reasonDetail),
+   Check(!CanonicalFeatureVector_FromSnapshot(mismatchedSnapshot, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, canonicalVec, reasonCode, reasonDetail),
          "a snapshot whose OWN feature_schema_version disagrees with the requested one is rejected");
    Check(reasonCode == INPUT_SCHEMA_MISMATCH, "reasonCode is INPUT_SCHEMA_MISMATCH");
 }
@@ -264,27 +264,27 @@ void Test_CanonicalVector_NonFiniteRejected()
    double infinity = huge * huge;
 
    FeatureSnapshot base; BuildValidSnapshot(base, "NONFINITE");
-   float vector[]; ENUM_INFERENCE_FAIL_REASON reasonCode; string reasonDetail;
+   float canonicalVec[]; ENUM_INFERENCE_FAIL_REASON reasonCode; string reasonDetail;
 
    FeatureSnapshot s;
    s = base; s.atr_m15 = infinity;
-   Check(!CanonicalFeatureVector_FromSnapshot(s, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, vector, reasonCode, reasonDetail), "+Inf atr_m15 is rejected");
+   Check(!CanonicalFeatureVector_FromSnapshot(s, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, canonicalVec, reasonCode, reasonDetail), "+Inf atr_m15 is rejected");
    Check(reasonCode == INPUT_NONFINITE, "reasonCode is INPUT_NONFINITE");
 
    s = base; s.adx_m15 = infinity;
-   Check(!CanonicalFeatureVector_FromSnapshot(s, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, vector, reasonCode, reasonDetail), "+Inf adx_m15 is rejected");
+   Check(!CanonicalFeatureVector_FromSnapshot(s, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, canonicalVec, reasonCode, reasonDetail), "+Inf adx_m15 is rejected");
    s = base; s.ema_slope_m15 = infinity;
-   Check(!CanonicalFeatureVector_FromSnapshot(s, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, vector, reasonCode, reasonDetail), "+Inf ema_slope_m15 is rejected");
+   Check(!CanonicalFeatureVector_FromSnapshot(s, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, canonicalVec, reasonCode, reasonDetail), "+Inf ema_slope_m15 is rejected");
    s = base; s.pdh = infinity;
-   Check(!CanonicalFeatureVector_FromSnapshot(s, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, vector, reasonCode, reasonDetail), "+Inf pdh is rejected");
+   Check(!CanonicalFeatureVector_FromSnapshot(s, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, canonicalVec, reasonCode, reasonDetail), "+Inf pdh is rejected");
    s = base; s.pdl = infinity;
-   Check(!CanonicalFeatureVector_FromSnapshot(s, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, vector, reasonCode, reasonDetail), "+Inf pdl is rejected");
+   Check(!CanonicalFeatureVector_FromSnapshot(s, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, canonicalVec, reasonCode, reasonDetail), "+Inf pdl is rejected");
    s = base; s.asian_range_high = infinity;
-   Check(!CanonicalFeatureVector_FromSnapshot(s, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, vector, reasonCode, reasonDetail), "+Inf asian_range_high is rejected");
+   Check(!CanonicalFeatureVector_FromSnapshot(s, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, canonicalVec, reasonCode, reasonDetail), "+Inf asian_range_high is rejected");
    s = base; s.asian_range_low = infinity;
-   Check(!CanonicalFeatureVector_FromSnapshot(s, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, vector, reasonCode, reasonDetail), "+Inf asian_range_low is rejected");
+   Check(!CanonicalFeatureVector_FromSnapshot(s, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, canonicalVec, reasonCode, reasonDetail), "+Inf asian_range_low is rejected");
    s = base; s.spread_points_at_anchor = infinity;
-   Check(!CanonicalFeatureVector_FromSnapshot(s, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, vector, reasonCode, reasonDetail), "+Inf spread_points_at_anchor is rejected");
+   Check(!CanonicalFeatureVector_FromSnapshot(s, MLQUANTAI_FEATURE_SCHEMA_B8_1_V1, canonicalVec, reasonCode, reasonDetail), "+Inf spread_points_at_anchor is rejected");
 }
 
 void Test_CanonicalVector_Deterministic()
@@ -487,9 +487,9 @@ void Test_NoMutation()
    string snapshotHashBefore = snapshot.feature_snapshot_hash;
    string artifactHashBefore = artifact.model_registry_hash;
 
-   ModelArtifact resolvedArtifact; float vector[];
+   ModelArtifact resolvedArtifact; float canonicalVec[];
    ENUM_INFERENCE_FAIL_REASON rc; string rd;
-   Check(ModelInference_ResolveAndPrepare(request, snapshot, resolvedArtifact, vector, rc, rd), "sanity: resolve succeeds");
+   Check(ModelInference_ResolveAndPrepare(request, snapshot, resolvedArtifact, canonicalVec, rc, rd), "sanity: resolve succeeds");
 
    Check(request.feature_snapshot_hash == requestHashBefore, "request unchanged after ResolveAndPrepare");
    Check(snapshot.feature_snapshot_hash == snapshotHashBefore, "snapshot unchanged after ResolveAndPrepare");

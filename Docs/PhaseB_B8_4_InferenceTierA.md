@@ -1,6 +1,7 @@
 # Phase B8.4 — Commit 1: Inference Contract, Tier A (Runtime-Independent)
 
-**Status: Implemented, awaiting real compile/test confirmation.**
+**Status: Fixed after a real compile failure, awaiting a fresh
+compile/test confirmation.**
 `Tests/MLQuantAI_Test_B8_4_InferenceTierA.mq5` written (18 test
 functions), balance/identifier-length checked, and self-reviewed
 line-by-line against the real struct/function shapes it calls. One
@@ -11,9 +12,30 @@ registry-rejection test's "incompatible" case originally reused a
 the 6 field comparisons, so that case would always have surfaced
 `MODEL_NOT_PROMOTED`, never reaching the `model_target` check it was
 meant to isolate. Fixed by registering a separate, genuinely
-`PROMOTED` artifact for that specific test. Not yet compiled/run by
-the user — do not treat as PASSED or merge until a real MetaEditor log
-confirms it.
+`PROMOTED` artifact for that specific test.
+
+The user's first real MetaEditor compile of this commit **failed with
+121 errors** — not caught by self-review. Root cause, diagnosed from
+the real compiler log: `vector` is a reserved/built-in MQL5 type (used
+for native matrix/vector math; the compiler's own error suggestions
+listed built-in `vector`/`matrix` overloads), and the test file used
+the bare identifier `vector` as an ordinary local variable name in six
+test functions. The production `.mqh` files were unaffected — they
+already used `outVector`/`canonicalVector`, never bare `vector`. Fixed
+by renaming every bare `vector` local in the test file to
+`canonicalVec` (word-boundary-safe rename, confirmed the distinctly
+named `vector2` fixture was left untouched), then restoring the
+original human-readable wording in the handful of string-literal test
+labels the mechanical rename had also altered. Re-verified after the
+fix: balance/identifier-length check re-run clean; full line-by-line
+re-read confirms no argument-order/count regressions and the earlier
+STAGING-vs-PROMOTED isolation fix is still intact; a fresh grep across
+both the test file and every `Include/MLQuantAI` production file
+confirms no other use of `vector`/`matrix`/`vectorf`/`matrixf` as a
+code identifier anywhere (only harmless mentions inside comments).
+
+Still not compiled clean by the user — do not treat as PASSED or merge
+until a fresh real MetaEditor log confirms it.
 
 Implements `Docs/PhaseB_B8_4_InferenceContract.md`. Opens after B8.3
 PASSED (106/106). **Tier A only** — no ONNX session, no model file
