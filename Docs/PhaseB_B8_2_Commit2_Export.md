@@ -1,12 +1,11 @@
 # Phase B8.2 — Commit 2: FeatureSnapshot Persistence + Deterministic Training Dataset Export
 
-**Status: Implemented, awaiting real compile/test confirmation.**
-`Tests/MLQuantAI_Test_B8_2_Commit2_Export.mq5` written (19 test
-functions covering both parts below), balance/identifier-length
-checked, and self-reviewed line-by-line against the real struct
-shapes and function signatures it calls. Not yet compiled/run by the
-user — do not treat as PASSED or merge until a real MetaEditor log
-confirms it.
+**Status: PASSED (2026-08-19).** Confirmed on a real compile/test run:
+`MLQuantAI_Test_B8_2_Commit2_Export.mq5` 105/105 ALL PASS (19 test
+functions, both Part 0 and Part 1). B8.2 Commit 1's own suite was
+re-confirmed on the same run at 76/76 ALL PASS, unaffected. No
+production code needed any change after the self-review pass already
+described below.
 
 Implements `Docs/PhaseB_B8_2_Commit2_ExportContract.md`. Opens after
 B8.2 Commit 1 PASSED (76/76) and merged.

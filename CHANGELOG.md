@@ -4,12 +4,13 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B8.2 Commit 2: FeatureSnapshot Persistence + Deterministic Training Dataset Export (Implemented)
+## [Unreleased] - Phase B8.2 Commit 2: FeatureSnapshot Persistence + Deterministic Training Dataset Export (PASSED 2026-08-19)
 
 Opens after B8.2 Commit 1 PASSED (76/76) and merged. Implements
 `Docs/PhaseB_B8_2_Commit2_ExportContract.md` (frozen before code). See
-`Docs/PhaseB_B8_2_Commit2_Export.md`. Not yet compiled/run by the user -
-status is Implemented, not PASSED.
+`Docs/PhaseB_B8_2_Commit2_Export.md`. Confirmed on a real compile/test
+run: `MLQuantAI_Test_B8_2_Commit2_Export.mq5` 105/105 ALL PASS
+(Commit 1's own suite re-confirmed 76/76 on the same run, unaffected).
 
 Expanded from the original proposal after a collision check found the
 proposed export pipeline assumed a `FeatureSnapshotProjection` that
