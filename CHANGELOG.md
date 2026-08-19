@@ -4,6 +4,54 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B8.3: Model Registry / Artifact Contract (Implemented)
+
+Opens after B8.2 SEALED (394/394). Implements
+`Docs/PhaseB_B8_3_ModelRegistryContract.md` (frozen before code). See
+`Docs/PhaseB_B8_3_ModelRegistry.md`. Not yet compiled/run by the user -
+status is Implemented, not PASSED.
+
+Registry/compatibility contract only - no ONNX loading, no inference,
+no scoring. Collision check clean; explicitly supersedes
+`Docs/PhaseB8_B9_Roadmap_Notes.md`'s informal proposal to place
+artifact identity/lineage fields directly on `AIDecision` - those now
+live on this independent `ModelArtifact` registry.
+
+### Added
+- `Core/MLQuantAI_ContractVersions.mqh` (additive):
+  `MLQUANTAI_MODEL_REGISTRY_SCHEMA_B8_3_V1`.
+- `Core/MLQuantAI_Ids.mqh` (additive): `Ids_ModelRegistryId(modelId, modelVersion)`.
+- `Core/MLQuantAI_Enums.mqh` (additive): `EVENT_TYPE_MODEL_ARTIFACT_REGISTERED`.
+- `AI/MLQuantAI_ModelArtifact.mqh` (new): `ModelArtifact` struct with
+  two distinct hashes (`model_artifact_hash` = external binary
+  evidence, `model_registry_hash` = internal full-record integrity,
+  deliberately including its own schema version in the payload - a
+  confirmed departure from the RiskPlan/TrainingDatasetRow precedent),
+  `ENUM_MODEL_PROMOTION_STATE`.
+- `AI/MLQuantAI_ModelArtifactBuilder.mqh` (new): `ModelArtifact_Build`
+  (all fields mandatory, fail-closed) and
+  `ModelArtifact_CheckCompatibility` (exact-match-only, fail-closed,
+  no search/fallback/substitution).
+- `Infrastructure/EventStore/MLQuantAI_ModelArtifactEventEmission.mqh`
+  (new): mirrors `RealizedOutcome_EmitTradeOutcomeLabeled`.
+- `Infrastructure/EventStore/MLQuantAI_ModelArtifactProjection.mqh`
+  (new): registry with no `CandidateProjection` prerequisite (a
+  `ModelArtifact` isn't tied to any candidate) - documented as a
+  deliberate scope boundary.
+- `Infrastructure/EventStore/MLQuantAI_ModelRegistryCompatibility.mqh`
+  (new): `ModelRegistry_FindCompatible` - registry-lookup wrapper,
+  looks up exactly one named `model_id`+`model_version`.
+- `Tests/MLQuantAI_Test_B8_3_ModelRegistry.mq5` (new, 18 test
+  functions).
+
+### Fixed (caught during self-review, before any test run)
+- `MLQuantAI_ModelArtifactProjection.mqh` was missing an explicit
+  `#include` for `MLQuantAI_EventStoreValidator.mqh` -
+  `EventStoreValidator_ValidateLines`/`EventStoreValidationReport`
+  would have been undeclared identifiers. Every prior projection got
+  this transitively via `CandidateProjection.mqh`'s own include, which
+  this file deliberately does not depend on.
+
 ## [Unreleased] - Phase B8.2 Commit 4: Full-Chain Integration + Regression Proof (PASSED 2026-08-19) - B8.2 SEALED
 
 Opens after B8.2 Commit 3 PASSED (109/109) and merged. Implements
