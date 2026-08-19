@@ -97,7 +97,11 @@ void Test_AcceptPath_Allow_AboveThreshold()
    Check(ok, "build succeeds when p_success (0.80) is above threshold (0.70)");
    Check(decision.decision_outcome == AI_DECISION_OUTCOME_ALLOW, "decision_outcome is ALLOW");
    Check(decision.decision_reason_code == REASON_NONE, "decision_reason_code is REASON_NONE");
-   Check(decision.p_success == 0.80, "p_success copied verbatim");
+   // inference.output_values[0] is a float (0.80f) widened to double for
+   // p_success - not bit-identical to the double literal 0.80, hence the
+   // epsilon (matches the epsilon comparisons B8.4's own tests already
+   // use for the same float-widened-to-double reason).
+   Check(MathAbs(decision.p_success - 0.80) < 0.0001, "p_success copied verbatim (within float->double widening epsilon)");
    Check(decision.candidate_id == snapshot.candidate_id, "candidate_id copied verbatim from snapshot");
    Check(decision.candidate_hash == snapshot.candidate_hash, "candidate_hash copied verbatim from snapshot");
    Check(decision.feature_snapshot_id == inference.feature_snapshot_id, "feature_snapshot_id copied verbatim from inference");
@@ -118,9 +122,16 @@ void Test_AcceptPath_Allow_AtThresholdBoundary()
 {
    Print("--- accept path: p_success exactly equal to threshold -> ALLOW (inclusive) ---");
    FeatureSnapshot snapshot; BuildValidSnapshot(snapshot, "BOUNDARY");
+   // p_success comes from a float (matches InferenceResult.output_values'
+   // real float[] type); allow_threshold is a double. A float 0.70f widened
+   // to double is NOT bit-identical to the independent double literal 0.70
+   // (IEEE 754 float->double widening), so a genuine >= boundary test needs
+   // allow_threshold seeded from the SAME float value, not a fresh literal
+   // that merely looks like the same decimal number.
+   double boundaryValue = (double)0.70f;
    InferenceResult inference;
    BuildValidInferenceResult(snapshot, "MREG_test_v1", "hash_mreg_1", "hash_artifact_1", 0.70f, inference);
-   AIDecisionPolicy policy; BuildValidPolicy(policy, "POLICY_V1", "THRESH_V1", 0.70);
+   AIDecisionPolicy policy; BuildValidPolicy(policy, "POLICY_V1", "THRESH_V1", boundaryValue);
 
    AIDecision decision; string reasonDetail;
    bool ok = AIDecision_Build(inference, snapshot, policy, decision, reasonDetail);

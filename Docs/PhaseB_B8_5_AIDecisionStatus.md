@@ -1,6 +1,7 @@
 # Phase B8.5 — Commit 1: AIDecision + Threshold-Policy Pure Mapping
 
-**Status: Implemented, awaiting real compile/test confirmation.**
+**Status: Implemented, fix applied after a real failed run, awaiting
+re-confirmation.**
 Implements `Docs/PhaseB_B8_5_AIDecisionContract.md` (frozen before
 code). Opens after B8.4 SEALED (210/210 automated + manual
 terminal-restart checklist PASSED). Pure mapping only - no
@@ -73,5 +74,50 @@ broker/account/tick call, no mutation of any input.
 - **No side effects (structural)**: no `EventStore_Log*`/ONNX/broker/
   account/tick call anywhere in `AIDecision_Build`.
 
-Not yet compiled/run by the user - do not treat as PASSED or merge
-until a real MetaEditor log confirms it.
+## Real run 1 - 69/72, 3 failures (caught by the user's real MetaEditor
+run, NOT by self-review)
+
+Compiled with zero errors on the first real attempt. The real test run
+reported 69/72 checks passed, with these 3 `[FAIL]` lines:
+
+```
+[FAIL] p_success copied verbatim
+[FAIL] p_success == allow_threshold is ALLOW, not REJECT (inclusive >=)
+[FAIL] decision_reason_code is REASON_NONE at the boundary
+```
+
+**Root cause: a bug in the TEST FILE, not in `AIDecision_Build`.**
+`InferenceResult.output_values` is deliberately `float[]` (matches
+ONNX's native float32 tensors, established since B8.4).
+`AIDecision.p_success`/`AIDecisionPolicy.allow_threshold` are `double`
+(matches the frozen B8.5 field list). A `float` literal such as
+`0.80f`, when widened to `double`, is not bit-identical to an
+independently-typed `double` literal `0.80` that merely looks like the
+same decimal number - classic IEEE 754 widening precision mismatch.
+This broke two things:
+
+1. `Test_AcceptPath_Allow_AboveThreshold`'s exact-equality check
+   `decision.p_success == 0.80` - fixed to an epsilon comparison
+   (`MathAbs(decision.p_success - 0.80) < 0.0001`), matching the
+   epsilon-comparison precedent already used in B8.4's own tests for
+   the same float-widened-to-double reason.
+2. `Test_AcceptPath_Allow_AtThresholdBoundary`'s entire premise: the
+   tested `p_success` (from `0.70f` widened) and `policy.allow_threshold`
+   (from an independent `double` literal `0.70`) were not bit-identical,
+   so the real `>=` comparison inside `AIDecision_Build` genuinely
+   evaluated the boundary case as REJECT instead of the intended
+   inclusive-ALLOW - which is exactly why the reason-code assertion
+   failed too. `AIDecision_Build`'s logic is correct; the test's
+   boundary setup was not actually at the boundary. Fixed by deriving
+   `allow_threshold` from the same originating float value
+   (`double boundaryValue = (double)0.70f;`) instead of a fresh double
+   literal, so the `>=` comparison the test claims to exercise is
+   genuinely bit-exact at the boundary.
+
+Both fixes applied to `Tests/MLQuantAI_Test_B8_5_AIDecision.mq5`.
+`AIDecision_Build`/`AIDecision_Init`/`AIDecision_HashPayload`/
+`AIDecision_ComputeHash` (all production code) were not touched - the
+defect was confined to the test file's fixture setup and assertions.
+
+Not yet re-confirmed - do not treat as PASSED or merge until a fresh
+real MetaEditor log shows a clean run.

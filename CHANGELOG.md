@@ -4,12 +4,16 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B8.5 Commit 1: AIDecision + Threshold-Policy Pure Mapping (Implemented)
+## [Unreleased] - Phase B8.5 Commit 1: AIDecision + Threshold-Policy Pure Mapping (Implemented, fix applied after real run)
 
 Opens after B8.4 SEALED (210/210 automated + manual restart checklist
 PASSED). Implements `Docs/PhaseB_B8_5_AIDecisionContract.md` (frozen
-before code). See `Docs/PhaseB_B8_5_AIDecisionStatus.md`. Not yet
-compiled/run by the user - status is Implemented, not PASSED.
+before code). See `Docs/PhaseB_B8_5_AIDecisionStatus.md`. Real
+MetaEditor run 1: compiled clean, 69/72 checks passed, 3 real
+failures - root-caused to a float-to-double widening precision bug in
+the TEST FILE (not in `AIDecision_Build`), fixed. Not yet re-confirmed
+- status remains Implemented, not PASSED, until a fresh clean run
+lands.
 
 Pure mapping only: no `AI_DECISION_CREATED`, no event store, no
 ONNX/runtime call, no broker/account/tick call, no mutation of any
@@ -33,6 +37,25 @@ input.
   `InferenceResult` and `FeatureSnapshot` as inputs (the former alone
   carries no `candidate_id`/`candidate_hash`).
 - `Tests/MLQuantAI_Test_B8_5_AIDecision.mq5` (new, 13 test functions).
+
+### Fixed (caught by the user's real MetaEditor run - NOT by self-review)
+- `Tests/MLQuantAI_Test_B8_5_AIDecision.mq5`: real run 1 was 69/72
+  (3 fails). Root cause: `InferenceResult.output_values` is `float[]`;
+  `AIDecision.p_success`/`AIDecisionPolicy.allow_threshold` are
+  `double` - a `float` literal widened to `double` is not bit-identical
+  to an independently-typed `double` literal that merely looks like the
+  same decimal number (IEEE 754 widening). Fixed
+  `Test_AcceptPath_Allow_AboveThreshold`'s exact-equality check to an
+  epsilon comparison, and fixed
+  `Test_AcceptPath_Allow_AtThresholdBoundary` to derive
+  `allow_threshold` from the same originating float value
+  (`(double)0.70f`) instead of an independent double literal, so the
+  boundary test genuinely exercises `AIDecision_Build`'s inclusive
+  `>=` at true equality. Production code (`AIDecision_Build` and the
+  rest of `AI/MLQuantAI_AIDecisionContract.mqh`/
+  `AI/MLQuantAI_AIDecisionBuilder.mqh`) was not touched - the defect
+  was confined to the test file. See
+  `Docs/PhaseB_B8_5_AIDecisionStatus.md` for full detail.
 
 ## [Unreleased] - Phase B8.4: FULLY SEALED (2026-08-20)
 
