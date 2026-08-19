@@ -1,6 +1,6 @@
 # Phase B8.4 — Commit 3: Runtime Determinism and Handle-Lifetime Seal (Same Runtime Only)
 
-**Status: Implemented, awaiting real compile/test confirmation.**
+**Status: PASSED (38/38, real MetaEditor run).**
 Implements `Docs/PhaseB_B8_4_Commit3_RuntimeDeterminism.md` (frozen
 before code). This commit adds **zero new production functions or
 constants** - every test exercises Commit 2's already-sealed,
@@ -43,7 +43,10 @@ Commit 2.
   (successful) call fails deterministically - a stable non-`NONE`
   reason code, empty output, and critically **no crash** (reaching the
   test's final `Check()` calls is itself part of the proof that
-  execution continued past the released-handle call).
+  execution continued past the released-handle call). Confirmed on the
+  real run: the ONNX runtime itself logs `"invalid handle passed to
+  OnnxRelease function"` when the double-release happens - a real,
+  visible diagnostic of the exact scenario being tested, not a crash.
 - **One-call handle lifetime**: across 3 repeated load-verify-run
   cycles, every earlier cycle's handle is confirmed dead once that
   cycle ends - reusing any of the 3 captured handles afterward fails
@@ -58,12 +61,12 @@ Commit 2.
   tests exercise - stated explicitly rather than re-asserted as if it
   were new.
 
-## Manual verification (NOT part of the automated 6-function suite)
+## Manual verification (NOT part of the automated 38-check suite)
 
-The terminal-restart checklist in `Docs/PhaseB_B8_4_Commit3_RuntimeDeterminism.md`
-still needs to be run once by the user and its result recorded
-separately, before B8.4 is declared sealed. This status doc will be
-updated with that result once performed.
-
-Not yet compiled/run by the user - do not treat as PASSED or merge
-until a real MetaEditor log confirms it.
+**Still outstanding.** The terminal-restart checklist in
+`Docs/PhaseB_B8_4_Commit3_RuntimeDeterminism.md` still needs to be run
+once by the user and its result recorded separately, before B8.4 is
+declared fully sealed. This status doc will be updated with that
+result once performed. The automated suite (38/38) is PASSED and
+merged independently of this manual step - the same-runtime scope this
+commit claims does not depend on the manual checklist's outcome.

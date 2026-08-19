@@ -58,7 +58,25 @@ struct shape and `OnnxRun`'s output-sizing requirement could not be
 verified from public docs before writing code, and both surfaced as
 real errors, root-caused and fixed against the real MQL5 API rather
 than guessed). See `Docs/PhaseB_B8_4_Commit2_RuntimeAdapterStatus.md`
-for the full evidence including all three fixes. Current status:
+for the full evidence including all three fixes.
+
+**Update (2026-08-20, same day): B8.4 Commit 3 is now PASSED.** Runtime
+Determinism and Handle-Lifetime Seal, **same-runtime scope only** —
+38/38 ALL PASS on a real MetaEditor run, merged to `mlquantai`. Adds
+zero new production functions/constants — every test exercises Commit
+2's already-sealed `ModelRuntimeAdapter_LoadAndVerify` /
+`_ValidateContractAndRun` / `Ids_Sha256HexBytes` against new
+fixtures/scenarios: artifact relocation, input-perturbation sensitivity
+(two real, independently `onnxruntime`-computed outputs on the same
+fixture), released-handle reuse (deterministic fail-closed — the ONNX
+runtime itself logs "invalid handle passed to OnnxRelease function" on
+the real run, confirming no crash), one-call handle lifetime (no
+cross-cycle leak). **Explicitly does not claim** bitwise cross-machine
+or cross-provider equivalence — only one provider (CPU fallback) has
+ever been exercised. See
+`Docs/PhaseB_B8_4_Commit3_RuntimeDeterminismStatus.md` for the full
+evidence. The manual terminal-restart checklist (see the frozen
+contract) is still outstanding, tracked separately. Current status:
 
 ```
 B5    Candidate Provenance                 SEALED
@@ -67,15 +85,16 @@ B7    Deterministic RiskPlan               SEALED
 B8.1  Immutable FeatureSnapshot            SEALED
 B8.2  Training Dataset + Outcome Boundary  SEALED (394/394)
 B8.3  Model Registry + Artifact Contract   PASSED (106/106)
-B8.4  Commit 1 - Inference Contract, Tier A              PASSED (111/111)
-      Commit 2 - Artifact Integrity + Runtime Adapter, Tier B  PASSED (61/61)
-      Commit 3 - Runtime Determinism / Failure                NEXT (proposed, not frozen)
+B8.4  Commit 1 - Inference Contract, Tier A                        PASSED (111/111)
+      Commit 2 - Artifact Integrity + Runtime Adapter, Tier B      PASSED (61/61)
+      Commit 3 - Runtime Determinism / Handle-Lifetime (same-runtime)  PASSED (38/38)
+      Manual terminal-restart checklist                            OUTSTANDING
 ```
 
-B8.4 Commit 3 (cross-machine/cross-provider runtime determinism and
-failure-mode proofs) is proposed next but not yet frozen. See the B8.3
-direction note at the bottom of this doc
-for the pipeline B8.4 attaches to.
+B8.4's automated proof is now complete (111 + 61 + 38 = **210/210**).
+Final seal is pending only the manual terminal-restart checklist. See
+the B8.3 direction note at the bottom of this doc for the pipeline
+B8.4 attaches to.
 
 ## The phase table
 
@@ -289,6 +308,30 @@ actual root causes hit, not a guess proven wrong by something else. See
 `Docs/PhaseB_B8_4_Commit2_RuntimeAdapter.md` (frozen contract) and
 `Docs/PhaseB_B8_4_Commit2_RuntimeAdapterStatus.md` (implementation +
 evidence, including all three real fixes) for the full record.
+
+## B8.4 Commit 3 (PASSED — 38/38, see the update above)
+
+Runtime Determinism and Handle-Lifetime Seal — **same-runtime scope
+only**, explicitly not a cross-machine/cross-provider claim. Adds zero
+new production functions/constants: every test exercises Commit 2's
+already-sealed `ModelRuntimeAdapter_LoadAndVerify` /
+`ModelRuntimeAdapter_ValidateContractAndRun` / `Ids_Sha256HexBytes`
+unchanged, against new fixtures/scenarios only — artifact relocation
+(byte-identical file at a different locator, confirmed via `sha256sum`
+before checking in), input-perturbation sensitivity (two genuinely
+different `FeatureSnapshot` fixtures produce two genuinely different
+raw outputs, both independently computed via real `onnxruntime` in
+Python before being hardcoded, framed as a model-fixture-specific
+proof rather than a universal claim), released-handle reuse
+(deterministic fail-closed, no crash — the real run shows the ONNX
+runtime's own `"invalid handle passed to OnnxRelease function"`
+diagnostic, confirming the exact scenario without a crash), one-call
+handle lifetime (no cross-cycle leak across 3 repeated cycles). See
+`Docs/PhaseB_B8_4_Commit3_RuntimeDeterminism.md` (frozen contract) and
+`Docs/PhaseB_B8_4_Commit3_RuntimeDeterminismStatus.md` (implementation
++ evidence) for the full record. **The manual terminal-restart
+checklist in the frozen contract is still outstanding** — B8.4's final
+seal is pending only that step.
 
 ```
 TrainingDataset (B8.2, sealed)
