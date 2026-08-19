@@ -1,17 +1,11 @@
 # Phase B8.3 — Model Registry / Artifact Contract
 
-**Status: Implemented, awaiting real compile/test confirmation.**
-`Tests/MLQuantAI_Test_B8_3_ModelRegistry.mq5` written (18 test
-functions), balance/identifier-length checked, and self-reviewed
-line-by-line against the real struct/function shapes it calls. One
-real bug caught and fixed during self-review before any test run: a
-missing `MLQuantAI_EventStoreValidator.mqh` include in
-`MLQuantAI_ModelArtifactProjection.mqh` (that file's own validator
-calls would otherwise have been undeclared identifiers — every prior
-projection got this transitively via `CandidateProjection.mqh`, which
-`ModelArtifactProjection.mqh` deliberately does not include). Not yet
-compiled/run by the user — do not treat as PASSED or merge until a
-real MetaEditor log confirms it.
+**Status: PASSED (2026-08-19).** Confirmed on a real compile/test run:
+`MLQuantAI_Test_B8_3_ModelRegistry.mq5` 106/106 ALL PASS. No production
+code needed any further change after the self-review pass already
+described below (one real bug — a missing `MLQuantAI_EventStoreValidator.mqh`
+include in `MLQuantAI_ModelArtifactProjection.mqh` — was caught and
+fixed before this test run, not after).
 
 Implements `Docs/PhaseB_B8_3_ModelRegistryContract.md`. Opens after
 B8.2 SEALED (394/394).

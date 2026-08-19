@@ -4,12 +4,12 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B8.3: Model Registry / Artifact Contract (Implemented)
+## [Unreleased] - Phase B8.3: Model Registry / Artifact Contract (PASSED 2026-08-19)
 
 Opens after B8.2 SEALED (394/394). Implements
 `Docs/PhaseB_B8_3_ModelRegistryContract.md` (frozen before code). See
-`Docs/PhaseB_B8_3_ModelRegistry.md`. Not yet compiled/run by the user -
-status is Implemented, not PASSED.
+`Docs/PhaseB_B8_3_ModelRegistry.md`. Confirmed on a real compile/test
+run: `MLQuantAI_Test_B8_3_ModelRegistry.mq5` 106/106 ALL PASS.
 
 Registry/compatibility contract only - no ONNX loading, no inference,
 no scoring. Collision check clean; explicitly supersedes
