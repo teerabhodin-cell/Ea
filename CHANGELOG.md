@@ -4,12 +4,13 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B8.2 Commit 3: Outcome/Label Boundary (Implemented)
+## [Unreleased] - Phase B8.2 Commit 3: Outcome/Label Boundary (PASSED 2026-08-19)
 
 Opens after B8.2 Commit 2 PASSED (105/105) and merged. Implements
 `Docs/PhaseB_B8_2_Commit3_OutcomeLabelContract.md` (frozen before
-code). See `Docs/PhaseB_B8_2_Commit3_OutcomeLabel.md`. Not yet
-compiled/run by the user - status is Implemented, not PASSED.
+code). See `Docs/PhaseB_B8_2_Commit3_OutcomeLabel.md`. Confirmed on a
+real compile/test run: `MLQuantAI_Test_B8_2_Commit3_OutcomeLabel.mq5`
+109/109 ALL PASS.
 
 Freezing this contract required resolving three open design questions
 first (all confirmed): RealizedOutcome is built/tested from synthetic
