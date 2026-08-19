@@ -1,11 +1,44 @@
 # Phase B8.4 — Commit 2: Artifact Integrity + Runtime Adapter, Tier B
 
-**Status: Implemented, awaiting real compile/test confirmation.**
+**Status: Fixed after a real compile failure, awaiting a fresh
+compile/test confirmation.**
 Implements `Docs/PhaseB_B8_4_Commit2_RuntimeAdapter.md` (frozen before
 code). This is the project's first commit that touches a real ONNX
 runtime, real binary file I/O, and MQL5's native `matrixf` tensor type
-- carries meaningfully higher compile risk than any prior commit, and
-that risk is called out explicitly below rather than hidden.
+- carried meaningfully higher compile risk than any prior commit, and
+that risk was called out explicitly (see below) rather than hidden -
+which is exactly where the real compile failure landed.
+
+**The user's first real compile failed with 28 errors**, in two
+independent groups:
+
+1. `undeclared identifier 'Ids_Sha256HexBytes'`, everywhere it's used
+   (both files) - the compiled `MQL5\Include\MLQuantAI\Core\MLQuantAI_Ids.mqh`
+   did not contain the new function. The source-of-truth file in this
+   repo is correct and unchanged; this points to the file not having
+   been fully overwritten in the MetaEditor include folder. No code
+   change needed here - re-copy the file and recompile.
+2. The exact flagged-as-unverified area: `OnnxTypeInfo.type` compared
+   directly against `ONNX_DATA_TYPE_FLOAT` (implicit-conversion warning,
+   silently wrong), and `.shape.dimensions` (`undeclared identifier
+   'shape'`, cascading into further errors). **Root cause, confirmed
+   against the real struct definition at
+   https://www.mql5.com/en/docs/onnx/onnx_structures**: `OnnxTypeInfo.type`
+   is `ENUM_ONNX_TYPE` - the parameter *kind* (tensor/map/sequence), not
+   the element data type. The element data type and the shape both live
+   one level down, in a `.tensor` substruct
+   (`OnnxTensorTypeInfo.data_type` / `.dimensions[]`), only filled when
+   `.type == ONNX_TYPE_TENSOR`. Fixed: added an explicit
+   `.type == ONNX_TYPE_TENSOR` check (a genuine correctness improvement -
+   the real struct also supports map/sequence parameters, which this
+   contract correctly never expects), then moved the dtype/shape checks
+   to `.tensor.data_type` / `.tensor.dimensions[]`.
+
+**Confirmed by the same real compile: `matrixf`'s constructor/indexing
+syntax and `OnnxRun`'s positional signature were correct as originally
+written** - zero errors were reported anywhere past the `OnnxTypeInfo`
+struct-access code, even though that was flagged as equally uncertain
+before this attempt.
 
 ## What was verified against real MQL5 documentation before writing code
 
@@ -36,27 +69,25 @@ that risk is called out explicitly below rather than hidden.
   produced for the exact canonical test vector, not a hand-computed
   guess.
 
-## What could NOT be verified against real documentation (flagged, not hidden)
+## OnnxTypeInfo's real shape (now confirmed, after the real compile failure above)
 
-- **`OnnxTypeInfo` struct field names** (`type`, `shape.dimensions` as
-  used in `MLQuantAI_ModelRuntimeAdapter.mqh`). The public docs page for
-  this struct did not render its field list during this session (one
-  attempt hit a 404, a second returned only the struct's existence, not
-  its shape). The code was written against best-effort recollection of
-  the real MQL5 ONNX API, clearly commented at the point of use.
-- **`matrixf` constructor and indexing syntax** (`matrixf m(rows, cols); m[0][i] = x;`)
-  and **`OnnxRun`'s exact positional signature**
-  (`OnnxRun(handle, flags, const matrixf &input, matrixf &output)`).
-  These are MQL5's native tensor types, first used for real in this
-  commit (Tier A only ever used plain `float[]`).
-
-**These two items are the single most likely source of a real compile
-failure in this commit** - more likely than the `vector`-reserved-word
-class of bug that hit Commit 1, since that root cause is now understood
-and was checked for here (see below). If the real compile fails on
-either of these, that is expected risk being surfaced, not a surprise -
-report the exact error and it will be root-caused and fixed the same
-way Commit 1's failure was.
+```cpp
+struct OnnxTypeInfo
+{
+   ENUM_ONNX_TYPE        type;      // ONNX_TYPE_TENSOR / _MAP / _SEQUENCE / ...
+   OnnxTensorTypeInfo    tensor;    // filled only when type == ONNX_TYPE_TENSOR
+   OnnxMapTypeInfo       map;
+   OnnxSequenceTypeInfo  sequence;
+};
+struct OnnxTensorTypeInfo
+{
+   const ENUM_ONNX_DATA_TYPE  data_type;    // ONNX_DATA_TYPE_FLOAT etc
+   const long                 dimensions[]; // the tensor shape
+};
+```
+Source: https://www.mql5.com/en/docs/onnx/onnx_structures. The code now
+checks `.type == ONNX_TYPE_TENSOR` first, then reads `.tensor.data_type`
+/ `.tensor.dimensions[]`.
 
 ## Naming-discipline check (learned from Commit 1's real failure)
 

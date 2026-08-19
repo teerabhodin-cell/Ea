@@ -19,13 +19,18 @@
 //| returning, success or failure - the handle never outlives one call,|
 //| and callers never manage its lifetime directly.                     |
 //|                                                                    |
-//| KNOWN UNVERIFIED RISK (flagged, not hidden): OnnxTypeInfo's exact  |
-//| field names, and the matrixf constructor/indexing syntax used       |
-//| below, could not be confirmed against the public MQL5 docs during   |
-//| this session (unlike every other MQL5 call in this file, which was |
-//| checked against real documentation before being used). This is the |
-//| single highest-risk spot for a real-compile failure in this         |
-//| commit - see Docs/PhaseB_B8_4_Commit2_RuntimeAdapter.md.            |
+//| OnnxTypeInfo's real shape (confirmed against                        |
+//| https://www.mql5.com/en/docs/onnx/onnx_structures after the first   |
+//| real compile attempt flagged it): .type is ENUM_ONNX_TYPE (the      |
+//| tensor/map/sequence kind), NOT the element data type. The element   |
+//| data type and dimensions[] live one level down, in the .tensor      |
+//| substruct (OnnxTensorTypeInfo.data_type / .dimensions[]) - only     |
+//| filled when .type == ONNX_TYPE_TENSOR. The first version of this    |
+//| file guessed a flatter .type/.shape.dimensions shape and was wrong; |
+//| that real compile error is what surfaced the correct struct.        |
+//| matrixf's constructor/indexing syntax and OnnxRun's signature       |
+//| compiled clean on the same real attempt - no error was reported     |
+//| anywhere past this struct-access code.                              |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_MODELRUNTIMEADAPTER_MQH__
 #define __MLQUANTAI_MODELRUNTIMEADAPTER_MQH__
@@ -133,10 +138,6 @@ bool ModelRuntimeAdapter_ValidateContractAndRun(long sessionHandle, const float 
       return false;
    }
 
-   // UNVERIFIED FIELD NAMES (see file header): OnnxTypeInfo.type,
-   // .shape.dimensions - best-effort against the documented function
-   // list, not confirmed field-by-field against a live struct
-   // definition.
    OnnxTypeInfo inputTypeInfo, outputTypeInfo;
    if(!OnnxGetInputTypeInfo(sessionHandle, 0, inputTypeInfo))
    {
@@ -153,14 +154,34 @@ bool ModelRuntimeAdapter_ValidateContractAndRun(long sessionHandle, const float 
       return false;
    }
 
-   if(inputTypeInfo.type != ONNX_DATA_TYPE_FLOAT)
+   // OnnxTypeInfo.type is ENUM_ONNX_TYPE (tensor/map/sequence kind, NOT
+   // the element data type). Only .tensor is filled when type ==
+   // ONNX_TYPE_TENSOR; that substruct carries the real data_type and
+   // dimensions[] this contract needs to check (verified against
+   // https://www.mql5.com/en/docs/onnx/onnx_structures).
+   if(inputTypeInfo.type != ONNX_TYPE_TENSOR)
+   {
+      outReasonCode = INPUT_TYPE_MISMATCH;
+      outReasonDetail = "expected input parameter kind ONNX_TYPE_TENSOR";
+      OnnxRelease(sessionHandle);
+      return false;
+   }
+   if(outputTypeInfo.type != ONNX_TYPE_TENSOR)
+   {
+      outReasonCode = OUTPUT_TYPE_MISMATCH;
+      outReasonDetail = "expected output parameter kind ONNX_TYPE_TENSOR";
+      OnnxRelease(sessionHandle);
+      return false;
+   }
+
+   if(inputTypeInfo.tensor.data_type != ONNX_DATA_TYPE_FLOAT)
    {
       outReasonCode = INPUT_TYPE_MISMATCH;
       outReasonDetail = "expected input tensor data type FLOAT";
       OnnxRelease(sessionHandle);
       return false;
    }
-   if(outputTypeInfo.type != ONNX_DATA_TYPE_FLOAT)
+   if(outputTypeInfo.tensor.data_type != ONNX_DATA_TYPE_FLOAT)
    {
       outReasonCode = OUTPUT_TYPE_MISMATCH;
       outReasonDetail = "expected output tensor data type FLOAT";
@@ -168,11 +189,11 @@ bool ModelRuntimeAdapter_ValidateContractAndRun(long sessionHandle, const float 
       return false;
    }
 
-   int inputRank  = ArraySize(inputTypeInfo.shape.dimensions);
-   int outputRank = ArraySize(outputTypeInfo.shape.dimensions);
+   int inputRank  = ArraySize(inputTypeInfo.tensor.dimensions);
+   int outputRank = ArraySize(outputTypeInfo.tensor.dimensions);
    bool inputShapeOk = (inputRank == 2 &&
-                         inputTypeInfo.shape.dimensions[0] == MLQUANTAI_ONNX_BATCH_SIZE &&
-                         inputTypeInfo.shape.dimensions[1] == MLQUANTAI_INFERENCE_INPUT_LENGTH_B8_1_V1);
+                         inputTypeInfo.tensor.dimensions[0] == MLQUANTAI_ONNX_BATCH_SIZE &&
+                         inputTypeInfo.tensor.dimensions[1] == MLQUANTAI_INFERENCE_INPUT_LENGTH_B8_1_V1);
    if(!inputShapeOk)
    {
       outReasonCode = INPUT_SHAPE_MISMATCH;
@@ -183,8 +204,8 @@ bool ModelRuntimeAdapter_ValidateContractAndRun(long sessionHandle, const float 
    }
 
    bool outputShapeOk = (outputRank == 2 &&
-                          outputTypeInfo.shape.dimensions[0] == MLQUANTAI_ONNX_BATCH_SIZE &&
-                          outputTypeInfo.shape.dimensions[1] == 1);
+                          outputTypeInfo.tensor.dimensions[0] == MLQUANTAI_ONNX_BATCH_SIZE &&
+                          outputTypeInfo.tensor.dimensions[1] == 1);
    if(!outputShapeOk)
    {
       outReasonCode = OUTPUT_SHAPE_MISMATCH;

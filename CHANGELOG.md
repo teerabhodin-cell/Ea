@@ -4,15 +4,14 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B8.4 Commit 2: Artifact Integrity + Runtime Adapter, Tier B (Implemented)
+## [Unreleased] - Phase B8.4 Commit 2: Artifact Integrity + Runtime Adapter, Tier B (Fixed after real compile failure)
 
 Opens after B8.4 Commit 1 PASSED (111/111). Implements
 `Docs/PhaseB_B8_4_Commit2_RuntimeAdapter.md` (frozen before code). See
-`Docs/PhaseB_B8_4_Commit2_RuntimeAdapterStatus.md` for the full record,
-including two explicitly-flagged unverified-API risk areas (`OnnxTypeInfo`
-struct field names, `matrixf` constructor/indexing syntax) that could
-not be confirmed from public docs this session. Not yet compiled/run by
-the user - status is Implemented, not PASSED.
+`Docs/PhaseB_B8_4_Commit2_RuntimeAdapterStatus.md` for the full record.
+The user's first real compile failed (28 errors, see Fixed section
+below); status is now Fixed, awaiting a fresh compile/test confirmation
+- not PASSED.
 
 The project's first commit touching a real ONNX runtime, real binary
 file I/O, and MQL5's native `matrixf` tensor type. Every new/changed
@@ -53,6 +52,28 @@ in comments/strings).
   case as intended. Rebuilt as a fully self-consistent all-DOUBLE model,
   which loads correctly and genuinely exercises the intended
   `INPUT_TYPE_MISMATCH` reflection path.
+
+### Fixed (caught by the user's real MetaEditor compile - 28 errors)
+- `OnnxTypeInfo.type` was compared directly against `ONNX_DATA_TYPE_FLOAT`
+  (implicit-conversion warning, silently comparing the wrong enum), and
+  `.shape.dimensions` doesn't exist on the real struct
+  (`undeclared identifier 'shape'`, cascading into further errors).
+  Root cause, confirmed against https://www.mql5.com/en/docs/onnx/onnx_structures:
+  `OnnxTypeInfo.type` is the parameter *kind* (`ENUM_ONNX_TYPE` -
+  tensor/map/sequence), not the element data type; the data type and
+  shape both live one level down in a `.tensor` substruct
+  (`OnnxTensorTypeInfo.data_type` / `.dimensions[]`). Fixed by adding an
+  explicit `.type == ONNX_TYPE_TENSOR` check (a genuine correctness
+  improvement, not just a translation) before reading
+  `.tensor.data_type` / `.tensor.dimensions[]`. `matrixf`'s
+  constructor/indexing syntax and `OnnxRun`'s positional signature were
+  confirmed correct by the same compile attempt - zero errors past the
+  `OnnxTypeInfo` struct-access code.
+- The remaining ~14 `undeclared identifier 'Ids_Sha256HexBytes'` errors
+  were not a code bug: the source-of-truth `Core/MLQuantAI_Ids.mqh` in
+  this repo already had the function correctly defined. Points to the
+  compiled `MQL5\Include\MLQuantAI\Core\MLQuantAI_Ids.mqh` not having
+  been fully overwritten with the updated file - no code change made.
 
 ### Design decision made during implementation (within the frozen contract)
 - `ModelArtifact` carries no locator/path field (by design, per B8.3).
