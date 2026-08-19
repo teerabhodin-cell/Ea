@@ -4,16 +4,16 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B8.5 Commit 1: AIDecision + Threshold-Policy Pure Mapping (Implemented, fix applied after real run)
+## [Unreleased] - Phase B8.5 Commit 1: AIDecision + Threshold-Policy Pure Mapping (PASSED 2026-08-20)
 
 Opens after B8.4 SEALED (210/210 automated + manual restart checklist
 PASSED). Implements `Docs/PhaseB_B8_5_AIDecisionContract.md` (frozen
 before code). See `Docs/PhaseB_B8_5_AIDecisionStatus.md`. Real
 MetaEditor run 1: compiled clean, 69/72 checks passed, 3 real
 failures - root-caused to a float-to-double widening precision bug in
-the TEST FILE (not in `AIDecision_Build`), fixed. Not yet re-confirmed
-- status remains Implemented, not PASSED, until a fresh clean run
-lands.
+the TEST FILE (not in `AIDecision_Build`), fixed (see Fixed section
+below). Real MetaEditor run 2, after the fix: **72/72 checks passed,
+ALL PASS.** B8.5 Commit 1 is PASSED and merged to `mlquantai`.
 
 Pure mapping only: no `AI_DECISION_CREATED`, no event store, no
 ONNX/runtime call, no broker/account/tick call, no mutation of any

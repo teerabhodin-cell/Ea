@@ -1,7 +1,6 @@
 # Phase B8.5 — Commit 1: AIDecision + Threshold-Policy Pure Mapping
 
-**Status: Implemented, fix applied after a real failed run, awaiting
-re-confirmation.**
+**Status: PASSED (72/72, real MetaEditor run, 2026-08-20).**
 Implements `Docs/PhaseB_B8_5_AIDecisionContract.md` (frozen before
 code). Opens after B8.4 SEALED (210/210 automated + manual
 terminal-restart checklist PASSED). Pure mapping only - no
@@ -119,5 +118,12 @@ Both fixes applied to `Tests/MLQuantAI_Test_B8_5_AIDecision.mq5`.
 `AIDecision_ComputeHash` (all production code) were not touched - the
 defect was confined to the test file's fixture setup and assertions.
 
-Not yet re-confirmed - do not treat as PASSED or merge until a fresh
-real MetaEditor log shows a clean run.
+## Real run 2 - 72/72 ALL PASS (2026-08-20 02:55:39)
+
+Fresh real MetaEditor run after the fixes above: **72/72 checks
+passed**, including the exact two assertions that failed in run 1
+(`p_success == allow_threshold is ALLOW, not REJECT (inclusive >=)`
+and `decision_reason_code is REASON_NONE at the boundary`), plus the
+full determinism (10,000 reps), identity-sensitivity, hash-sensitivity,
+fail-closed, no-mutation, and no-side-effects groups. **B8.5 Commit 1
+is PASSED.** Merged to `mlquantai`.
