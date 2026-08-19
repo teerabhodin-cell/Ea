@@ -63,10 +63,42 @@ Commit 2.
 
 ## Manual verification (NOT part of the automated 38-check suite)
 
-**Still outstanding.** The terminal-restart checklist in
-`Docs/PhaseB_B8_4_Commit3_RuntimeDeterminism.md` still needs to be run
-once by the user and its result recorded separately, before B8.4 is
-declared fully sealed. This status doc will be updated with that
-result once performed. The automated suite (38/38) is PASSED and
-merged independently of this manual step - the same-runtime scope this
-commit claims does not depend on the manual checklist's outcome.
+**In progress — Run A recorded, awaiting Run B (post-restart).**
+
+**Run A** (2026-08-20, 02:20:48–02:20:52, pre-restart baseline session
+- `MLQuantAI_Test_B8_4_InferenceTierA.mq5`,
+`MLQuantAI_Test_B8_4_Commit2_RuntimeAdapter.mq5`, and
+`MLQuantAI_Test_B8_4_Commit3_RuntimeDeterminism.mq5` all run back to
+back in the same, not-yet-restarted terminal session):
+
+```
+Commit 1 (Tier A)        111/111 ALL PASS
+Commit 2 (Tier B)         61/61  ALL PASS
+Commit 3 (Determinism)    38/38  ALL PASS
+Provider identity: TensorRT init fails, CUDA init fails
+                    (CUDA failure 801, GPU=-1) -> "ONNX: CPU selected"
+                    hostname=DESKTOP-2DS27LU
+Output value: raw ONNX output matches the real onnxruntime-computed
+              value (~0.5094773) for the valid fixture + canonical
+              vector A
+```
+
+Each `Check()` in these suites compares a freshly-computed value
+(hash, output, etc.) against an external ground truth baked into the
+test (the real SHA-256 of each fixture file, the real `onnxruntime`-computed
+output value) - not "Run A's own number vs Run B's own number" done by
+eye. That means Run B reproducing the identical `ALL PASS` /
+`111/111`-`61/61`-`38/38`-style counts and the identical
+provider-selection log lines after a real terminal restart is itself
+the evidence the checklist
+asks for: if same-runtime determinism had broken across the restart,
+some `Check()` would flip to `[FAIL]` because the freshly-recomputed
+value would stop matching that same fixed ground truth (e.g. a
+different provider selected, a different computed hash, a different
+output value).
+
+**Next step**: close the MT5 terminal, reopen it, run the same three
+scripts again (Run B), and send the log. Comparison points: all three
+pass counts (111/111, 61/61, 38/38) unchanged; the same
+`"ONNX: CPU selected"` provider line (same TensorRT/CUDA failure
+reasons, same hostname); the same `"~0.5094773"` output-match line.
