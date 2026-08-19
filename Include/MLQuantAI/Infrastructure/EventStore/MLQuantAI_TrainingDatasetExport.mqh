@@ -1,21 +1,27 @@
 //+------------------------------------------------------------------+
 //| MLQuantAI - Infrastructure/EventStore/MLQuantAI_TrainingDatasetExport.mqh|
-//| Phase B8.2 Commit 2 (Part 1): TrainingDatasetExport_BuildDataset - |
-//| deterministic projection/export of TrainingDatasetRow from         |
-//| persisted artifacts only, per                                       |
-//| Docs/PhaseB_B8_2_Commit2_ExportContract.md's Part 1. Pure           |
-//| orchestration: rebuilds CandidateProjection/FeatureSnapshotProjection|
-//| /RiskPlanProjection (all sealed, unmodified), then calls the sealed |
-//| BuildTrainingDatasetRow (B8.2 Commit 1) once per qualifying         |
+//| Phase B8.2 Commit 2 (Part 1), extended by Commit 3:                |
+//| TrainingDatasetExport_BuildDataset - deterministic projection/      |
+//| export of TrainingDatasetRow from persisted artifacts only, per     |
+//| Docs/PhaseB_B8_2_Commit2_ExportContract.md's Part 1 and              |
+//| Docs/PhaseB_B8_2_Commit3_OutcomeLabelContract.md's Part 1 ("Export  |
+//| integration"). Pure orchestration: rebuilds                        |
+//| CandidateProjection/FeatureSnapshotProjection/RiskPlanProjection/    |
+//| RealizedOutcomeProjection (all sealed, unmodified), then calls the  |
+//| sealed BuildTrainingDatasetRow (B8.2 Commit 1) once per qualifying  |
 //| candidate. No feature value, risk-sizing value, or label is ever    |
 //| computed here - this file only composes what B5/B6/B7/B8.1/B8.2-    |
-//| Commit-1 already computed and persisted.                            |
+//| Commit-1 already computed and persisted. Commit 3 added the         |
+//| RealizedOutcome lookup and real labeled_count/unlabeled_count       |
+//| tally, and Commit 3's Part 0 added the candidate_count/              |
+//| incomplete_count manifest counters - no other control flow changed. |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_TRAININGDATASETEXPORT_MQH__
 #define __MLQUANTAI_TRAININGDATASETEXPORT_MQH__
 
 #include "MLQuantAI_FeatureSnapshotProjection.mqh"
 #include "MLQuantAI_RiskPlanProjection.mqh"
+#include "MLQuantAI_RealizedOutcomeProjection.mqh"
 #include "../../AI/MLQuantAI_TrainingDatasetBuilder.mqh"
 
 // Minimal adapters bridging replay/projection-registry types to the
@@ -94,6 +100,22 @@ bool TrainingDatasetExport_FindPlanForCandidate(string candidateId, RiskPlanProj
    return false;
 }
 
+// B8.2 Commit 3: a candidate with no RealizedOutcome record is not an
+// error - it is simply not yet labeled (see
+// Docs/PhaseB_B8_2_Commit3_OutcomeLabelContract.md Part 1, "Export
+// integration").
+bool TrainingDatasetExport_FindOutcomeForCandidate(string candidateId, RealizedOutcomeProjectionRecord &out)
+{
+   int n = RealizedOutcomeProjection_Count();
+   for(int i = 0; i < n; i++)
+   {
+      RealizedOutcomeProjectionRecord rec;
+      RealizedOutcomeProjection_GetAt(i, rec);
+      if(rec.candidate_id == candidateId) { out = rec; return true; }
+   }
+   return false;
+}
+
 // Stable sort: candidate.setup_anchor_bar_time ASC, dataset_row_id ASC
 // (frozen tie-break, per the Commit 2 contract). Simple insertion
 // sort - same scale reasoning as B6.2's own CandidateDatasetExport_SortRows.
@@ -142,6 +164,9 @@ bool TrainingDatasetExport_BuildDataset(string fileName, string modelTarget, Tra
    RiskPlanProjectionReport rpReport = RiskPlanProjection_RebuildFromFile(fileName);
    if(!rpReport.ok) return false;
 
+   RealizedOutcomeProjectionReport roReport = RealizedOutcomeProjection_RebuildFromFile(fileName);
+   if(!roReport.ok) return false;
+
    // source_store_fingerprint: a hash of the INPUT (every validated
    // line, in original file order), not the output - two different
    // stores must never fingerprint identically, and two identical
@@ -163,6 +188,8 @@ bool TrainingDatasetExport_BuildDataset(string fileName, string modelTarget, Tra
    string seenRowHashes[];
    int seenCount = 0;
 
+   int incompleteCount = 0;
+
    for(int i = 0; i < candCount; i++)
    {
       CandidateProjectionRecord candRec;
@@ -170,11 +197,17 @@ bool TrainingDatasetExport_BuildDataset(string fileName, string modelTarget, Tra
 
       FeatureSnapshotProjectionRecord fsRec;
       if(!TrainingDatasetExport_FindSnapshotForCandidate(candRec.candidate_id, fsRec))
+      {
+         incompleteCount++;
          continue; // no FeatureSnapshot yet - a normal lifecycle state, not a failure
+      }
 
       RiskPlanProjectionRecord rpRec;
       if(!TrainingDatasetExport_FindPlanForCandidate(candRec.candidate_id, rpRec))
+      {
+         incompleteCount++;
          continue; // no ALLOWED RiskPlan yet - a normal lifecycle state, not a failure
+      }
 
       TradeCandidate candidate;
       TrainingDatasetExport_CandidateFromProjection(candRec, candidate);
@@ -183,8 +216,20 @@ bool TrainingDatasetExport_BuildDataset(string fileName, string modelTarget, Tra
       RiskPlan plan;
       TrainingDatasetExport_PlanFromProjection(rpRec, plan);
 
+      // B8.2 Commit 3: a RealizedOutcome, if one exists for this
+      // candidate, is the ONLY sanctioned source of a real label - no
+      // referential re-verification of its own candidate_hash here,
+      // same trust-boundary rule already applied to the snapshot/plan
+      // lookups above (RealizedOutcomeProjection's own rebuild-time
+      // referential-integrity check already covered it).
+      RealizedOutcomeProjectionRecord outcomeRec;
+      bool hasOutcome = TrainingDatasetExport_FindOutcomeForCandidate(candRec.candidate_id, outcomeRec);
+
       TrainingDatasetRow row;
-      if(!BuildTrainingDatasetRow(candidate, snapshot, plan, false, "", "", "", modelTarget, row))
+      bool built = hasOutcome
+         ? BuildTrainingDatasetRow(candidate, snapshot, plan, true, outcomeRec.label, outcomeRec.outcome_reference, outcomeRec.outcome_hash, modelTarget, row)
+         : BuildTrainingDatasetRow(candidate, snapshot, plan, false, "", "", "", modelTarget, row);
+      if(!built)
          continue; // BuildTrainingDatasetRow's own fail-closed validation found something wrong with this candidate specifically - skip it, not the whole export (mirrors "a candidate without an ALLOWED plan gets no row" already being a skip, not a failure)
 
       // Duplicate-identity policy (defensive - see contract doc).
@@ -241,20 +286,26 @@ bool TrainingDatasetExport_BuildDataset(string fileName, string modelTarget, Tra
    manifest.split_policy_version       = (builtCount > 0) ? rows[0].split_policy_version : MLQUANTAI_DATASET_SPLIT_POLICY_V1;
    manifest.model_target               = modelTarget;
    manifest.row_count                  = builtCount;
-   manifest.labeled_count               = 0; // Commit 2 never produces a labeled row - see contract doc
-   manifest.unlabeled_count              = builtCount;
    manifest.source_store_fingerprint      = sourceStoreFingerprint;
+   manifest.candidate_count                = candCount;
+   manifest.incomplete_count                = incompleteCount;
 
    int trainCount = 0, validationCount = 0, testCount = 0;
+   int labeledCount = 0, unlabeledCount = 0;
    for(int i = 0; i < builtCount; i++)
    {
       if(rows[i].split == DATASET_SPLIT_TRAIN)           trainCount++;
       else if(rows[i].split == DATASET_SPLIT_VALIDATION) validationCount++;
       else                                                 testCount++;
+
+      if(rows[i].label_available) labeledCount++;
+      else                          unlabeledCount++;
    }
    manifest.train_count      = trainCount;
    manifest.validation_count = validationCount;
    manifest.test_count       = testCount;
+   manifest.labeled_count    = labeledCount;
+   manifest.unlabeled_count  = unlabeledCount;
 
    return true;
 }

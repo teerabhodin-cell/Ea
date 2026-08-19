@@ -189,9 +189,11 @@ struct TrainingDatasetManifest
    int    train_count;
    int    validation_count;
    int    test_count;
-   int    labeled_count;     // additive, B8.2 Commit 2 - always 0 in Commit 2's own output
+   int    labeled_count;     // additive, B8.2 Commit 2 - real starting Commit 3
    int    unlabeled_count;
    string source_store_fingerprint; // populated starting B8.2 Commit 2 - see Docs/PhaseB_B8_2_Commit2_ExportContract.md
+   int    candidate_count;   // additive, B8.2 Commit 3 - every CandidateProjection record considered
+   int    incomplete_count;  // additive, B8.2 Commit 3 - candidates skipped for missing FeatureSnapshot/ALLOWED RiskPlan
 };
 
 void TrainingDatasetManifest_Init(TrainingDatasetManifest &m)
@@ -210,6 +212,8 @@ void TrainingDatasetManifest_Init(TrainingDatasetManifest &m)
    m.labeled_count = 0;
    m.unlabeled_count = 0;
    m.source_store_fingerprint = "";
+   m.candidate_count = 0;
+   m.incomplete_count = 0;
 }
 
 #endif // __MLQUANTAI_TRAININGDATASETROW_MQH__
