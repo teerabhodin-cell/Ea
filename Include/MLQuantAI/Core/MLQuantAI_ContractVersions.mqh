@@ -76,4 +76,17 @@
 // hashes" section for the reasoning.
 #define MLQUANTAI_MODEL_REGISTRY_SCHEMA_B8_3_V1 "MODEL_REGISTRY_B8_3_V1"
 
+// B8.4 Commit 1: InferenceRequest's own shape stamp, and
+// InferenceResult's own contract-version stamp (the request->result
+// mapping this commit's orchestration implements). See
+// Docs/PhaseB_B8_4_InferenceContract.md.
+#define MLQUANTAI_INFERENCE_REQUEST_SCHEMA_B8_4_V1 "INFERENCE_REQUEST_B8_4_V1"
+#define MLQUANTAI_INFERENCE_CONTRACT_B8_4_V1       "INFERENCE_CONTRACT_B8_4_V1"
+
+// B8.4 Commit 1: the canonical input length for FEATURES_B8_1_V1's
+// 12-field vector, and the one output schema this commit freezes as a
+// concrete proof of the output-validation shape.
+#define MLQUANTAI_INFERENCE_INPUT_LENGTH_B8_1_V1 12
+#define MLQUANTAI_OUTPUT_SCHEMA_P_SUCCESS_V1     "OUTPUT_P_SUCCESS_V1"
+
 #endif // __MLQUANTAI_CONTRACTVERSIONS_MQH__

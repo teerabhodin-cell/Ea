@@ -4,6 +4,74 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B8.4 Commit 1: Inference Contract, Tier A (PASSED 2026-08-19)
+
+Opens after B8.3 PASSED (106/106). Implements
+`Docs/PhaseB_B8_4_InferenceContract.md` (frozen before code). See
+`Docs/PhaseB_B8_4_InferenceTierA.md`. The user's first real compile
+failed (121 errors, see Fixed section below); after the fix, confirmed
+on a real MetaEditor run: `MLQuantAI_Test_B8_4_InferenceTierA.mq5`
+111/111 ALL PASS. Merged to `mlquantai`.
+
+Tier A only - no ONNX session, no model file I/O, no real runtime
+call. Collision check clean; `AIResult` confirmed decision-level
+(B8.5's future output type), left untouched. Canonical feature
+ordering reuses B8.1's own sealed `FeatureSnapshot_VectorHashPayload`
+order rather than reinventing one.
+
+### Added
+- `Core/MLQuantAI_ContractVersions.mqh` (additive):
+  `MLQUANTAI_INFERENCE_REQUEST_SCHEMA_B8_4_V1`,
+  `MLQUANTAI_INFERENCE_CONTRACT_B8_4_V1`,
+  `MLQUANTAI_INFERENCE_INPUT_LENGTH_B8_1_V1`,
+  `MLQUANTAI_OUTPUT_SCHEMA_P_SUCCESS_V1`.
+- `AI/MLQuantAI_InferenceContract.mqh` (new): `ENUM_INFERENCE_FAIL_REASON`
+  (full ~19-code vocabulary frozen for both Tier A and Tier B),
+  `InferenceRequest` (pinned identity, no "latest," no fallback),
+  `InferenceResult` (`output_hash` excludes event metadata/time/path).
+- `AI/MLQuantAI_InferenceRequestBuilder.mqh` (new):
+  `InferenceRequest_Build` - all fields mandatory, fail-closed.
+- `AI/MLQuantAI_CanonicalFeatureVector.mqh` (new):
+  `CanonicalFeatureVector_FromSnapshot` - the frozen 12-element
+  `float[]` tensor layout, B8.1's own order.
+- `AI/MLQuantAI_InferenceOutputValidator.mqh` (new):
+  `InferenceOutput_Validate` - one frozen output schema
+  (`OUTPUT_P_SUCCESS_V1`) as a concrete proof of the shape.
+- `Infrastructure/EventStore/MLQuantAI_ModelInference.mqh` (new):
+  `ModelInference_ResolveAndPrepare` + `ModelInference_ValidateAndBuildResult`
+  - two pure, testable halves either side of a real runtime call,
+  instead of a single "run inference" function that would misrepresent
+  that no real runtime call happens in this commit.
+- `Tests/MLQuantAI_Test_B8_4_InferenceTierA.mq5` (new, 18 test
+  functions).
+
+### Fixed (caught during self-review, before any test run)
+- The registry-rejection test's "incompatible" case originally reused
+  a `STAGING` artifact to test a `model_target` mismatch, but
+  `ModelArtifact_CheckCompatibility` checks `promotion_state` before
+  the 6 field comparisons - that case would always have surfaced
+  `MODEL_NOT_PROMOTED` instead. Fixed by registering a separate,
+  genuinely `PROMOTED` artifact for that specific test.
+
+### Fixed (caught by the user's real MetaEditor compile - NOT by self-review)
+- `vector` is a reserved/built-in MQL5 type (native matrix/vector
+  math; the compiler's own error suggestions listed built-in
+  `vector`/`matrix` overloads). `Tests/MLQuantAI_Test_B8_4_InferenceTierA.mq5`
+  used the bare identifier `vector` as an ordinary local variable name
+  in six test functions, causing a cascading 121-error compile
+  failure. Production `.mqh` files were unaffected - they already used
+  `outVector`/`canonicalVector`, never bare `vector`. Fixed by
+  renaming every bare `vector` local in the test file to
+  `canonicalVec` (word-boundary-safe rename; the distinctly named
+  `vector2` fixture was correctly left untouched), then restoring the
+  original wording in the string-literal test labels the mechanical
+  rename had also altered. Re-verified: balance/identifier-length
+  check clean, full re-read confirms no argument-order regressions and
+  the STAGING-vs-PROMOTED isolation fix above is still intact, and a
+  repo-wide grep confirms no other `vector`/`matrix`/`vectorf`/`matrixf`
+  identifier collisions anywhere in `Include/MLQuantAI` or the test
+  file (only harmless mentions inside comments).
+
 ## [Unreleased] - Phase B8.3: Model Registry / Artifact Contract (PASSED 2026-08-19)
 
 Opens after B8.2 SEALED (394/394). Implements
