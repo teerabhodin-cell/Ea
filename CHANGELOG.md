@@ -4,14 +4,16 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B8.4 Commit 2: Artifact Integrity + Runtime Adapter, Tier B (Fixed after real compile failure)
+## [Unreleased] - Phase B8.4 Commit 2: Artifact Integrity + Runtime Adapter, Tier B (PASSED 2026-08-20)
 
 Opens after B8.4 Commit 1 PASSED (111/111). Implements
 `Docs/PhaseB_B8_4_Commit2_RuntimeAdapter.md` (frozen before code). See
-`Docs/PhaseB_B8_4_Commit2_RuntimeAdapterStatus.md` for the full record.
-The user's first real compile failed (28 errors, see Fixed section
-below); status is now Fixed, awaiting a fresh compile/test confirmation
-- not PASSED.
+`Docs/PhaseB_B8_4_Commit2_RuntimeAdapterStatus.md` for the full record,
+including all three real compile/run iterations. Confirmed on the
+user's third real run: `MLQuantAI_Test_B8_4_Commit2_RuntimeAdapter.mq5`
+61/61 ALL PASS, including a real `OnnxRun` execution producing
+`0.5094773` - matching the value independently computed via real
+`onnxruntime` in Python. Merged to `mlquantai`.
 
 The project's first commit touching a real ONNX runtime, real binary
 file I/O, and MQL5's native `matrixf` tensor type. Every new/changed

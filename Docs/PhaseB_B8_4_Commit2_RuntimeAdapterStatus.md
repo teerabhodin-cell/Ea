@@ -1,7 +1,6 @@
 # Phase B8.4 — Commit 2: Artifact Integrity + Runtime Adapter, Tier B
 
-**Status: Fixed after a real compile failure, awaiting a fresh
-compile/test confirmation.**
+**Status: PASSED (61/61, real MetaEditor run).**
 Implements `Docs/PhaseB_B8_4_Commit2_RuntimeAdapter.md` (frozen before
 code). This is the project's first commit that touches a real ONNX
 runtime, real binary file I/O, and MQL5's native `matrixf` tensor type
@@ -56,6 +55,14 @@ one root cause (the accept-path test and the determinism test, which
 both call `OnnxRun` for real); every negative-path test that never
 reaches `OnnxRun` (wrong name/shape/dtype, hash mismatch, missing
 file, garbage bytes) passed cleanly on this same run.
+
+**Update: PASSED.** The user's third real compile/run confirmed
+`MLQuantAI_Test_B8_4_Commit2_RuntimeAdapter.mq5` at **61/61 ALL PASS**
+(12 test functions, 61 individual `Check()` assertions), including the
+real `OnnxRun` execution against the valid fixture producing
+`0.5094773` - matching the value independently computed via real
+`onnxruntime` in Python to within the tested epsilon. Merged to
+`mlquantai`.
 
 ## What was verified against real MQL5 documentation before writing code
 
