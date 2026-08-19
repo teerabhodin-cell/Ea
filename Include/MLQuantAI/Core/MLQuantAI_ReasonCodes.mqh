@@ -48,6 +48,12 @@ enum ENUM_REASON_CODE
    REASON_SUBMITTED_OK,
    REASON_EXECUTED_OK,
 
+   // Phase B8.5: AIDecision outcome reasons - appended at the tail, per
+   // this enum's append-only discipline (REASON_AI_LOW_CONFIDENCE and
+   // REASON_AI_HIGH_UNCERTAINTY above predate B8.5 and stay reserved/
+   // unreachable under its single-scalar p_success threshold policy).
+   REASON_AI_ABSTAIN,
+
    REASON_COUNT
 };
 
@@ -82,6 +88,7 @@ string ReasonCodeToString(ENUM_REASON_CODE r)
       case REASON_ERROR_INTERNAL:             return "ERROR_INTERNAL";
       case REASON_SUBMITTED_OK:               return "SUBMITTED_OK";
       case REASON_EXECUTED_OK:                return "EXECUTED_OK";
+      case REASON_AI_ABSTAIN:                 return "AI_ABSTAIN";
    }
    return "UNKNOWN";
 }
@@ -119,6 +126,7 @@ ENUM_REASON_CODE ReasonCodeFromString(string s)
    if(s == "ERROR_INTERNAL")             return REASON_ERROR_INTERNAL;
    if(s == "SUBMITTED_OK")               return REASON_SUBMITTED_OK;
    if(s == "EXECUTED_OK")                return REASON_EXECUTED_OK;
+   if(s == "AI_ABSTAIN")                 return REASON_AI_ABSTAIN;
    return REASON_NONE;
 }
 

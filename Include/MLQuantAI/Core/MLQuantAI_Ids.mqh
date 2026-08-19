@@ -203,6 +203,23 @@ string Ids_ModelRegistryId(string modelId, string modelVersion)
    return Ids_Deterministic("MREG", key);
 }
 
+// ai_decision_id (Phase B8.5): one candidate's AI decision under one
+// model + one decision policy. Depends only on candidate_id +
+// model_registry_id + decision_policy_version - deliberately
+// independent of the decision's own computed content (p_success,
+// allow_threshold, decision_outcome, decision_reason_code, every hash
+// field), the same identity philosophy Ids_RiskPlanId/
+// Ids_FeatureSnapshotId/Ids_RealizedOutcomeId/Ids_ModelRegistryId
+// already established: "same identity, different hash" must always
+// mean a genuine drift/collision signal, never an ordinary expected
+// state. See Docs/PhaseB_B8_5_AIDecisionContract.md's "Identity and
+// hash" section.
+string Ids_AIDecisionId(string candidateId, string modelRegistryId, string decisionPolicyVersion)
+{
+   string key = candidateId + "|" + modelRegistryId + "|" + decisionPolicyVersion;
+   return Ids_Deterministic("AIDEC", key);
+}
+
 int g_Ids_SessionCounter = 0;
 
 // runtime_session_id: identifies one EA run. Deliberately NOT deterministic
