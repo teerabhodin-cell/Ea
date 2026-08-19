@@ -75,8 +75,22 @@ cross-cycle leak). **Explicitly does not claim** bitwise cross-machine
 or cross-provider equivalence — only one provider (CPU fallback) has
 ever been exercised. See
 `Docs/PhaseB_B8_4_Commit3_RuntimeDeterminismStatus.md` for the full
-evidence. The manual terminal-restart checklist (see the frozen
-contract) is still outstanding, tracked separately. Current status:
+evidence.
+
+**Update (2026-08-20, same day): B8.4 is now FULLY SEALED.** The manual
+terminal-restart checklist ran for real: Run A (pre-restart baseline)
+and Run B (after the user actually closed and reopened the MT5
+terminal, ~4 minutes later) reproduced identical results on every
+comparison point — all three automated suites' pass counts unchanged
+(111/111, 61/61, 38/38), the identical `"ONNX: CPU selected"` provider
+line (same TensorRT/CUDA failure reasons, same hostname), and the
+identical real-`onnxruntime`-matched output values. See
+`Docs/PhaseB_B8_4_Commit3_RuntimeDeterminismStatus.md`'s "Manual
+verification" section for both runs' full evidence. Same-machine,
+same-CPU-provider, same-runtime-version determinism survives a real
+terminal restart — **cross-machine/cross-provider determinism is still
+not claimed**, since only one provider has ever been exercised. Current
+status:
 
 ```
 B5    Candidate Provenance                 SEALED
@@ -84,15 +98,21 @@ B6    Candidate Projection / Lineage       SEALED
 B7    Deterministic RiskPlan               SEALED
 B8.1  Immutable FeatureSnapshot            SEALED
 B8.2  Training Dataset + Outcome Boundary  SEALED (394/394)
-B8.3  Model Registry + Artifact Contract   PASSED (106/106)
-B8.4  Commit 1 - Inference Contract, Tier A                        PASSED (111/111)
+B8.3  Model Registry + Artifact Contract   SEALED (106/106)
+B8.4  Inference + ONNX Runtime Adapter     SEALED (210/210 automated
+                                            + manual restart checklist PASSED)
+      Commit 1 - Inference Contract, Tier A                       PASSED (111/111)
       Commit 2 - Artifact Integrity + Runtime Adapter, Tier B      PASSED (61/61)
       Commit 3 - Runtime Determinism / Handle-Lifetime (same-runtime)  PASSED (38/38)
-      Manual terminal-restart checklist                            OUTSTANDING
+B8.5  AIDecision + AI_DECISION_CREATED     NEXT (not yet frozen)
 ```
 
-B8.4's automated proof is now complete (111 + 61 + 38 = **210/210**).
-Final seal is pending only the manual terminal-restart checklist. See
+B8.4's full seal — automated (210/210) plus the manual restart
+checklist — is now complete. B8.5 (AIDecision) is open next: per
+direction already discussed, it should be contract-first like every
+phase before it, accept only an already-validated `InferenceResult`,
+freeze decision/threshold semantics and persistence identity before
+any code, and grant no execution authority (that stays with B9). See
 the B8.3 direction note at the bottom of this doc for the pipeline
 B8.4 attaches to.
 
@@ -257,11 +277,11 @@ no threshold, no BUY/SELL/execution decision of any kind. See
 ```
 B7    -> RiskPlan
 B8.3  -> Artifact compatibility (SEALED - see above)
-B8.4  -> Inference
+B8.4  -> Inference (SEALED - see above, 210/210 automated + manual restart checklist PASSED)
           Commit 1 - Tier A (PASSED - see above)
           Commit 2 - Tier B, runtime adapter (PASSED - see above)
-          Commit 3 - Runtime determinism/failure (proposed, not frozen)
-B8.5  -> AI Decision
+          Commit 3 - Runtime determinism / handle-lifetime, same-runtime (PASSED - see above)
+B8.5  -> AI Decision (NEXT - not yet frozen)
 B9    -> Execution Eligibility
 C     -> Broker Execution
 ```

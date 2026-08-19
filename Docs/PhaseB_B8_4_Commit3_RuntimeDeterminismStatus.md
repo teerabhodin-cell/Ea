@@ -63,7 +63,9 @@ Commit 2.
 
 ## Manual verification (NOT part of the automated 38-check suite)
 
-**In progress — Run A recorded, awaiting Run B (post-restart).**
+**COMPLETE — PASSED.** Run A and Run B agree on every comparison
+point. B8.4 is fully sealed as of this result (see the architecture
+baseline doc's update).
 
 **Run A** (2026-08-20, 02:20:48–02:20:52, pre-restart baseline session
 - `MLQuantAI_Test_B8_4_InferenceTierA.mq5`,
@@ -97,8 +99,37 @@ value would stop matching that same fixed ground truth (e.g. a
 different provider selected, a different computed hash, a different
 output value).
 
-**Next step**: close the MT5 terminal, reopen it, run the same three
-scripts again (Run B), and send the log. Comparison points: all three
-pass counts (111/111, 61/61, 38/38) unchanged; the same
-`"ONNX: CPU selected"` provider line (same TensorRT/CUDA failure
-reasons, same hostname); the same `"~0.5094773"` output-match line.
+**Run B** (2026-08-20, 02:24:28–02:24:33, ~4 minutes after Run A, run
+after the user closed and reopened the MT5 terminal):
+
+```
+Commit 1 (Tier A)        111/111 ALL PASS   (unchanged)
+Commit 3 (Determinism)    38/38  ALL PASS   (unchanged)
+Commit 2 (Tier B)         61/61  ALL PASS   (unchanged)
+Provider identity: identical - TensorRT/CUDA fail the same way
+                    (CUDA failure 801, GPU=-1), "ONNX: CPU selected",
+                    same hostname=DESKTOP-2DS27LU
+Output values: identical - ~0.5094773 (vector A) and ~0.4129363
+               (vector B), same as Run A
+```
+
+**Result: every comparison point the frozen checklist asks for agrees
+between Run A and Run B** - `model_artifact_hash` (implicitly, via the
+unchanged `ARTIFACT_HASH_MISMATCH`-free accept-path results),
+runtime/provider identity, `feature_vector_hash` (implicitly, via the
+unchanged canonical-vector and output-matching checks), validated
+output values, and `output_hash` (implicitly, via
+`Test_OutputHash_Deterministic`/`Test_OutputHash_ExcludesLineageMetadata`
+in Commit 1 passing identically in both runs). No `[FAIL]` anywhere in
+either run. Same-machine, same-CPU-provider, same-runtime-version
+determinism survives a real terminal restart, exactly as scoped -
+**no cross-machine/cross-provider claim is made from this result**,
+since both runs are the same machine and the same CPU fallback.
+
+Note: the raw literal hash strings are not printed to the log (each
+`Check()` compares a freshly-computed value against a fixed ground
+truth internally, per the test design explained above) - the
+comparison points here are the pass/fail pattern and the printed
+provider/output-match lines, which is what actually changes if
+determinism breaks across a restart.
+

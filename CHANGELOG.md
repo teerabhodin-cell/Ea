@@ -4,15 +4,29 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B8.4: FULLY SEALED (2026-08-20)
+
+Automated proof complete across all three commits — Commit 1 (Tier A)
+111/111, Commit 2 (Tier B) 61/61, Commit 3 (determinism/handle-lifetime)
+38/38, total **210/210**. The manual terminal-restart checklist (see
+`Docs/PhaseB_B8_4_Commit3_RuntimeDeterminism.md`) also PASSED for
+real: Run A (pre-restart) and Run B (~4 minutes later, after the user
+actually closed and reopened the MT5 terminal) reproduced identical
+pass counts, the identical `"ONNX: CPU selected"` provider line, and
+identical real-`onnxruntime`-matched output values on every comparison
+point. Full evidence for both runs in
+`Docs/PhaseB_B8_4_Commit3_RuntimeDeterminismStatus.md`'s "Manual
+verification" section. B8.4 is sealed as **same-runtime,
+same-CPU-provider** scope — cross-machine/cross-provider determinism
+is still not claimed. B8.5 (AIDecision) opens next.
+
 ## [Unreleased] - Phase B8.4 Commit 3: Runtime Determinism and Handle-Lifetime Seal, Same Runtime Only (PASSED 2026-08-20)
 
 Opens after B8.4 Commit 2 PASSED (61/61). Implements
 `Docs/PhaseB_B8_4_Commit3_RuntimeDeterminism.md` (frozen before code).
 See `Docs/PhaseB_B8_4_Commit3_RuntimeDeterminismStatus.md`. Confirmed
 on a real MetaEditor run: `MLQuantAI_Test_B8_4_Commit3_RuntimeDeterminism.mq5`
-38/38 ALL PASS. Merged to `mlquantai`. The manual terminal-restart
-checklist (see the frozen contract) is still outstanding, tracked
-separately from this automated result.
+38/38 ALL PASS. Merged to `mlquantai`.
 
 Zero new production functions or constants - every test exercises
 Commit 2's already-sealed `ModelRuntimeAdapter_LoadAndVerify` /
