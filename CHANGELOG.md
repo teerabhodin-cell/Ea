@@ -4,6 +4,43 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B8.4 Commit 3: Runtime Determinism and Handle-Lifetime Seal, Same Runtime Only (PASSED 2026-08-20)
+
+Opens after B8.4 Commit 2 PASSED (61/61). Implements
+`Docs/PhaseB_B8_4_Commit3_RuntimeDeterminism.md` (frozen before code).
+See `Docs/PhaseB_B8_4_Commit3_RuntimeDeterminismStatus.md`. Confirmed
+on a real MetaEditor run: `MLQuantAI_Test_B8_4_Commit3_RuntimeDeterminism.mq5`
+38/38 ALL PASS. Merged to `mlquantai`. The manual terminal-restart
+checklist (see the frozen contract) is still outstanding, tracked
+separately from this automated result.
+
+Zero new production functions or constants - every test exercises
+Commit 2's already-sealed `ModelRuntimeAdapter_LoadAndVerify` /
+`ModelRuntimeAdapter_ValidateContractAndRun` / `Ids_Sha256HexBytes`
+exactly as they are, against new fixtures/scenarios only. Scoped
+explicitly to what this environment can prove: same machine, same
+tested CPU provider - no cross-machine/cross-provider claim.
+
+### Added
+- `Tests/Fixtures/MLQuantAI_ONNX_Fixture_Valid_Relocated_V1.onnx` (new):
+  byte-identical copy of the sealed `..._Valid_V1.onnx` (same SHA-256),
+  proving artifact relocation without touching the artifact's identity.
+- `Tests/MLQuantAI_Test_B8_4_Commit3_RuntimeDeterminism.mq5` (new, 6
+  test functions): artifact relocation; input-perturbation sensitivity
+  (two real, independently-`onnxruntime`-computed outputs - `0.5094773`
+  vs `0.4129363` - on the same fixture, framed as model-fixture-specific,
+  not a universal claim); released-handle reuse (deterministic
+  fail-closed, no crash); one-call handle lifetime (no cross-cycle
+  leak); no mutation; no side effects (structural, referencing Commit
+  2's own proof rather than duplicating it).
+
+### Scope note
+- This commit does NOT claim bitwise cross-machine equivalence,
+  cross-provider equivalence, or automated terminal-restart proof - a
+  manual verification checklist for terminal-restart determinism is
+  documented separately and is not part of the automated pass/fail
+  count.
+
 ## [Unreleased] - Phase B8.4 Commit 2: Artifact Integrity + Runtime Adapter, Tier B (PASSED 2026-08-20)
 
 Opens after B8.4 Commit 1 PASSED (111/111). Implements
