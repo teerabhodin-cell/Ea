@@ -102,4 +102,10 @@
 #define MLQUANTAI_ONNX_OUTPUT_TENSOR_NAME "output"
 #define MLQUANTAI_ONNX_BATCH_SIZE 1 // dimension 0 of both input and output tensors
 
+// B8.5: AIDecision's own record-shape stamp - distinct from
+// MLQUANTAI_INFERENCE_CONTRACT_B8_4_V1 (InferenceResult's shape, which
+// AIDecision consumes but does not restamp). See
+// Docs/PhaseB_B8_5_AIDecisionContract.md.
+#define MLQUANTAI_AI_DECISION_SCHEMA_B8_5_V1 "AI_DECISION_B8_5_V1"
+
 #endif // __MLQUANTAI_CONTRACTVERSIONS_MQH__

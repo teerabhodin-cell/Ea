@@ -4,6 +4,36 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B8.5 Commit 1: AIDecision + Threshold-Policy Pure Mapping (Implemented)
+
+Opens after B8.4 SEALED (210/210 automated + manual restart checklist
+PASSED). Implements `Docs/PhaseB_B8_5_AIDecisionContract.md` (frozen
+before code). See `Docs/PhaseB_B8_5_AIDecisionStatus.md`. Not yet
+compiled/run by the user - status is Implemented, not PASSED.
+
+Pure mapping only: no `AI_DECISION_CREATED`, no event store, no
+ONNX/runtime call, no broker/account/tick call, no mutation of any
+input.
+
+### Added
+- `Core/MLQuantAI_Enums.mqh` (additive): `ENUM_AI_DECISION_OUTCOME`
+  (`NONE`/`ALLOW`/`REJECT`/`ABSTAIN`) + `AiDecisionOutcomeToString` -
+  a new enum, not a reuse of Phase A's `ENUM_AI_DECISION`
+  (`REDUCE_RISK` doesn't fit B8.5's scope).
+- `Core/MLQuantAI_ReasonCodes.mqh` (additive): `REASON_AI_ABSTAIN`,
+  appended at the true tail of `ENUM_REASON_CODE`.
+- `Core/MLQuantAI_ContractVersions.mqh` (additive):
+  `MLQUANTAI_AI_DECISION_SCHEMA_B8_5_V1`.
+- `Core/MLQuantAI_Ids.mqh` (additive): `Ids_AIDecisionId(candidateId, modelRegistryId, decisionPolicyVersion)`.
+- `AI/MLQuantAI_AIDecisionContract.mqh` (new): `AIDecisionPolicy` +
+  `AIDecision` structs, `AIDecision_Init`/`AIDecision_HashPayload`/
+  `AIDecision_ComputeHash`.
+- `AI/MLQuantAI_AIDecisionBuilder.mqh` (new): `AIDecision_Build` - the
+  fail-closed ladder frozen in the contract, taking both
+  `InferenceResult` and `FeatureSnapshot` as inputs (the former alone
+  carries no `candidate_id`/`candidate_hash`).
+- `Tests/MLQuantAI_Test_B8_5_AIDecision.mq5` (new, 13 test functions).
+
 ## [Unreleased] - Phase B8.4: FULLY SEALED (2026-08-20)
 
 Automated proof complete across all three commits — Commit 1 (Tier A)

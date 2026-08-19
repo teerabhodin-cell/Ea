@@ -91,6 +91,32 @@ string AiDecisionToString(ENUM_AI_DECISION d)
    return "UNKNOWN";
 }
 
+// Phase B8.5: the AIDecision outcome vocabulary - deliberately a NEW,
+// separate enum from ENUM_AI_DECISION above, not a reuse. ENUM_AI_DECISION
+// carries AI_DECISION_REDUCE_RISK, a risk-scaling capability B8.5 does not
+// have (AIDecision never touches RiskPlan/lot_size) - reusing it would
+// carry a value B8.5 can never legally produce. See
+// Docs/PhaseB_B8_5_AIDecisionContract.md's collision check.
+enum ENUM_AI_DECISION_OUTCOME
+{
+   AI_DECISION_OUTCOME_NONE,    // Init()/unfilled only - never a real decision's value
+   AI_DECISION_OUTCOME_ALLOW,
+   AI_DECISION_OUTCOME_REJECT,
+   AI_DECISION_OUTCOME_ABSTAIN  // frozen now, unreachable under Commit 1's threshold-only policy - reserved for a future explicit-abstain policy version
+};
+
+string AiDecisionOutcomeToString(ENUM_AI_DECISION_OUTCOME o)
+{
+   switch(o)
+   {
+      case AI_DECISION_OUTCOME_NONE:    return "NONE";
+      case AI_DECISION_OUTCOME_ALLOW:   return "ALLOW";
+      case AI_DECISION_OUTCOME_REJECT:  return "REJECT";
+      case AI_DECISION_OUTCOME_ABSTAIN: return "ABSTAIN";
+   }
+   return "UNKNOWN";
+}
+
 // The Global Risk Manager's final verdict on a candidate.
 enum ENUM_RISK_DECISION
 {
