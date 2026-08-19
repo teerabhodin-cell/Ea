@@ -44,6 +44,31 @@ string Ids_Sha256Hex(string text)
    return hex;
 }
 
+// Phase B8.4 Commit 2: SHA-256 of raw bytes, for verifying real binary
+// artifact files (e.g. an .onnx model) against a caller-declared
+// model_artifact_hash. Deliberately NOT built on top of Ids_Sha256Hex -
+// that function takes a string and round-trips it through
+// StringToCharArray(..., CP_UTF8), which is lossy/incorrect for
+// arbitrary binary data (not every byte sequence is valid UTF-8). This
+// sibling hashes the uchar[] buffer directly via the same CryptEncode
+// call, with no string conversion anywhere in the path. Same full
+// 64-hex-char (32-byte) SHA-256 digest as Ids_Sha256Hex - no truncation
+// (unlike Ids_Deterministic's short-ID truncation below, which this
+// function has nothing to do with).
+string Ids_Sha256HexBytes(const uchar &bytes[])
+{
+   uchar key[];   // hash methods ignore the key
+   uchar result[];
+   int hashLen = CryptEncode(CRYPT_HASH_SHA256, bytes, key, result);
+   if(hashLen <= 0)
+      return "";
+
+   string hex = "";
+   for(int i=0; i<ArraySize(result); i++)
+      hex += StringFormat("%02x", result[i]);
+   return hex;
+}
+
 string Ids_Deterministic(string prefix, string keyParts)
 {
    string h = Ids_Sha256Hex(keyParts);

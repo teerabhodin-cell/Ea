@@ -4,6 +4,97 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B8.4 Commit 2: Artifact Integrity + Runtime Adapter, Tier B (PASSED 2026-08-20)
+
+Opens after B8.4 Commit 1 PASSED (111/111). Implements
+`Docs/PhaseB_B8_4_Commit2_RuntimeAdapter.md` (frozen before code). See
+`Docs/PhaseB_B8_4_Commit2_RuntimeAdapterStatus.md` for the full record,
+including all three real compile/run iterations. Confirmed on the
+user's third real run: `MLQuantAI_Test_B8_4_Commit2_RuntimeAdapter.mq5`
+61/61 ALL PASS, including a real `OnnxRun` execution producing
+`0.5094773` - matching the value independently computed via real
+`onnxruntime` in Python. Merged to `mlquantai`.
+
+The project's first commit touching a real ONNX runtime, real binary
+file I/O, and MQL5's native `matrixf` tensor type. Every new/changed
+file was grepped for the `vector`/`matrix`/`vectorf`/`matrixf`
+bare-identifier collision that caused Commit 1's real 121-error compile
+failure - confirmed clean (only legitimate type declarations and prose
+in comments/strings).
+
+### Added
+- `Core/MLQuantAI_Ids.mqh` (additive): `Ids_Sha256HexBytes(const uchar &bytes[])`
+  - hashes raw bytes directly via `CryptEncode`, deliberately not built
+    on `Ids_Sha256Hex` (that function's `string` -> UTF-8 round-trip is
+    lossy/incorrect for arbitrary binary artifact bytes).
+- `Core/MLQuantAI_ContractVersions.mqh` (additive):
+  `MLQUANTAI_ONNX_INPUT_TENSOR_NAME`, `MLQUANTAI_ONNX_OUTPUT_TENSOR_NAME`,
+  `MLQUANTAI_ONNX_BATCH_SIZE`.
+- `Infrastructure/EventStore/MLQuantAI_ModelRuntimeAdapter.mqh` (new):
+  `ModelRuntimeAdapter_LoadAndVerify` (I1-I3: single-read, hash-verify
+  against `model_artifact_hash`, open an ONNX session from the exact
+  same verified buffer - never a path reload) and
+  `ModelRuntimeAdapter_ValidateContractAndRun` (I5-I6: real tensor
+  reflection against the frozen input/output contract, `OnnxRun`, raw
+  output handed to the caller - Tier A's `InferenceOutput_Validate`
+  stays the single validator, never duplicated here). Session handle
+  owned entirely inside the module, always released before returning.
+- `Tests/Fixtures/MLQuantAI_ONNX_Fixture_*.onnx` (7 new real binary
+  ONNX models, generated in Python, independently executed against real
+  `onnxruntime` before being checked in - not just structurally
+  validated): `Valid`, `Tampered`, `Garbage`, `WrongInputName`,
+  `WrongInputShape`, `WrongOutputShape`, `WrongInputDtype`.
+- `Tests/MLQuantAI_Test_B8_4_Commit2_RuntimeAdapter.mq5` (new, 12 test
+  functions) - the project's first non-runtime-independent test suite.
+
+### Fixed (caught during fixture generation, before any MQL5 code was written)
+- The first "wrong input dtype" fixture mixed a DOUBLE input against
+  FLOAT weights in a `Gemm` node - an invalid ONNX graph that fails to
+  load at all in real `onnxruntime`, not a dtype-mismatch-at-inspection
+  case as intended. Rebuilt as a fully self-consistent all-DOUBLE model,
+  which loads correctly and genuinely exercises the intended
+  `INPUT_TYPE_MISMATCH` reflection path.
+
+### Fixed (caught by the user's real MetaEditor compile - 28 errors)
+- `OnnxTypeInfo.type` was compared directly against `ONNX_DATA_TYPE_FLOAT`
+  (implicit-conversion warning, silently comparing the wrong enum), and
+  `.shape.dimensions` doesn't exist on the real struct
+  (`undeclared identifier 'shape'`, cascading into further errors).
+  Root cause, confirmed against https://www.mql5.com/en/docs/onnx/onnx_structures:
+  `OnnxTypeInfo.type` is the parameter *kind* (`ENUM_ONNX_TYPE` -
+  tensor/map/sequence), not the element data type; the data type and
+  shape both live one level down in a `.tensor` substruct
+  (`OnnxTensorTypeInfo.data_type` / `.dimensions[]`). Fixed by adding an
+  explicit `.type == ONNX_TYPE_TENSOR` check (a genuine correctness
+  improvement, not just a translation) before reading
+  `.tensor.data_type` / `.tensor.dimensions[]`. `matrixf`'s
+  constructor/indexing syntax and `OnnxRun`'s positional signature were
+  confirmed correct by the same compile attempt - zero errors past the
+  `OnnxTypeInfo` struct-access code.
+- The remaining ~14 `undeclared identifier 'Ids_Sha256HexBytes'` errors
+  were not a code bug: the source-of-truth `Core/MLQuantAI_Ids.mqh` in
+  this repo already had the function correctly defined. Points to the
+  compiled `MQL5\Include\MLQuantAI\Core\MLQuantAI_Ids.mqh` not having
+  been fully overwritten with the updated file - no code change made.
+
+### Fixed (caught by the user's real MetaEditor run, after both compile fixes above - 54/60 checks passing, all 6 remaining failures same root cause)
+- `OnnxRun` does not auto-size an empty output container -
+  `matrixf outputMatrix;` (default-constructed, zero-sized) failed for
+  real with `ONNX: parameter is empty`. Fixed by pre-sizing
+  `outputMatrix` to the exact `[1,1]` shape the I5 tensor-contract check
+  had already confirmed the model declares
+  (`matrixf outputMatrix(MLQUANTAI_ONNX_BATCH_SIZE, 1);`). All 6
+  failures (the accept-path test and the determinism test, the only two
+  that reach a real `OnnxRun` call) traced to this one root cause; every
+  negative-path test that never reaches `OnnxRun` passed cleanly.
+
+### Design decision made during implementation (within the frozen contract)
+- `ModelArtifact` carries no locator/path field (by design, per B8.3).
+  The runtime adapter takes the artifact file path as a plain
+  caller-supplied parameter, never a `ModelArtifact` field - consistent
+  with (and arguably strengthening) I3's locator-isolation principle,
+  and requires zero changes to the sealed `MLQuantAI_ModelArtifact.mqh`.
+
 ## [Unreleased] - Phase B8.4 Commit 1: Inference Contract, Tier A (PASSED 2026-08-19)
 
 Opens after B8.3 PASSED (106/106). Implements

@@ -47,7 +47,18 @@ including that fix. Tier A only: pinned `InferenceRequest` ->
 `ModelArtifact` compatibility + `FeatureSnapshot` lineage -> canonical
 12-value input vector -> typed output validation -> `InferenceResult`.
 No ONNX session, no model file I/O, no real runtime call anywhere in
-this commit. Current status:
+this commit.
+
+**Update (2026-08-20): B8.4 Commit 2 (Tier B) is now PASSED.** Artifact
+Integrity + Runtime Adapter — 61/61 ALL PASS on a real MetaEditor run,
+merged to `mlquantai`. The project's first commit touching a real ONNX
+runtime, real binary file I/O, and MQL5's native `matrixf` tensor type;
+three real compile/run iterations were needed (the exact `OnnxTypeInfo`
+struct shape and `OnnxRun`'s output-sizing requirement could not be
+verified from public docs before writing code, and both surfaced as
+real errors, root-caused and fixed against the real MQL5 API rather
+than guessed). See `Docs/PhaseB_B8_4_Commit2_RuntimeAdapterStatus.md`
+for the full evidence including all three fixes. Current status:
 
 ```
 B5    Candidate Provenance                 SEALED
@@ -56,12 +67,14 @@ B7    Deterministic RiskPlan               SEALED
 B8.1  Immutable FeatureSnapshot            SEALED
 B8.2  Training Dataset + Outcome Boundary  SEALED (394/394)
 B8.3  Model Registry + Artifact Contract   PASSED (106/106)
-B8.4  Commit 1 - Inference Contract, Tier A  PASSED (111/111)
-      Commit 2 - Artifact Integrity + Runtime Adapter (Tier B)  NEXT
+B8.4  Commit 1 - Inference Contract, Tier A              PASSED (111/111)
+      Commit 2 - Artifact Integrity + Runtime Adapter, Tier B  PASSED (61/61)
+      Commit 3 - Runtime Determinism / Failure                NEXT (proposed, not frozen)
 ```
 
-B8.4 Commit 2 (Tier B: real ONNX runtime adapter) is proposed next but
-not yet frozen. See the B8.3 direction note at the bottom of this doc
+B8.4 Commit 3 (cross-machine/cross-provider runtime determinism and
+failure-mode proofs) is proposed next but not yet frozen. See the B8.3
+direction note at the bottom of this doc
 for the pipeline B8.4 attaches to.
 
 ## The phase table
@@ -227,7 +240,8 @@ B7    -> RiskPlan
 B8.3  -> Artifact compatibility (SEALED - see above)
 B8.4  -> Inference
           Commit 1 - Tier A (PASSED - see above)
-          Commit 2 - Tier B, runtime adapter (proposed, not frozen)
+          Commit 2 - Tier B, runtime adapter (PASSED - see above)
+          Commit 3 - Runtime determinism/failure (proposed, not frozen)
 B8.5  -> AI Decision
 B9    -> Execution Eligibility
 C     -> Broker Execution
@@ -249,6 +263,32 @@ since no real runtime call happens in Tier A. See
 `Docs/PhaseB_B8_4_InferenceContract.md` (frozen contract) and
 `Docs/PhaseB_B8_4_InferenceTierA.md` (implementation + evidence,
 including the real compile-failure-and-fix) for the full record.
+
+## B8.4 Commit 2 (PASSED — 61/61, see the update above)
+
+Artifact Integrity + Runtime Adapter, Tier B — real ONNX. `Ids_Sha256HexBytes`
+(raw-byte SHA-256, no string round-trip) -> `ModelRuntimeAdapter_LoadAndVerify`
+(single-read the artifact, hash-verify against `model_artifact_hash`,
+open an `OnnxCreateFromBuffer` session from the exact same verified
+buffer - never a path reload) -> `ModelRuntimeAdapter_ValidateContractAndRun`
+(real tensor reflection against the frozen input/output contract,
+`OnnxRun`, raw output handed to Commit 1's `InferenceOutput_Validate`
+unchanged - never a second validator). Session handle owned entirely
+inside the module, always released before returning. `ModelArtifact`
+carries no locator/path field by design (per B8.3) - the runtime
+adapter takes the file path as a plain caller-supplied parameter,
+strengthening rather than violating I3's locator-isolation principle.
+7 real `.onnx` fixtures (generated in Python, independently executed
+against real `onnxruntime` before being checked in) exercise hash
+mismatch, missing/corrupt/non-ONNX files, and wrong tensor name/shape/dtype,
+each isolated to its own fixture. Three real compile/run iterations
+were needed - `OnnxTypeInfo`'s exact struct shape and `OnnxRun`'s
+output-sizing requirement were the two API surfaces that could not be
+verified from public docs before writing code, and both were the
+actual root causes hit, not a guess proven wrong by something else. See
+`Docs/PhaseB_B8_4_Commit2_RuntimeAdapter.md` (frozen contract) and
+`Docs/PhaseB_B8_4_Commit2_RuntimeAdapterStatus.md` (implementation +
+evidence, including all three real fixes) for the full record.
 
 ```
 TrainingDataset (B8.2, sealed)

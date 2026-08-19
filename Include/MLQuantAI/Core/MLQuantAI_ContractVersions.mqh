@@ -89,4 +89,17 @@
 #define MLQUANTAI_INFERENCE_INPUT_LENGTH_B8_1_V1 12
 #define MLQUANTAI_OUTPUT_SCHEMA_P_SUCCESS_V1     "OUTPUT_P_SUCCESS_V1"
 
+// B8.4 Commit 2 (Tier B): the exact ONNX tensor contract every
+// PROMOTED artifact's model file must expose, for the one frozen
+// INPUT_SCHEMA_V1/OUTPUT_P_SUCCESS_V1 pairing this phase supports.
+// ModelArtifact carries no literal tensor name/shape/dtype fields
+// (input_schema_version/output_schema_version are version identifiers,
+// not shape declarations) - these are the fixed values that version
+// identifier maps to, frozen here rather than duplicated per-artifact.
+// A future input/output schema version would freeze its own constants
+// alongside these, never redefine them.
+#define MLQUANTAI_ONNX_INPUT_TENSOR_NAME  "input"
+#define MLQUANTAI_ONNX_OUTPUT_TENSOR_NAME "output"
+#define MLQUANTAI_ONNX_BATCH_SIZE 1 // dimension 0 of both input and output tensors
+
 #endif // __MLQUANTAI_CONTRACTVERSIONS_MQH__
