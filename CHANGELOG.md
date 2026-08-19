@@ -4,6 +4,62 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B8.2 Commit 2: FeatureSnapshot Persistence + Deterministic Training Dataset Export (PASSED 2026-08-19)
+
+Opens after B8.2 Commit 1 PASSED (76/76) and merged. Implements
+`Docs/PhaseB_B8_2_Commit2_ExportContract.md` (frozen before code). See
+`Docs/PhaseB_B8_2_Commit2_Export.md`. Confirmed on a real compile/test
+run: `MLQuantAI_Test_B8_2_Commit2_Export.mq5` 105/105 ALL PASS
+(Commit 1's own suite re-confirmed 76/76 on the same run, unaffected).
+
+Expanded from the original proposal after a collision check found the
+proposed export pipeline assumed a `FeatureSnapshotProjection` that
+never existed - B8.1 shipped `FeatureSnapshot` with zero event
+emission, and no B8 roadmap commit had added one. User-confirmed
+resolution: add the missing persistence layer first (Part 0, mirroring
+B7 Commit 2's own `RiskPlan` event/projection pattern), then build the
+export orchestration on top (Part 1).
+
+### Added
+- `Core/MLQuantAI_Enums.mqh` (additive): `EVENT_TYPE_FEATURE_SNAPSHOT_CREATED`
+  + `EventTypeToString`/`EventTypeFromString` cases.
+- `Infrastructure/EventStore/MLQuantAI_FeatureSnapshotEventEmission.mqh`
+  (new): `FeatureSnapshot_EmitFeatureSnapshotCreated` - mirrors
+  `RiskPlan_EmitRiskPlanCreated`, guard is `feature_snapshot_id == ""`
+  (no `allowed` field on `FeatureSnapshot`).
+- `Infrastructure/EventStore/MLQuantAI_FeatureSnapshotProjection.mqh`
+  (new): `FeatureSnapshotProjectionRecord` registry, required-field/
+  numerical-integrity validation, payload-aware collision-vs-duplicate
+  detection, referential-integrity check against `CandidateProjection`,
+  `EventStoreValidator`-gated atomic rebuild.
+- `Core/MLQuantAI_Ids.mqh` (additive): `Ids_TrainingDatasetId(fileName, modelTarget, datasetHash)`.
+- `AI/MLQuantAI_TrainingDatasetRow.mqh` (additive):
+  `TrainingDatasetManifest.labeled_count` field.
+- `Infrastructure/EventStore/MLQuantAI_TrainingDatasetExport.mqh`
+  (new): `TrainingDatasetExport_BuildDataset` - deterministic, read-only
+  export joining `CandidateProjection`/`FeatureSnapshotProjection`/
+  `RiskPlanProjection`, calling the sealed `BuildTrainingDatasetRow`
+  (Commit 1) once per qualifying candidate. Skips candidates missing a
+  `FeatureSnapshot`/ALLOWED `RiskPlan` (normal lifecycle state); fails
+  closed only on `EventStoreValidator`/projection-rebuild failure or a
+  mixed-cohort condition; rows ordered by `setup_anchor_bar_time ASC,
+  dataset_row_id ASC`; `source_store_fingerprint` hashes every
+  validated input line in original order.
+- `Tests/MLQuantAI_Test_B8_2_Commit2_Export.mq5` (new, 19 test
+  functions covering both Part 0 and Part 1, including the user's own
+  explicitly-requested matrix: mixed-cohort rejection, duplicate-identity
+  policy, read-only proof, exclusion proof).
+
+### Fixed (caught during self-review, before any test run)
+- `is_kill_zone` would have silently read back `false` always -
+  `EventSerializer_GetStr`'s needle requires a quoted value, but
+  `is_kill_zone` is emitted as an unquoted JSON boolean literal. Fixed
+  with a local `FeatureSnapshotProjection_GetBoolLiteral` helper.
+- `TrainingDatasetExport_SortRows`'s insertion sort never actually
+  shifted the parallel `anchorTimes[]` array in lockstep with `rows[]`
+  despite a comment claiming it did - would have desynced row order.
+  Fixed, which required dropping `const` from the `anchorTimes` parameter.
+
 ## [Unreleased] - Phase B8.2 Commit 1: Training Dataset Row/Manifest Contract (PASSED 2026-08-19)
 
 Opens Phase B8.2 ("training dataset contract") after B8.1 PASSED

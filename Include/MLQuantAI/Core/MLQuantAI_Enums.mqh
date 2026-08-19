@@ -158,7 +158,13 @@ enum ENUM_EVENT_TYPE
    // an insertion wouldn't actually break anything in practice, but
    // appending at the end keeps that guarantee trivially true rather
    // than relying on it.
-   EVENT_TYPE_RISK_PLAN_CREATED
+   EVENT_TYPE_RISK_PLAN_CREATED,
+
+   // Phase B8.2 Commit 2: same append-at-end rule as
+   // EVENT_TYPE_RISK_PLAN_CREATED above - a FeatureSnapshot is a
+   // derived artifact tied to a candidate (SystemEvent), not a
+   // candidate lifecycle transition.
+   EVENT_TYPE_FEATURE_SNAPSHOT_CREATED
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -189,6 +195,7 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_POSITION_CLOSED:                    return "POSITION_CLOSED";
       case EVENT_TYPE_TRADE_OUTCOME_LABELED:               return "TRADE_OUTCOME_LABELED";
       case EVENT_TYPE_RISK_PLAN_CREATED:                  return "RISK_PLAN_CREATED";
+      case EVENT_TYPE_FEATURE_SNAPSHOT_CREATED:           return "FEATURE_SNAPSHOT_CREATED";
    }
    return "UNKNOWN";
 }
@@ -219,6 +226,7 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "POSITION_CLOSED")                   return EVENT_TYPE_POSITION_CLOSED;
    if(s == "TRADE_OUTCOME_LABELED")             return EVENT_TYPE_TRADE_OUTCOME_LABELED;
    if(s == "RISK_PLAN_CREATED")                 return EVENT_TYPE_RISK_PLAN_CREATED;
+   if(s == "FEATURE_SNAPSHOT_CREATED")          return EVENT_TYPE_FEATURE_SNAPSHOT_CREATED;
    return EVENT_TYPE_UNKNOWN;
 }
 

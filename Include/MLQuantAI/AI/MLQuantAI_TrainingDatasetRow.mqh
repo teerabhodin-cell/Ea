@@ -189,8 +189,9 @@ struct TrainingDatasetManifest
    int    train_count;
    int    validation_count;
    int    test_count;
+   int    labeled_count;     // additive, B8.2 Commit 2 - always 0 in Commit 2's own output
    int    unlabeled_count;
-   string source_store_fingerprint; // NOT populated by Commit 1 - see contract doc section 6
+   string source_store_fingerprint; // populated starting B8.2 Commit 2 - see Docs/PhaseB_B8_2_Commit2_ExportContract.md
 };
 
 void TrainingDatasetManifest_Init(TrainingDatasetManifest &m)
@@ -206,6 +207,7 @@ void TrainingDatasetManifest_Init(TrainingDatasetManifest &m)
    m.train_count = 0;
    m.validation_count = 0;
    m.test_count = 0;
+   m.labeled_count = 0;
    m.unlabeled_count = 0;
    m.source_store_fingerprint = "";
 }
