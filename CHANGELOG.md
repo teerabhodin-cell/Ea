@@ -4,6 +4,52 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B8.2 Commit 3: Outcome/Label Boundary (PASSED 2026-08-19)
+
+Opens after B8.2 Commit 2 PASSED (105/105) and merged. Implements
+`Docs/PhaseB_B8_2_Commit3_OutcomeLabelContract.md` (frozen before
+code). See `Docs/PhaseB_B8_2_Commit3_OutcomeLabel.md`. Confirmed on a
+real compile/test run: `MLQuantAI_Test_B8_2_Commit3_OutcomeLabel.mq5`
+109/109 ALL PASS.
+
+Freezing this contract required resolving three open design questions
+first (all confirmed): RealizedOutcome is built/tested from synthetic
+fixtures only (no live Execution Engine exists - B9/C are future
+phases); `candidate_time` = `setup_anchor_bar_time` (the only real
+time anchor in the B8.2 lineage); the manifest gets only
+`candidate_count`/`incomplete_count`, not permanently-dead
+`rejected_count`/`first_rejection_reason` fields.
+
+### Added
+- Part 0 (Commit 2 addendum, no behavior change): `TrainingDatasetManifest.candidate_count`/
+  `.incomplete_count` (additive), populated by
+  `TrainingDatasetExport_BuildDataset`'s existing skip paths.
+- `Core/MLQuantAI_ContractVersions.mqh` (additive):
+  `MLQUANTAI_REALIZED_OUTCOME_SCHEMA_B8_2_V1`.
+- `Core/MLQuantAI_Ids.mqh` (additive):
+  `Ids_RealizedOutcomeId(candidateId, labelSchemaVersion)`.
+- `AI/MLQuantAI_RealizedOutcome.mqh` (new): `RealizedOutcome` struct -
+  a single full-record hash, no two-hash split (unlike `FeatureSnapshot`).
+- `AI/MLQuantAI_RealizedOutcomeBuilder.mqh` (new):
+  `RealizedOutcome_Build` - fail-closed validation including a strict
+  temporal boundary (`outcome_time` must be after
+  `candidate.setup_anchor_bar_time`) and a fixed label schema version.
+- `Infrastructure/EventStore/MLQuantAI_RealizedOutcomeEventEmission.mqh`
+  (new): `RealizedOutcome_EmitTradeOutcomeLabeled` - reuses the dormant
+  Phase A `EVENT_TYPE_TRADE_OUTCOME_LABELED` enum slot.
+- `Infrastructure/EventStore/MLQuantAI_RealizedOutcomeProjection.mqh`
+  (new): registry with referential integrity AND a replay-time
+  temporal-boundary re-check against `CandidateProjection`.
+- `Infrastructure/EventStore/MLQuantAI_TrainingDatasetExport.mqh`
+  (extended, signature unchanged): looks up a `RealizedOutcome` per
+  candidate and passes real label fields to `BuildTrainingDatasetRow`
+  when found; `labeled_count`/`unlabeled_count` now tallied for real.
+- `Tests/MLQuantAI_Test_B8_2_Commit3_OutcomeLabel.mq5` (new, 18 test
+  functions): the 7 groups from the frozen contract, including an
+  empirical leakage-protection proof (feature hashes unchanged
+  before/after a `RealizedOutcome` exists for a candidate) and a
+  split-stability regression test.
+
 ## [Unreleased] - Phase B8.2 Commit 2: FeatureSnapshot Persistence + Deterministic Training Dataset Export (PASSED 2026-08-19)
 
 Opens after B8.2 Commit 1 PASSED (76/76) and merged. Implements

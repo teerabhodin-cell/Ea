@@ -59,4 +59,14 @@
 #define MLQUANTAI_LABEL_SCHEMA_B8_2_V1     "LABEL_B8_2_V1"
 #define MLQUANTAI_DATASET_SPLIT_POLICY_V1  "SPLIT_70_15_15_V1"
 
+// B8.2 Commit 3: RealizedOutcome's own schema stamp - distinct from
+// MLQUANTAI_LABEL_SCHEMA_B8_2_V1 (TrainingDatasetRow's label-schema
+// field, which RealizedOutcome_Build requires every RealizedOutcome's
+// own label_schema_version to equal - see
+// Docs/PhaseB_B8_2_Commit3_OutcomeLabelContract.md scope decision 5).
+// This constant versions RealizedOutcome's own record SHAPE, the same
+// role MLQUANTAI_RISK_PLAN_SCHEMA_V1/MLQUANTAI_DATASET_SCHEMA_B8_2_V1
+// already play for their own structs.
+#define MLQUANTAI_REALIZED_OUTCOME_SCHEMA_B8_2_V1 "REALIZED_OUTCOME_B8_2_V1"
+
 #endif // __MLQUANTAI_CONTRACTVERSIONS_MQH__

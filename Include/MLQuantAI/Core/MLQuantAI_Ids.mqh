@@ -150,6 +150,21 @@ string Ids_TrainingDatasetId(string fileName, string modelTarget, string dataset
    return Ids_Deterministic("TDSET", key);
 }
 
+// realized_outcome_id (Phase B8.2 Commit 3): one candidate's realized
+// outcome under one label schema. Depends only on candidate_id +
+// label_schema_version - deliberately independent of the outcome's
+// own computed content (label, outcome_reference, outcome_hash,
+// outcome_time), the same identity philosophy Ids_RiskPlanId/
+// Ids_FeatureSnapshotId already established: "same identity, different
+// hash" must always mean a genuine drift/collision signal on replay,
+// never an ordinary expected state. See
+// Docs/PhaseB_B8_2_Commit3_OutcomeLabelContract.md section "Identity".
+string Ids_RealizedOutcomeId(string candidateId, string labelSchemaVersion)
+{
+   string key = candidateId + "|" + labelSchemaVersion;
+   return Ids_Deterministic("OUT", key);
+}
+
 int g_Ids_SessionCounter = 0;
 
 // runtime_session_id: identifies one EA run. Deliberately NOT deterministic
