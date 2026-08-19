@@ -4,6 +4,45 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B8.2 Commit 4: Full-Chain Integration + Regression Proof (PASSED 2026-08-19) - B8.2 SEALED
+
+Opens after B8.2 Commit 3 PASSED (109/109) and merged. Implements
+`Docs/PhaseB_B8_2_Commit4_SealRegression.md` (frozen before code). See
+`Docs/PhaseB_B8_2_Commit4_Seal.md`. Confirmed on a real compile/test
+run: `MLQuantAI_Test_B8_2_Commit4_SealRegression.mq5` 104/104 ALL PASS,
+plus the full manual regression checklist (Commit 1: 76/76, Commit 2:
+105/105, Commit 3: 109/109) re-run clean in the same session, zero
+regressions.
+
+**B8.2 Training Dataset + Outcome Boundary is now SEALED. Total:
+76 + 105 + 109 + 104 = 394/394.** No further change to any B8.2
+production file is permitted going forward.
+
+Adds zero new production behavior - purely a test-suite commit proving
+the already-shipped B8.2 pieces (Commits 1-3) compose correctly end to
+end, the same role B7 Commit 3 played for B7. Proves 4 critical gates
+compositionally (not just per-layer, as Commits 1-3 already did):
+outcome never reaches back into AI input; incomplete candidates are a
+skip while corrupted artifacts fail the whole export closed; a
+collision at any single layer blocks the export itself; export is
+atomic (valid store -> full output, corrupted store -> zero output +
+`Init()` manifest). Also clarifies `LABELED_ONLY`: checked the
+codebase first (zero matches) - since this commit adds no new
+production code, it is proven as a pure client-side filter over
+already-shipped fields (`label_available`, `manifest.labeled_count`),
+built in test code only.
+
+### Added
+- `Tests/MLQuantAI_Test_B8_2_Commit4_SealRegression.mq5` (new, 8 test
+  functions): `Test_FullChain_EndToEndLinkage`,
+  `Test_CrossLayerFailure_CorruptedCandidateBlocksWholeChain`,
+  `Test_IncompleteAndCorrupt_AreNotTheSame`,
+  `Test_Leakage_MultiCandidateCohort`,
+  `Test_CollisionAnywhereBlocksExport`,
+  `Test_ExportAtomicity_ValidVsCorrupted`,
+  `Test_LabeledOnlyView_IsPureDerivedFilter`,
+  `Test_FullChainRestartSimulation_MultiCandidate`.
+
 ## [Unreleased] - Phase B8.2 Commit 3: Outcome/Label Boundary (PASSED 2026-08-19)
 
 Opens after B8.2 Commit 2 PASSED (105/105) and merged. Implements
