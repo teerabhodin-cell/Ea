@@ -40,6 +40,23 @@ written** - zero errors were reported anywhere past the `OnnxTypeInfo`
 struct-access code, even though that was flagged as equally uncertain
 before this attempt.
 
+**A second real compile+run (after both fixes above) got to 54/60
+checks passing, then failed all 6 remaining checks with the exact same
+real runtime error: `ONNX: parameter is empty` at the `OnnxRun` call.**
+Root cause: `OnnxRun` does not auto-size an empty output container -
+`matrixf outputMatrix;` (default-constructed, zero-sized) is rejected
+outright, unlike an API that fills whatever container you hand it.
+Fixed by pre-sizing `outputMatrix` to the exact `[1,1]` shape the I5
+tensor-contract check had already confirmed the model declares
+(`matrixf outputMatrix(MLQUANTAI_ONNX_BATCH_SIZE, 1);`) - this is also
+why I5 running before `OnnxRun` matters structurally, not just as a
+rejection gate: the shape used to pre-size the output buffer is a
+verified value, never an assumed one. All 6 failures traced to this
+one root cause (the accept-path test and the determinism test, which
+both call `OnnxRun` for real); every negative-path test that never
+reaches `OnnxRun` (wrong name/shape/dtype, hash mismatch, missing
+file, garbage bytes) passed cleanly on this same run.
+
 ## What was verified against real MQL5 documentation before writing code
 
 - `CryptEncode(ENUM_CRYPT_METHOD, const uchar &data[], const uchar &key[], uchar &result[])`

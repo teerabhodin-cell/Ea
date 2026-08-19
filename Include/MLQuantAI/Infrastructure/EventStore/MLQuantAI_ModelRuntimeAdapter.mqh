@@ -226,7 +226,12 @@ bool ModelRuntimeAdapter_ValidateContractAndRun(long sessionHandle, const float 
    for(int i = 0; i < MLQUANTAI_INFERENCE_INPUT_LENGTH_B8_1_V1; i++)
       inputMatrix[0][i] = canonicalVector[i];
 
-   matrixf outputMatrix;
+   // OnnxRun does NOT auto-size an empty output container - a real run
+   // failed with "parameter is empty" against a default-constructed
+   // matrixf. Pre-size to the exact [1,1] shape already confirmed by
+   // the I5 tensor-contract check above (this is why that check running
+   // first matters - the shape used here is verified, not assumed).
+   matrixf outputMatrix(MLQUANTAI_ONNX_BATCH_SIZE, 1);
    bool ranOk = OnnxRun(sessionHandle, 0, inputMatrix, outputMatrix);
    OnnxRelease(sessionHandle); // the session never outlives this call, success or failure
 

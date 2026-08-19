@@ -75,6 +75,17 @@ in comments/strings).
   compiled `MQL5\Include\MLQuantAI\Core\MLQuantAI_Ids.mqh` not having
   been fully overwritten with the updated file - no code change made.
 
+### Fixed (caught by the user's real MetaEditor run, after both compile fixes above - 54/60 checks passing, all 6 remaining failures same root cause)
+- `OnnxRun` does not auto-size an empty output container -
+  `matrixf outputMatrix;` (default-constructed, zero-sized) failed for
+  real with `ONNX: parameter is empty`. Fixed by pre-sizing
+  `outputMatrix` to the exact `[1,1]` shape the I5 tensor-contract check
+  had already confirmed the model declares
+  (`matrixf outputMatrix(MLQUANTAI_ONNX_BATCH_SIZE, 1);`). All 6
+  failures (the accept-path test and the determinism test, the only two
+  that reach a real `OnnxRun` call) traced to this one root cause; every
+  negative-path test that never reaches `OnnxRun` passed cleanly.
+
 ### Design decision made during implementation (within the frozen contract)
 - `ModelArtifact` carries no locator/path field (by design, per B8.3).
   The runtime adapter takes the artifact file path as a plain
