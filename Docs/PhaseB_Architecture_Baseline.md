@@ -28,8 +28,13 @@ Commit 1 76/76, Commit 2 105/105, Commit 3 109/109, Commit 4 104/104,
 total **394/394** — with the full manual regression checklist re-run
 clean and zero regressions in the same MetaEditor session as Commit
 4's own suite. See `Docs/PhaseB_B8_1_FeatureSnapshot.md` and
-`Docs/PhaseB_B8_2_Commit4_Seal.md` for the full evidence. Current
-status:
+`Docs/PhaseB_B8_2_Commit4_Seal.md` for the full evidence.
+
+**Update (2026-08-19, same day): B8.3 is now PASSED.** `ModelArtifact`
+Registry / Compatibility Contract — 106/106 ALL PASS, merged to
+`mlquantai`. Registry/compatibility only, as scoped: no ONNX loading,
+no inference, no scoring. See `Docs/PhaseB_B8_3_ModelRegistry.md` for
+the full evidence. Current status:
 
 ```
 B5    Candidate Provenance                 SEALED
@@ -37,12 +42,12 @@ B6    Candidate Projection / Lineage       SEALED
 B7    Deterministic RiskPlan               SEALED
 B8.1  Immutable FeatureSnapshot            SEALED
 B8.2  Training Dataset + Outcome Boundary  SEALED (394/394)
-B8.3  Model Registry + Artifact Contract   NEXT
+B8.3  Model Registry + Artifact Contract   PASSED (106/106)
+B8.4  Inference Contract                   NEXT
 ```
 
-B8.3 is open next, registry/compatibility-contract only — no ONNX
-loading, no inference, no scoring. See the B8.3 direction note at the
-bottom of this doc.
+B8.4 is open next. See the B8.3 direction note at the bottom of this
+doc for the pipeline B8.4 attaches to.
 
 ## The phase table
 
@@ -194,17 +199,18 @@ final 394/394 tally. **No further change to any B8.2 production file
 is permitted** — anything B8.3+ needs goes through its own new
 contract/version there, never a retroactive edit to a sealed B8.2 file.
 
-## B8.3 (open next)
+## B8.3 (PASSED — 106/106, see the update above)
 
 Model Registry / Artifact Contract — **registry/compatibility contract
-only**. No ONNX loading, no inference, no scoring, no threshold, no
-BUY/SELL/execution decision of any kind in this commit; all of that is
-later layers' job:
+only**, exactly as scoped: no ONNX loading, no inference, no scoring,
+no threshold, no BUY/SELL/execution decision of any kind. See
+`Docs/PhaseB_B8_3_ModelRegistryContract.md` and
+`Docs/PhaseB_B8_3_ModelRegistry.md` for the full contract and evidence.
 
 ```
 B7    -> RiskPlan
-B8.3  -> Artifact compatibility (this commit)
-B8.4  -> Inference
+B8.3  -> Artifact compatibility (SEALED - see above)
+B8.4  -> Inference (open next)
 B8.5  -> AI Decision
 B9    -> Execution Eligibility
 C     -> Broker Execution
@@ -242,6 +248,16 @@ runtime, or training-dataset lineage is incompatible with the
 requested inference contract MUST be rejected fail-closed. The system
 MUST NOT silently select, downgrade to, or fall back to another model
 artifact.*
+
+**As actually frozen and shipped**: `artifact_hash` became two
+distinct fields — `model_artifact_hash` (external evidence, the real
+trained file's own hash) and `model_registry_hash` (internal,
+computed last, full-record integrity) — a refinement made during the
+B8.3 freeze itself, not a change from this note. The hard rule above
+is implemented verbatim by `ModelArtifact_CheckCompatibility`/
+`ModelRegistry_FindCompatible`. See
+`Docs/PhaseB_B8_3_ModelRegistryContract.md` for the exact, final field
+list and reasoning.
 
 Same collision-check discipline as every prior commit (B7/B8.1/B8.2's
 own gap) applies before writing anything: check the codebase for any
