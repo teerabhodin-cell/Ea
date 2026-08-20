@@ -572,3 +572,149 @@ No candidate-lifecycle state transition (`CANDIDATE_REJECTED_BY_AI` or
 any `ENUM_CANDIDATE_STATE`/`StateProjector` involvement), no B9
 execution-eligibility logic, no consumption of `AIDecisionProjection`
 by any other module yet, no `RiskPlan` coupling, no `AIResult` change.
+
+# Addendum — B8.5 Commit 3: full-chain integration + regression proof, seal
+
+**Status: FROZEN, before any code exists.** Written the moment Commit 2
+was confirmed PASSED (123/123, real MetaEditor run) and Commit 3 was
+confirmed to proceed. Mirrors B7 Commit 3
+(`Docs/PhaseB_B7_RiskPlanContract.md`'s own addendum) and B8.2 Commit 4
+most closely - both already sealed the same way. This commit adds
+**zero new production behavior**: no new threshold semantics, no new
+event schema, no new identity/hash seed, no new projection behavior,
+no new decision policy, no execution/order/broker call, no change to
+any already-sealed B5/B6/B7/B8.1/B8.2/B8.3/B8.4/B8.5-Commit-1/
+B8.5-Commit-2 production file. It is purely a test-suite commit proving
+the already-shipped pieces compose correctly end to end, plus the
+integration seams Commit 1's and Commit 2's own suites did not
+individually exercise.
+
+## The chain being proven
+
+```
+MARKET_CONTEXT_READY
+    -> CANDIDATE_CREATED
+    -> CandidateProjection
+    -> FEATURE_SNAPSHOT_CREATED  -> FeatureSnapshotProjection  ---\
+                                                                    |--> AIDecision_Build -> AI_DECISION_CREATED -> AIDecisionProjection
+    MODEL_ARTIFACT_REGISTERED    -> ModelArtifactProjection    ---/
+    -> Restart / Replay
+    -> identical lineage + state, both upstream chains
+```
+
+Unlike B7's chain (one upstream parent: `Candidate` -> `RiskPlan`),
+`AIDecision` has **two independent upstream parents** -
+`FeatureSnapshot` (itself candidate-derived) and `ModelArtifact`
+(not candidate-tied at all) - that converge only at `AIDecision`
+itself. Commit 3's genuinely-new coverage below is shaped by that
+difference.
+
+## What Commit 1's and Commit 2's own suites already cover (not re-proven here)
+
+`Test_B8_5_AIDecision.mq5` already proves `AIDecision_Build`'s
+fail-closed ladder, determinism, identity/hash sensitivity, and
+no-mutation/no-side-effects, in isolation from any event store.
+`Test_B8_5_Commit2_AIDecisionEvent.mq5` already builds every fixture
+through the real B5/B8.1/B8.3/B8.4 pipeline, already proves
+`AIDecisionProjection`'s own restart/multi-session/duplicate/collision
+behavior, already proves BOTH referential-integrity chains
+(`FeatureSnapshotProjection`, `ModelArtifactProjection`) reject an
+orphan or a mismatch on every individual field, and already proves
+field-by-field replay fidelity and the `ALLOW`/`REJECT`
+audit-evidence-only property. Commit 3 does not repeat any of that.
+
+## What's genuinely new in Commit 3
+
+1. **Explicit end-to-end linkage assertion in one place.** A single
+   test that, after a full rebuild, walks the whole chain forward from
+   a real `MARKET_CONTEXT_READY` event and asserts every hash/ID
+   matches its neighbor across all four layers: the candidate's
+   `context_hash` matches the real `MarketContext`'s own
+   `context_hash`; the snapshot's `candidate_id`/`candidate_hash`
+   match the real `CandidateProjection` record; the decision's
+   `feature_snapshot_id`/`feature_snapshot_hash`/`feature_vector_hash`
+   match the real `FeatureSnapshotProjection` record; the decision's
+   `model_registry_id`/`model_registry_hash`/`model_artifact_hash`
+   match the real `ModelArtifactProjection` record; the decision's
+   `ai_decision_id` is deterministically derived from that same
+   `candidate_id` + `model_registry_id` + `decision_policy_version`.
+   Commit 2's tests check each hash exists and round-trips correctly
+   in isolation; this test checks the chain of custody across all four
+   layers in one assertion sequence.
+2. **Cross-layer failure propagation, both upstream chains
+   independently** - not tested by Commit 2 or B8.1/B8.3 individually,
+   and the one point genuinely harder than B7's single-parent case: (a)
+   a corrupted/colliding `CANDIDATE_CREATED` or `FEATURE_SNAPSHOT_CREATED`
+   line must cause `AIDecisionProjection_RebuildFromFile` to ALSO fail
+   closed, since its own documented contract makes
+   `FeatureSnapshotProjection_RebuildFromFile` (which itself depends on
+   `CandidateProjection_RebuildFromFile`) a hard prerequisite; (b)
+   independently, a corrupted/colliding `MODEL_ARTIFACT_REGISTERED`
+   line must ALSO cause `AIDecisionProjection_RebuildFromFile` to fail
+   closed, since `ModelArtifactProjection_RebuildFromFile` on the same
+   file is an equally hard, but entirely independent, prerequisite.
+   Both propagation paths are proven separately - a bug that only
+   wires up one of the two dependency checks must be caught by this
+   commit.
+3. **Full-chain restart/crash simulation** - reopening the store fresh
+   (simulating an EA process restart) and rebuilding
+   `CandidateProjection`, `FeatureSnapshotProjection`,
+   `ModelArtifactProjection`, and `AIDecisionProjection` from scratch
+   twice, asserting all four layers' state is byte-identical across
+   both rebuilds, for a store holding multiple candidates/snapshots/
+   models/decisions together (not one at a time as Commit 2's restart
+   test did).
+4. **Multi-candidate, multi-model cross-linking check** - several
+   candidates, each with their own `FeatureSnapshot`, decided against a
+   mix of shared and distinct `ModelArtifact`s (proving the
+   two-independent-parents shape doesn't let a decision accidentally
+   pick up a neighboring candidate's snapshot or a neighboring
+   decision's model); after a full rebuild, every `AIDecision` must
+   link to exactly its own snapshot and its own model, never a
+   neighboring one.
+
+## Definition of Done
+
+- The full chain rebuilds state from the store alone (no in-memory
+  carry-over assumed).
+- Candidate/snapshot/model/decision linkage matches on every hash and
+  ID across all four layers, for every decision in a multi-candidate,
+  multi-model store.
+- A restart followed by replay reproduces byte-identical state in ALL
+  FOUR of `CandidateProjection`, `FeatureSnapshotProjection`,
+  `ModelArtifactProjection`, and `AIDecisionProjection`.
+- Duplicate and collision policy still hold correctly across every
+  layer boundary - a candidate-layer OR snapshot-layer OR model-layer
+  failure closes the decision-layer rebuild too, proven independently
+  for each of the two upstream chains.
+- A corrupted/truncated line anywhere fails the rebuild closed, with no
+  partial commit, regardless of which layer's line it corrupts.
+- No execution, order, broker, account, or candidate-lifecycle-state
+  transition results from either `ALLOW` or `REJECT` anywhere in this
+  commit's test suite.
+- The full B8.1/B8.3/B8.5 regression suite passes: every existing test
+  file directly in the event-store/projection chain this commit proves
+  (`Test_B8_1_FeatureSnapshot.mq5`, `Test_B8_3_ModelRegistry.mq5`,
+  `Test_B8_5_AIDecision.mq5`, `Test_B8_5_Commit2_AIDecisionEvent.mq5`)
+  plus the new `Test_B8_5_Commit3_IntegrationRegression.mq5` all re-run
+  clean in the same MetaEditor session - this is a manual re-run
+  checklist for whoever confirms this commit, not something one script
+  can automate, since MQL5 has no cross-script test runner.
+
+## Explicitly out of scope for this commit
+
+Any new threshold semantics, any event schema change, any identity/hash
+seed change, any projection behavior change, any new decision policy,
+any B9 execution-eligibility logic, any broker/order/execution call,
+any change to an already-sealed production file. If self-review during
+this commit surfaces an actual product-level gap (not just a
+test-coverage gap), that gets flagged to the user before any production
+file is touched - same discipline as every commit before this one.
+
+On a clean pass, this commit closes B8.5: **AIDecision + threshold-policy
+mapping (Commit 1) + durable event/projection/replay (Commit 2) +
+full-chain integration proof (Commit 3)**, sealed as the first layer
+with authority to interpret `p_success` as ALLOW/REJECT/ABSTAIN,
+still without execution authority - B9 remains the sole place
+`RiskPlan` + `AIDecision` + operational policy combine into
+`ELIGIBLE`/`REJECTED`.
