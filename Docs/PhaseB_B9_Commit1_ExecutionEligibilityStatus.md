@@ -1,6 +1,6 @@
 # Phase B9 — Commit 1: Execution Eligibility Pure Mapping
 
-**Status: Implemented, awaiting real compile/test confirmation.**
+**Status: PASSED (120/120, real MetaEditor run, 2026-08-20).**
 Implements `Docs/PhaseB_B9_ExecutionEligibilityContract.md` (frozen
 before code). Opens after B8.5 SEALED (254/254, all real MetaEditor
 runs). Pure mapping only - no event store, no state-machine transition,
@@ -85,5 +85,22 @@ no live account/tick/broker/`SafeMode` call, no mutation of any input.
   account/tick/`SafeMode_IsActive` call anywhere in
   `EligibilityDecision_Build`.
 
-Not yet compiled/run by the user - do not treat as PASSED or merge
-until a real MetaEditor log confirms it.
+## Real run 1 - undeclared identifier 'Ids_EligibilityDecisionId' (stale local file)
+
+First real compile attempt failed with 6 errors, all rooted in one
+cause: `undeclared identifier 'Ids_EligibilityDecisionId'` in
+`MLQuantAI_EligibilityBuilder.mqh`. Confirmed the real repo source
+already had the function - the user's local
+`MQL5\Include\MLQuantAI\Core\MLQuantAI_Ids.mqh` had simply not been
+overwritten with the sent file yet (same root cause class as several
+earlier phases this project - not a code bug). Resolved by re-copying
+the file; no code change needed.
+
+## Real run 2 - 120/120 ALL PASS (2026-08-20 23:06:07)
+
+Fresh real MetaEditor run after the file was correctly overwritten:
+**120/120 checks passed, ALL PASS**, across every group (accept path,
+AI veto REJECT/ABSTAIN, all 6 operational gates enabled+disabled, the
+margin-zero guard, precedence, every fail-closed case, determinism,
+identity/hash sensitivity, no-mutation, no-side-effects). **B9 Commit 1
+is PASSED.** Merged to `mlquantai`.

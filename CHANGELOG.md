@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B9 Commit 1: Execution Eligibility Pure Mapping (Implemented)
+## [Unreleased] - Phase B9 Commit 1: Execution Eligibility Pure Mapping (PASSED 2026-08-20)
 
 Opens after B8.5 SEALED (254/254, all real MetaEditor runs).
 Implements `Docs/PhaseB_B9_ExecutionEligibilityContract.md` (frozen
@@ -54,6 +54,13 @@ any input.
   each operational gate, then `ELIGIBLE`).
 - `Tests/MLQuantAI_Test_B9_ExecutionEligibility.mq5` (new, 22 test
   functions).
+
+Real MetaEditor run 1: 6 compile errors, all `undeclared identifier
+'Ids_EligibilityDecisionId'` - root cause was a stale local
+`MLQuantAI_Ids.mqh` (the sent file already had the function), not a
+code bug. Real MetaEditor run 2, after re-copying the file: **120/120
+checks passed, ALL PASS.** B9 Commit 1 is PASSED and merged to
+`mlquantai`.
 
 ## [Unreleased] - Phase B8.5: FULLY SEALED (2026-08-20)
 
