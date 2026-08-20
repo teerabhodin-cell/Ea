@@ -1,6 +1,6 @@
 # Phase C1.2 — ExecutionRequest Build + SafetyGate + Dry-Run Emission
 
-**Status: Implemented, awaiting real MetaEditor compile/test confirmation.**
+**Status: PASSED (128/128, real MetaEditor run, 2026-08-21).**
 Implements `Docs/PhaseC_C1_1_ExecutionRequestContract.md`'s C1.2
 addendum (frozen before code). Opens after C1.1's contract freeze was
 confirmed. Still **zero broker mutation** anywhere: no
@@ -105,11 +105,13 @@ use of the dormant `EVENT_TYPE_ORDER_*` event types.
 - No broker reconciliation query anywhere (`BrokerReconciliation.mqh`
   untouched, not a C1 prerequisite).
 
+## Result
+
+Real MetaEditor run: **128/128 checks passed, ALL PASS.** C1.2 is
+PASSED and merged to `mlquantai`.
+
 ## Next step
 
-Awaiting a real MetaEditor compile + run of
-`MLQuantAI_Test_C1_2_ExecutionRequestSafetyGate.mq5`. Only a genuine,
-clean real log moves this to PASSED and merges to `mlquantai`. C1.3
-("Audit event/read model, reconciliation state model, regression/seal,"
-per the already-discussed C1 roadmap) does not start without the
-user's explicit go-ahead after C1.2 is genuinely PASSED.
+C1.3 ("Audit event/read model, reconciliation state model,
+regression/seal," per the already-discussed C1 roadmap) does not start
+without the user's explicit go-ahead.

@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase C1.2: ExecutionRequest Build + SafetyGate + Dry-Run Emission (Implemented, awaiting real run)
+## [Unreleased] - Phase C1.2: ExecutionRequest Build + SafetyGate + Dry-Run Emission (PASSED 2026-08-21)
 
 Opens after C1.1's contract freeze was confirmed. Implements
 `Docs/PhaseC_C1_1_ExecutionRequestContract.md`'s C1.2 addendum: the
@@ -17,8 +17,7 @@ frozen 12-step, first-match-wins `SafetyGate_Evaluate` gate order,
 Still zero broker mutation anywhere - no `OrderSend`/`CTrade`/pending-
 order API, no `CANDIDATE_SUBMITTED` transition, no dormant
 `EVENT_TYPE_ORDER_*` use. See
-`Docs/PhaseC_C1_2_ExecutionRequestSafetyGateStatus.md`. Not yet
-compiled/run by the user - status is Implemented, not PASSED.
+`Docs/PhaseC_C1_2_ExecutionRequestSafetyGateStatus.md`.
 
 Two small amendments made to the C1.1 struct freeze before any code
 shipped (documented in the C1.2 addendum, not a later correction):
@@ -53,7 +52,8 @@ planned stop, deliberately NOT notional value).
 - `Tests/MLQuantAI_Test_C1_2_ExecutionRequestSafetyGate.mq5` (new, 20
   test functions).
 
-Not yet PASSED - awaiting a real MetaEditor compile/run.
+Real MetaEditor run: **128/128 checks passed, ALL PASS.** C1.2 is
+PASSED and merged to `mlquantai`.
 
 ## [Unreleased] - Phase C1.1: ExecutionRequest + Safety Gate + Dry-Run contract (frozen, no code yet)
 
