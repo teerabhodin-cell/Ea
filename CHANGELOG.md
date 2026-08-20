@@ -4,6 +4,60 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B9 Commit 2: EXECUTION_ELIGIBILITY_DECIDED Event + Lifecycle Wiring (PASSED 2026-08-20)
+
+Opens after B9 Commit 1 PASSED (120/120, real MetaEditor run,
+2026-08-20). Implements the Commit 2 addendum in
+`Docs/PhaseB_B9_ExecutionEligibilityContract.md` (frozen before code),
+after a collision check confirming `ENUM_EVENT_TYPE`'s true tail was
+still `EVENT_TYPE_AI_DECISION_CREATED`, that `EXECUTION_ELIGIBILITY_DECIDED`
+must be a `SystemEvent` (same family as `RISK_PLAN_CREATED`/
+`AI_DECISION_CREATED`) while `CANDIDATE_REJECTED_BY_RISK` is a real
+`LifecycleEvent` via the existing, sealed `EventStore_LogTransition` -
+the first B-phase commit needing two distinct event families in one
+commit - and resolving the design gap that `EligibilityContext` has no
+upstream event of its own by persisting its raw account/safe-mode
+evidence verbatim inside `EXECUTION_ELIGIBILITY_DECIDED`'s own payload,
+so replay can independently recompute and verify
+`eligibility_context_hash`. See
+`Docs/PhaseB_B9_Commit2_EligibilityEventStatus.md`.
+
+Event ordering is frozen: `EXECUTION_ELIGIBILITY_DECIDED` always first
+(`ELIGIBLE` and `REJECTED` both - audit evidence either way);
+`CANDIDATE_REJECTED_BY_RISK` only on `REJECTED`, only strictly after
+the decision event is already durable. `ELIGIBLE` never emits a
+lifecycle transition and never touches submission/order/broker in any
+way. Non-rollback failure-mode rule: if the decision write succeeds but
+the lifecycle write then fails, the already-durable decision event is
+never rewritten or deleted (append-only store) - the function returns
+`false`, meaning "decision durably recorded, lifecycle state may not
+reflect it yet," never "nothing happened."
+
+### Added
+- `Core/MLQuantAI_Enums.mqh` (additive):
+  `EVENT_TYPE_EXECUTION_ELIGIBILITY_DECIDED` + matching
+  `EventTypeToString`/`EventTypeFromString` cases.
+- `Execution/MLQuantAI_EligibilityEventEmission.mqh` (new):
+  `EligibilityDecision_ToExtraJson` (every `EligibilityDecision` field +
+  all 8 raw `AccountSnapshot` fields, prefixed `account_`, +
+  `safe_mode_active`) and
+  `EligibilityDecision_EmitDecisionAndWireLifecycle` - the Commit 2
+  boundary function implementing the frozen dual-emitter ordering and
+  non-rollback rule above.
+- `Execution/MLQuantAI_EligibilityDecisionProjection.mqh` (new): a
+  read-only registry that rebuilds and cross-verifies **three**
+  independent upstream chains (`RiskPlanProjection`,
+  `AIDecisionProjection`, `FeatureSnapshotProjection`, the last reached
+  both directly and via the AIDecision record) and reconstructs +
+  verifies each record's own `eligibility_context_hash` from its
+  persisted raw evidence - the mechanism that makes that evidence
+  protective, not merely informational.
+- `Tests/MLQuantAI_Test_B9_Commit2_EligibilityEvent.mq5` (new, 10 test
+  functions).
+
+Real MetaEditor run: **84/84 checks passed, ALL PASS.** B9 Commit 2 is
+PASSED and merged to `mlquantai`.
+
 ## [Unreleased] - Phase B9 Commit 1: Execution Eligibility Pure Mapping (PASSED 2026-08-20)
 
 Opens after B8.5 SEALED (254/254, all real MetaEditor runs).
