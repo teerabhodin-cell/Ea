@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B8.5 Commit 2: AI_DECISION_CREATED Event + AIDecisionProjection (Implemented)
+## [Unreleased] - Phase B8.5 Commit 2: AI_DECISION_CREATED Event + AIDecisionProjection (Implemented, fix applied after real run)
 
 Opens after Commit 1 PASSED (72/72, real MetaEditor run). Implements
 `Docs/PhaseB_B8_5_AIDecisionContract.md`'s Commit 2 addendum (frozen
@@ -14,8 +14,13 @@ before code, after a collision check against
 `EVENT_TYPE_AI_DECISION`/`AI_DECISION`/`ENUM_EVENT_TYPE`/
 `EVENT_TYPE_CANDIDATE_REJECTED_BY_AI`/`AIResult` - no ownership
 collisions found). See
-`Docs/PhaseB_B8_5_Commit2_AIDecisionEventStatus.md`. Not yet
-compiled/run by the user - status is Implemented, not PASSED.
+`Docs/PhaseB_B8_5_Commit2_AIDecisionEventStatus.md`. Real MetaEditor
+run 1: compiled clean, 122/123 checks passed, 1 real failure -
+root-caused to a test-file bug (an exact `==` check on a float-sourced,
+`CanonicalDouble`-round-tripped `p_success`, stricter than that
+formatter's own documented 8-decimal precision contract), fixed. Not
+yet re-confirmed - status remains Implemented, not PASSED, until a
+fresh clean run lands.
 
 Persistence + projection + replay only: no execution behavior for any
 `decision_outcome` (`ALLOW`/`REJECT`/`ABSTAIN` are all audit evidence
@@ -41,6 +46,21 @@ only), no candidate-lifecycle state transition, no B9 logic.
 - `Tests/MLQuantAI_Test_B8_5_Commit2_AIDecisionEvent.mq5` (new, 15 test
   functions, using the real B5/B8.1/B8.3/B8.4/B8.5-Commit-1 pipeline
   for every fixture).
+
+### Fixed (caught by the user's real MetaEditor run - NOT by self-review)
+- `Tests/MLQuantAI_Test_B8_5_Commit2_AIDecisionEvent.mq5`: real run 1
+  was 122/123 (1 fail: `p_success matches` in
+  `Test_ReplayFieldsMatchOriginal`). Root cause: `p_success` is
+  float-sourced (already known lossy, per Commit 1's own fix) AND
+  persisted through `CanonicalDouble`'s deliberately lossy 8-decimal
+  JSON round trip (`DoubleToString(x, 8)` -> `StringToDouble` on
+  replay) - the same documented precision contract the `RiskPlan`
+  Commit 2 test suite already calls out for arithmetic-derived doubles.
+  An exact `==` check was stricter than that contract promises. Fixed
+  with an epsilon comparison. Production code
+  (`AIDecision_EmitAIDecisionCreated`/`AIDecision_ToExtraJson`/
+  `AIDecisionProjection_ApplyLine`) was not touched. See
+  `Docs/PhaseB_B8_5_Commit2_AIDecisionEventStatus.md` for full detail.
 
 ## [Unreleased] - Phase B8.5 Commit 1: AIDecision + Threshold-Policy Pure Mapping (PASSED 2026-08-20)
 

@@ -71,5 +71,32 @@ only - no execution behavior for any `decision_outcome`.
   `AIDecision_EmitAIDecisionCreated`/`AIDecisionProjection` - verified
   by inspection.
 
-Not yet compiled/run by the user - do not treat as PASSED or merge
-until a real MetaEditor log confirms it.
+## Real run 1 - 122/123, 1 failure (caught by the user's real MetaEditor
+run, NOT by self-review)
+
+Compiled with zero errors. The real test run reported 122/123 checks
+passed, with one `[FAIL]` line: `p_success matches`, in
+`Test_ReplayFieldsMatchOriginal`.
+
+**Root cause: a bug in the TEST FILE, not in `AIDecision_EmitAIDecisionCreated`/
+`AIDecisionProjection`.** `p_success` originates from a `float`
+(`InferenceResult.output_values[0]`) widened to `double` inside
+`AIDecision_Build` - already known to be a lossy conversion (the same
+issue Commit 1's own test suite hit and fixed). On top of that,
+`AIDecision_ToExtraJson` persists `p_success` through `CanonicalDouble`
+(`DoubleToString(x, 8)`, a deliberately lossy 8-decimal round trip -
+the same established, documented contract the `RiskPlan` Commit 2 test
+suite already calls out for arithmetic-derived doubles). Reading the
+value back via `StringToDouble` on replay does not reproduce the
+original unrounded double bit-for-bit. The test's exact `==` check was
+stricter than `CanonicalDouble`'s own contract promises. Fixed by
+switching to an epsilon comparison (`MathAbs(rec.p_success - decision.p_success) < 0.000001`),
+comfortably above the ~5e-9 worst-case 8-decimal rounding bound and far
+below any real field-mapping bug's magnitude. Production code
+(`AIDecision_EmitAIDecisionCreated`, `AIDecision_ToExtraJson`,
+`AIDecisionProjection_ApplyLine`) was not touched - `CanonicalDouble`'s
+8-decimal precision is an intentional, pre-existing project convention,
+not a defect.
+
+Not yet re-confirmed - do not treat as PASSED or merge until a fresh
+real MetaEditor log shows a clean run.

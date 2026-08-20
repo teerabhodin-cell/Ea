@@ -526,7 +526,17 @@ void Test_ReplayFieldsMatchOriginal()
    Check(rec.decision_policy_version == decision.decision_policy_version, "decision_policy_version matches");
    Check(rec.threshold_version == decision.threshold_version, "threshold_version matches");
    Check(rec.allow_threshold == decision.allow_threshold, "allow_threshold matches");
-   Check(rec.p_success == decision.p_success, "p_success matches");
+   // p_success originates from a float (InferenceResult.output_values[0])
+   // widened to double, then round-tripped through CanonicalDouble's
+   // deliberately lossy 8-decimal JSON persistence (DoubleToString(x, 8))
+   // and back via StringToDouble on replay - not bit-identical to the
+   // original unrounded double, same category of precision loss the
+   // RiskPlan Commit 2 test suite already documents for arithmetic-
+   // derived doubles. An exact `==` is stricter than CanonicalDouble's
+   // own contract promises, hence the epsilon (comfortably above the
+   // ~5e-9 worst-case 8-decimal rounding bound, far below any real
+   // field-mapping bug's magnitude).
+   Check(MathAbs(rec.p_success - decision.p_success) < 0.000001, "p_success matches (within CanonicalDouble's 8-decimal round-trip precision)");
    Check(rec.decision_outcome == decision.decision_outcome, "decision_outcome matches");
    Check(rec.decision_reason_code == decision.decision_reason_code, "decision_reason_code matches");
 }
