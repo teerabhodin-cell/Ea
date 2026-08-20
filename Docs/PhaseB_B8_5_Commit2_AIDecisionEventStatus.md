@@ -1,6 +1,6 @@
 # Phase B8.5 — Commit 2: `AI_DECISION_CREATED` Event + `AIDecisionProjection`
 
-**Status: Implemented, awaiting real compile/test confirmation.**
+**Status: PASSED (123/123, real MetaEditor run, 2026-08-20).**
 Implements `Docs/PhaseB_B8_5_AIDecisionContract.md`'s Commit 2 addendum
 (frozen before code, after a collision check against
 `AI_DECISION_CREATED`/`AIDecisionProjection`/`AIDecisionRegistry`/
@@ -98,5 +98,11 @@ below any real field-mapping bug's magnitude. Production code
 8-decimal precision is an intentional, pre-existing project convention,
 not a defect.
 
-Not yet re-confirmed - do not treat as PASSED or merge until a fresh
-real MetaEditor log shows a clean run.
+## Real run 2 - 123/123 ALL PASS (2026-08-20 17:56:18)
+
+Fresh real MetaEditor run after the fix above: **123/123 checks
+passed**, including the exact assertion that failed in run 1
+(`p_success matches (within CanonicalDouble's 8-decimal round-trip
+precision)`), plus every replay/referential-integrity/restart/
+multi-session/no-side-effects group. **B8.5 Commit 2 is PASSED.**
+Merged to `mlquantai`.

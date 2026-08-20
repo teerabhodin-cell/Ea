@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B8.5 Commit 2: AI_DECISION_CREATED Event + AIDecisionProjection (Implemented, fix applied after real run)
+## [Unreleased] - Phase B8.5 Commit 2: AI_DECISION_CREATED Event + AIDecisionProjection (PASSED 2026-08-20)
 
 Opens after Commit 1 PASSED (72/72, real MetaEditor run). Implements
 `Docs/PhaseB_B8_5_AIDecisionContract.md`'s Commit 2 addendum (frozen
@@ -18,9 +18,9 @@ collisions found). See
 run 1: compiled clean, 122/123 checks passed, 1 real failure -
 root-caused to a test-file bug (an exact `==` check on a float-sourced,
 `CanonicalDouble`-round-tripped `p_success`, stricter than that
-formatter's own documented 8-decimal precision contract), fixed. Not
-yet re-confirmed - status remains Implemented, not PASSED, until a
-fresh clean run lands.
+formatter's own documented 8-decimal precision contract), fixed. Real
+MetaEditor run 2, after the fix: **123/123 checks passed, ALL PASS.**
+B8.5 Commit 2 is PASSED and merged to `mlquantai`.
 
 Persistence + projection + replay only: no execution behavior for any
 `decision_outcome` (`ALLOW`/`REJECT`/`ABSTAIN` are all audit evidence
