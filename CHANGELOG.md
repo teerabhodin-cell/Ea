@@ -4,14 +4,18 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B8.5 Commit 3: Full-Chain Integration + Regression Proof, Seal (Implemented)
+## [Unreleased] - Phase B8.5 Commit 3: Full-Chain Integration + Regression Proof, Seal (PASSED 59/59, seal pending)
 
 Opens after Commit 2 PASSED (123/123, real MetaEditor run). Implements
 `Docs/PhaseB_B8_5_AIDecisionContract.md`'s Commit 3 addendum (frozen
 before code, mirrors B7 Commit 3 / B8.2 Commit 4). See
-`Docs/PhaseB_B8_5_Commit3_IntegrationRegressionStatus.md`. Not yet
-compiled/run by the user - status is Implemented, not PASSED. Adds
-**zero new production behavior** - pure test-suite commit.
+`Docs/PhaseB_B8_5_Commit3_IntegrationRegressionStatus.md`. Real
+MetaEditor run: **59/59 checks passed, ALL PASS.** Adds **zero new
+production behavior** - pure test-suite commit. Per this commit's own
+Definition of Done, B8.5 is not yet declared SEALED until a manual
+re-run of `Test_B8_1_FeatureSnapshot.mq5`/`Test_B8_3_ModelRegistry.mq5`/
+`Test_B8_5_AIDecision.mq5`/`Test_B8_5_Commit2_AIDecisionEvent.mq5` in
+the same MetaEditor session also confirms clean.
 
 ### Added
 - `Tests/MLQuantAI_Test_B8_5_Commit3_IntegrationRegression.mq5` (new,

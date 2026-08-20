@@ -1,6 +1,7 @@
 # Phase B8.5 — Commit 3: Full-Chain Integration + Regression Proof, Seal
 
-**Status: Implemented, awaiting real compile/test confirmation.**
+**Status: PASSED (59/59, real MetaEditor run, 2026-08-20) — awaiting
+the manual 4-suite regression re-run before B8.5 is declared SEALED.**
 Implements `Docs/PhaseB_B8_5_AIDecisionContract.md`'s Commit 3 addendum
 (frozen before code). Opens after Commit 2 PASSED (123/123, real
 MetaEditor run). Adds **zero new production behavior** - no B5/B8.1/
@@ -46,9 +47,16 @@ duplicate/collision, single-field orphan/mismatch isolation for both
 upstream chains, malformed-line, single-decision restart/multi-session,
 field-fidelity, `ALLOW`/`REJECT` audit-evidence-only) already prove.
 
-Not yet compiled/run by the user - do not treat as PASSED or merge, and
-do not declare B8.5 SEALED, until a real MetaEditor log confirms this
-commit AND a manual re-run of `Test_B8_1_FeatureSnapshot.mq5`,
+## Real run - 59/59 ALL PASS (2026-08-20 18:07:39)
+
+Compiled clean, real MetaEditor run: **59/59 checks passed, ALL PASS**,
+across every group (end-to-end linkage, all three cross-layer failure
+propagation tests, full-chain restart, multi-candidate/multi-model
+cross-linking).
+
+Do not merge, and do not declare B8.5 SEALED, until a real MetaEditor
+log also confirms a manual re-run of `Test_B8_1_FeatureSnapshot.mq5`,
 `Test_B8_3_ModelRegistry.mq5`, `Test_B8_5_AIDecision.mq5`, and
 `Test_B8_5_Commit2_AIDecisionEvent.mq5` in the same session all still
-pass clean.
+pass clean - per this commit's own Definition of Done, that regression
+re-run is part of Commit 3, not a separate step after it.
