@@ -145,6 +145,38 @@ string RiskDecisionToString(ENUM_RISK_DECISION d)
    return "UNKNOWN";
 }
 
+// Phase B9: the execution-eligibility verdict vocabulary - deliberately
+// a NEW, separate enum from ENUM_RISK_DECISION above (B7's sizing-success
+// axis) and from ENUM_AI_DECISION_OUTCOME (B8.5's AI-only axis). B9
+// combines RiskPlan + AIDecision + operational constraints into this
+// verdict; it is not either of those upstream decisions restated. See
+// Docs/PhaseB_B9_ExecutionEligibilityContract.md's collision check.
+enum ENUM_ELIGIBILITY_DECISION
+{
+   ELIGIBILITY_DECISION_NONE,     // Init()/unfilled only - never a real decision's value
+   ELIGIBILITY_DECISION_ELIGIBLE,
+   ELIGIBILITY_DECISION_REJECTED
+};
+
+string EligibilityDecisionToString(ENUM_ELIGIBILITY_DECISION d)
+{
+   switch(d)
+   {
+      case ELIGIBILITY_DECISION_NONE:     return "NONE";
+      case ELIGIBILITY_DECISION_ELIGIBLE: return "ELIGIBLE";
+      case ELIGIBILITY_DECISION_REJECTED: return "REJECTED";
+   }
+   return "UNKNOWN";
+}
+
+ENUM_ELIGIBILITY_DECISION EligibilityDecisionFromString(string s)
+{
+   if(s == "NONE")     return ELIGIBILITY_DECISION_NONE;
+   if(s == "ELIGIBLE") return ELIGIBILITY_DECISION_ELIGIBLE;
+   if(s == "REJECTED") return ELIGIBILITY_DECISION_REJECTED;
+   return ELIGIBILITY_DECISION_NONE;
+}
+
 // Every event_type string that ever appears in the Event Store, as a real
 // enum instead of ad-hoc string literals scattered across modules - one
 // place to see the full vocabulary, and EventTypeFromString() gives

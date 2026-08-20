@@ -220,6 +220,22 @@ string Ids_AIDecisionId(string candidateId, string modelRegistryId, string decis
    return Ids_Deterministic("AIDEC", key);
 }
 
+// Deliberately independent of every content field (decision, reason_code,
+// eligibility_context_hash, risk_plan_id/plan_hash, ai_decision_id/
+// ai_decision_hash) - same identity philosophy every prior Ids_*Id
+// function already established. Unlike those, the same candidate_id +
+// eligibility_policy_version pair is expected to be legitimately
+// re-evaluated more than once (account state changes between checks) -
+// see Docs/PhaseB_B9_ExecutionEligibilityContract.md's "Identity and
+// hash" section for why that does not break the identity philosophy,
+// just changes what a repeated id means on replay (Commit 2 concern,
+// not frozen here).
+string Ids_EligibilityDecisionId(string candidateId, string eligibilityPolicyVersion)
+{
+   string key = candidateId + "|" + eligibilityPolicyVersion;
+   return Ids_Deterministic("ELIGDEC", key);
+}
+
 int g_Ids_SessionCounter = 0;
 
 // runtime_session_id: identifies one EA run. Deliberately NOT deterministic

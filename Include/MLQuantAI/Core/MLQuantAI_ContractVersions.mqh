@@ -108,4 +108,9 @@
 // Docs/PhaseB_B8_5_AIDecisionContract.md.
 #define MLQUANTAI_AI_DECISION_SCHEMA_B8_5_V1 "AI_DECISION_B8_5_V1"
 
+// B9: EligibilityContext's and EligibilityDecision's own record-shape
+// stamps. See Docs/PhaseB_B9_ExecutionEligibilityContract.md.
+#define MLQUANTAI_ELIGIBILITY_CONTEXT_SCHEMA_B9_V1  "ELIGIBILITY_CONTEXT_B9_V1"
+#define MLQUANTAI_ELIGIBILITY_DECISION_SCHEMA_B9_V1 "ELIGIBILITY_DECISION_B9_V1"
+
 #endif // __MLQUANTAI_CONTRACTVERSIONS_MQH__
