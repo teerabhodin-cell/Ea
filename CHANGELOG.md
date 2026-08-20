@@ -4,6 +4,35 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B9 Commit 3: Full-Chain Integration + Regression Proof, Seal (Implemented, awaiting real run)
+
+Opens after B9 Commit 2 PASSED (84/84, real MetaEditor run,
+2026-08-20). Implements the Commit 3 addendum in
+`Docs/PhaseB_B9_ExecutionEligibilityContract.md` (frozen before code).
+Adds **zero new production behavior** - purely a test-suite commit
+proving Commit 1 + Commit 2's already-shipped pieces compose correctly
+end to end, across all three independent upstream chains
+(`RiskPlanProjection`, `AIDecisionProjection`, `FeatureSnapshotProjection`)
+feeding `EligibilityDecisionProjection`. See
+`Docs/PhaseB_B9_Commit3_IntegrationRegressionStatus.md`. Not yet
+compiled/run by the user - status is Implemented, not PASSED.
+
+### Added
+- `Tests/MLQuantAI_Test_B9_Commit3_IntegrationRegression.mq5` (new, 7
+  test functions): end-to-end linkage across all five upstream layers
+  in one place; cross-layer failure propagation proven independently
+  for the candidate, risk-plan, and model-artifact chains; full-chain
+  restart simulation across all six projections for a mixed
+  `ELIGIBLE`/`REJECTED` multi-candidate store; multi-candidate
+  cross-linking; and a new test-only reconciliation helper detecting a
+  `REJECTED` decision whose `CANDIDATE_REJECTED_BY_RISK` consequence
+  never made it into the store - the non-rollback edge case Commit 2's
+  own contract explicitly deferred.
+
+Not yet PASSED - awaiting a real MetaEditor compile/run, plus the
+manual regression re-run of `Test_B9_ExecutionEligibility.mq5` and
+`Test_B9_Commit2_EligibilityEvent.mq5` in the same session.
+
 ## [Unreleased] - Phase B9 Commit 2: EXECUTION_ELIGIBILITY_DECIDED Event + Lifecycle Wiring (PASSED 2026-08-20)
 
 Opens after B9 Commit 1 PASSED (120/120, real MetaEditor run,
