@@ -852,3 +852,173 @@ design). Does not wire any execution/order/submission behavior on an
 Does not recompute fresh account/safe-mode values during replay - replay
 uses only the persisted payload evidence. No change to any
 already-sealed B5/B6/B7/B8/B9-Commit-1 production file.
+
+# Addendum — B9 Commit 3: full-chain integration + regression proof, seal
+
+**Status: FROZEN, before any code exists.** Written the moment Commit 2
+was confirmed PASSED (84/84, real MetaEditor run) and Commit 3 was
+confirmed to proceed. Mirrors B7 Commit 3 and B8.5 Commit 3 most
+closely - both already sealed the same way. This commit adds **zero new
+production behavior**: no new eligibility rule, no new field, no new
+event schema, no new policy semantics, no new identity/hash seed, no
+new projection behavior, no execution/order/broker call, no change to
+any already-sealed B5/B6/B7/B8/B9-Commit-1/B9-Commit-2 production file.
+It is purely a test-suite commit proving the already-shipped pieces
+compose correctly end to end, plus the integration seams Commit 1's and
+Commit 2's own suites did not individually exercise.
+
+## The chain being proven
+
+```
+MARKET_CONTEXT_READY
+    -> CANDIDATE_CREATED -> CandidateProjection
+    -> FEATURE_SNAPSHOT_CREATED -> FeatureSnapshotProjection  -----\
+    -> MODEL_ARTIFACT_REGISTERED -> ModelArtifactProjection   -----|--> AI_DECISION_CREATED -> AIDecisionProjection --\
+    -> RISK_PLAN_CREATED -> RiskPlanProjection                 ----------------------------------------------------- |--> EligibilityDecision_Build
+                                                                                                                       |
+                                                                                                    EXECUTION_ELIGIBILITY_DECIDED -> EligibilityDecisionProjection
+                                                                                                                       |
+                                                                                            REJECTED only: CANDIDATE_REJECTED_BY_RISK -> StateProjector
+    -> Restart / Replay
+    -> identical lineage + state, across all five upstream layers
+```
+
+Unlike B8.5's chain (two independent upstream parents converging at
+`AIDecision`), `EligibilityDecision` has **three** independent upstream
+chains to verify on rebuild - `RiskPlanProjection`,
+`AIDecisionProjection` (itself transitively dependent on
+`FeatureSnapshotProjection` + `ModelArtifactProjection`), and
+`FeatureSnapshotProjection` again explicitly - already proven
+structurally real in Commit 2's own `EligibilityDecisionProjection_RebuildFromFile`
+gating order. Commit 3's genuinely-new coverage below is shaped by that
+wider fan-in, plus the one behavior Commit 2 explicitly deferred: the
+non-rollback "decision durably recorded, lifecycle state may not
+reflect it yet" edge case.
+
+## What Commit 1's and Commit 2's own suites already cover (not re-proven here)
+
+`Test_B9_ExecutionEligibility.mq5` already proves `EligibilityDecision_Build`'s
+fail-closed ladder, frozen precedence order, determinism, and
+identity/hash sensitivity, in isolation from any event store.
+`Test_B9_Commit2_EligibilityEvent.mq5` already builds every fixture
+through the real B5/B7/B8.1/B8.3/B8.5/B9-Commit-1 pipeline, already
+proves the dual-emitter ordering and exactly-once-per-outcome behavior,
+already proves duplicate-vs-collision replay semantics, already proves
+each of the 8 raw context-evidence fields is independently
+hash-protected, already proves orphan `risk_plan_id`/`ai_decision_id`
+references fail closed, and already proves one cross-layer failure path
+(a corrupted `FEATURE_SNAPSHOT_CREATED` line blocking eligibility
+rebuild via the AIDecision registry prerequisite). Commit 3 does not
+repeat any of that.
+
+## What's genuinely new in Commit 3
+
+1. **Explicit end-to-end linkage assertion in one place.** A single
+   test that, after a full rebuild, walks the whole chain forward from
+   a real `MARKET_CONTEXT_READY` event and asserts every hash/ID
+   matches its neighbor across all five layers: candidate ->
+   snapshot -> (model artifact -> AI decision) and (risk plan) ->
+   eligibility decision, confirming `EligibilityDecision.candidate_hash`/
+   `plan_hash`/`ai_decision_hash` all agree with their real, independently
+   rebuilt projection records - not just that each pairwise check
+   individually passes (already proven), but that the full chain of
+   custody holds in one assertion sequence.
+2. **Cross-layer failure propagation, all three upstream chains
+   independently** - the point genuinely harder than B8.5 Commit 3's
+   two-parent case: (a) a corrupted/colliding `CANDIDATE_CREATED` line
+   must cause `RiskPlanProjection_RebuildFromFile` to fail closed
+   (proven via the RiskPlan gate, the first of Commit 2's three
+   prerequisite checks); (b) a corrupted/colliding `RISK_PLAN_CREATED`
+   line must independently cause the RiskPlan gate itself to fail
+   closed, with no reliance on the AIDecision or FeatureSnapshot chains
+   also failing; (c) a corrupted/colliding `MODEL_ARTIFACT_REGISTERED`
+   line must cause `AIDecisionProjection_RebuildFromFile` to fail closed
+   via its own `ModelArtifactProjection` prerequisite (Commit 2 only
+   proved the `FeatureSnapshot` side of this pair). All three
+   propagation paths proven separately - a bug that only wires up some
+   of the three prerequisite checks must be caught by this commit.
+3. **Full-chain restart/crash simulation** - reopening the store fresh
+   (simulating an EA process restart) and rebuilding all of
+   `CandidateProjection`, `FeatureSnapshotProjection`,
+   `ModelArtifactProjection`, `AIDecisionProjection`,
+   `RiskPlanProjection`, and `EligibilityDecisionProjection` from
+   scratch twice, asserting all six layers' state is byte-identical
+   across both rebuilds, for a store holding multiple candidates/
+   decisions together (not one at a time as Commit 2's own tests did).
+4. **Multi-candidate cross-linking check** - several candidates, each
+   with their own snapshot/plan/AI decision, decided against a mix of
+   shared and distinct policies/verdicts, proving the three-chain shape
+   doesn't let an eligibility decision accidentally pick up a
+   neighboring candidate's plan or AI decision; after a full rebuild,
+   every `EligibilityDecision` must link to exactly its own upstream
+   records, never a neighboring one.
+5. **Rejected-without-lifecycle-consequence reconciliation** - the
+   non-rollback edge case Commit 2's own contract explicitly deferred:
+   a store where an `EXECUTION_ELIGIBILITY_DECIDED` line with
+   `decision == REJECTED` exists but its paired `CANDIDATE_REJECTED_BY_RISK`
+   line does not (simulating the write-succeeds-then-lifecycle-write-fails
+   failure mode). A new, test-only reconciliation helper scans a
+   rebuilt `EligibilityDecisionProjection` for every `REJECTED` record,
+   cross-checks each against `StateProjector_TryGetState` for that
+   `candidate_id`, and reports any `REJECTED` decision whose candidate
+   is NOT at `CANDIDATE_REJECTED_BY_RISK` as an inconsistency needing
+   reconciliation - deterministic detection, not automatic recovery
+   (recovery/reconciliation policy itself stays out of scope, per
+   Commit 2's own frozen rule that the store is never rewritten).
+6. **`ELIGIBLE` leaves no lifecycle trace, confirmed after full-chain
+   restart** - re-proving Commit 2's own single-session assertion, but
+   after a real restart/replay of a multi-candidate store, and
+   confirmed via `StateProjector` (not `CandidateProjection`, which by
+   design only ever tracks `CANDIDATE_CREATED`).
+
+## Definition of Done
+
+- The full chain rebuilds state from the store alone (no in-memory
+  carry-over assumed), across all six layers
+  (`CandidateProjection`/`FeatureSnapshotProjection`/
+  `ModelArtifactProjection`/`AIDecisionProjection`/`RiskPlanProjection`/
+  `EligibilityDecisionProjection`).
+- Candidate/snapshot/model/decision/plan/eligibility linkage matches on
+  every hash and ID across all five layers feeding into
+  `EligibilityDecision`, for every decision in a multi-candidate store.
+- A restart followed by replay reproduces byte-identical state in all
+  six projections.
+- Duplicate and collision policy still hold correctly across every
+  layer boundary - a candidate-layer OR snapshot-layer OR model-layer
+  OR plan-layer failure closes the eligibility-layer rebuild too,
+  proven independently for each of the three upstream chains.
+- A corrupted/truncated line anywhere fails the rebuild closed, with no
+  partial commit, regardless of which layer's line it corrupts.
+- The rejected-without-lifecycle-consequence reconciliation helper
+  correctly flags the simulated failure-mode store and correctly
+  reports a clean store as consistent (no false positives).
+- No execution, order, broker, account, or extra candidate-lifecycle-state
+  transition results from either `ELIGIBLE` or `REJECTED` anywhere in
+  this commit's test suite.
+- The full B9 regression suite passes: `Test_B9_ExecutionEligibility.mq5`
+  and `Test_B9_Commit2_EligibilityEvent.mq5` plus the new
+  `Test_B9_Commit3_IntegrationRegression.mq5` all re-run clean in the
+  same MetaEditor session - this is a manual re-run checklist for
+  whoever confirms this commit, not something one script can automate,
+  since MQL5 has no cross-script test runner.
+
+## Explicitly out of scope for this commit
+
+Any new eligibility rule, threshold semantics, event schema change,
+identity/hash seed change, projection behavior change, policy semantics
+change, any actual reconciliation/recovery ACTION for the
+rejected-without-lifecycle-consequence case (detection only, per
+Commit 2's own frozen non-rollback rule), any Phase C execution/
+submission/broker logic, any change to an already-sealed production
+file. If self-review during this commit surfaces an actual
+product-level gap (not just a test-coverage gap), that gets flagged to
+the user before any production file is touched - same discipline as
+every commit before this one.
+
+On a clean pass, this commit closes B9: **execution eligibility pure
+mapping (Commit 1) + durable event/projection/replay + risk-reject
+lifecycle wiring (Commit 2) + full-chain integration proof (Commit 3)**,
+sealed as the last policy authority before Phase C - the sole place
+`RiskPlan` + `AIDecision` + operational constraints combine into
+`ELIGIBLE`/`REJECTED`, still without any broker/execution authority of
+its own.
