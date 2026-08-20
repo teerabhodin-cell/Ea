@@ -4,6 +4,55 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase C1.1: ExecutionRequest + Safety Gate + Dry-Run contract (frozen, no code yet)
+
+Opens after B9 FULLY SEALED (283/283, all real MetaEditor runs).
+First Phase C commit - and the first phase in this project that will
+eventually call real broker-mutating MT5 APIs (C2, held pending
+explicit authorization). Froze
+`Docs/PhaseC_C1_1_ExecutionRequestContract.md` after a read-only
+collision check against `ExecutionResult`/`ExecutionEvent` (dormant
+Phase-A/pre-B contract structs - superseded, not reused, since C1's
+dry-run has no real broker response to report), the existing live
+`correlation_id`/`Ids_CorrelationId` concept (reused, carried
+alongside a new, distinct `execution_request_id`), `SafeModeState.mqh`
+(reused directly), `RiskPlan`/`EligibilityDecision`'s exact canonical
+field names, the fully-specified-but-undriven `CREATED -> SUBMITTED ->
+{EXECUTED, REJECTED_BY_BROKER, ERROR}` state machine transition, and
+the dormant, reserved `EVENT_TYPE_ORDER_SUBMITTED`/`_ORDER_FILLED`/
+`_ORDER_REJECTED`/`_POSITION_CLOSED` event types (left untouched,
+reserved for C2 - C1 mints two new event types instead).
+
+**C1 non-negotiable, frozen for every C1 commit**: C1 must never call
+a broker-mutating API, under any input or flag - a `dry_run=false`
+value must be rejected fail-closed (`REASON_EXECUTION_SUBMIT_DISABLED`,
+a new, tail-appended `ENUM_REASON_CODE` value), never silently
+switched to a real submit path. C1's dry-run is purely observational:
+it never transitions `CANDIDATE_SUBMITTED` or any other candidate
+state - only an `ELIGIBLE` `EligibilityDecision` may become an
+`ExecutionRequest`, and the candidate stays at `CANDIDATE_CREATED`
+throughout C1.
+
+### Added (contract only - no `.mqh`/`.mq5` code yet)
+- `ExecutionPolicy`, `ExecutionRequest`, `DryRunExecutionResult` struct
+  shapes (`ExecutionAuditRecord`'s exact payload deferred to C1.3,
+  once C1.2's real structs exist to reference).
+- `Ids_ExecutionRequestId(candidateId, eligibilityDecisionId,
+  aiDecisionId, riskPlanId, executionPolicyVersion)` - new deterministic
+  ID, following the sealed `Ids_Deterministic` pattern.
+- `SafetyGate_Evaluate` behavior spec: fail-closed on a malformed
+  request, fail-closed on `dry_run == false`, reuses `SafeMode_IsActive()`/
+  `SafeMode_AllowNewCandidates()` directly, otherwise `SAFETY_GATE_ACCEPTED`.
+- `EVENT_TYPE_EXECUTION_REQUEST_CREATED`/`EVENT_TYPE_EXECUTION_DRY_RUN_COMPLETED`
+  reserved (append-only, after `EVENT_TYPE_EXECUTION_ELIGIBILITY_DECIDED`,
+  the current true tail) - not yet added to `ENUM_EVENT_TYPE`, that
+  happens in C1.3 when they're first actually emitted.
+
+C1.2 (implementation) and C1.3 (audit event/projection/reconciliation/
+regression/seal) come next, same three-commit shape every prior
+B-phase has used. C2 (real broker submit) stays explicitly held
+pending separate, explicit user authorization.
+
 ## [Unreleased] - Phase B9: FULLY SEALED (2026-08-21)
 
 **283/283, all real MetaEditor runs**: Commit 1 (pure eligibility
