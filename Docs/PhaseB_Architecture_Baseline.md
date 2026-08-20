@@ -112,7 +112,10 @@ B9    Execution Eligibility Policy         SEALED (283/283)
       Commit 1 - pure eligibility mapping                           PASSED (120/120)
       Commit 2 - EXECUTION_ELIGIBILITY_DECIDED + lifecycle wiring    PASSED (84/84)
       Commit 3 - full-chain integration + regression proof           PASSED (79/79)
-C     Broker Execution + Reconciliation        NEXT (not yet frozen)
+C1.1  ExecutionRequest + Safety Gate + Dry-Run  FROZEN (contract only, no code yet)
+C1.2  Immutable ExecutionRequest, safety gate, dry-run adapter  NEXT
+C1.3  Audit event/read model, reconciliation, regression, seal  (after C1.2)
+C2    Broker Submit Adapter                     HELD (pending explicit authorization)
 ```
 
 B8.5 is SEALED: 254/254 across all three commits, all real MetaEditor

@@ -254,7 +254,17 @@ enum ENUM_EVENT_TYPE
    // real state transition this commit wires as a REJECTED-only
    // consequence - see Docs/PhaseB_B9_ExecutionEligibilityContract.md's
    // Commit 2 addendum.
-   EVENT_TYPE_EXECUTION_ELIGIBILITY_DECIDED
+   EVENT_TYPE_EXECUTION_ELIGIBILITY_DECIDED,
+
+   // Phase C1.2: same append-at-end rule. An ExecutionRequest and its
+   // DryRunExecutionResult are derived audit artifacts tied to a
+   // candidate (via EligibilityDecision) - SystemEvents, not candidate-
+   // lifecycle transitions. Neither means a real broker submission -
+   // see Docs/PhaseC_C1_1_ExecutionRequestContract.md's C1.2 addendum.
+   // The dormant EVENT_TYPE_ORDER_SUBMITTED/_FILLED/_REJECTED/
+   // _POSITION_CLOSED above stay reserved for C2's real broker facts.
+   EVENT_TYPE_EXECUTION_REQUEST_CREATED,
+   EVENT_TYPE_EXECUTION_DRY_RUN_COMPLETED
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -289,6 +299,8 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_MODEL_ARTIFACT_REGISTERED:          return "MODEL_ARTIFACT_REGISTERED";
       case EVENT_TYPE_AI_DECISION_CREATED:                return "AI_DECISION_CREATED";
       case EVENT_TYPE_EXECUTION_ELIGIBILITY_DECIDED:      return "EXECUTION_ELIGIBILITY_DECIDED";
+      case EVENT_TYPE_EXECUTION_REQUEST_CREATED:          return "EXECUTION_REQUEST_CREATED";
+      case EVENT_TYPE_EXECUTION_DRY_RUN_COMPLETED:        return "EXECUTION_DRY_RUN_COMPLETED";
    }
    return "UNKNOWN";
 }
@@ -323,6 +335,8 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "MODEL_ARTIFACT_REGISTERED")         return EVENT_TYPE_MODEL_ARTIFACT_REGISTERED;
    if(s == "AI_DECISION_CREATED")               return EVENT_TYPE_AI_DECISION_CREATED;
    if(s == "EXECUTION_ELIGIBILITY_DECIDED")     return EVENT_TYPE_EXECUTION_ELIGIBILITY_DECIDED;
+   if(s == "EXECUTION_REQUEST_CREATED")         return EVENT_TYPE_EXECUTION_REQUEST_CREATED;
+   if(s == "EXECUTION_DRY_RUN_COMPLETED")       return EVENT_TYPE_EXECUTION_DRY_RUN_COMPLETED;
    return EVENT_TYPE_UNKNOWN;
 }
 
@@ -346,6 +360,68 @@ string EventStoreHealthToString(ENUM_EVENT_STORE_HEALTH h)
       case EVENT_STORE_HEALTH_CORRUPTED: return "CORRUPTED";
    }
    return "UNKNOWN";
+}
+
+// Phase C1.2: ExecutionPolicy.environment_mode. Reserved field shape -
+// C1 never chooses/enforces which mode is "permitted" beyond requiring
+// it be explicitly set (not NONE); C2 freezes real per-mode enforcement
+// separately, with explicit user authorization, before it opens. See
+// Docs/PhaseC_C1_1_ExecutionRequestContract.md's C1.2 addendum.
+enum ENUM_EXECUTION_ENVIRONMENT_MODE
+{
+   EXECUTION_ENV_NONE,
+   EXECUTION_ENV_TESTER,
+   EXECUTION_ENV_DEMO,
+   EXECUTION_ENV_LIVE
+};
+
+string ExecutionEnvironmentModeToString(ENUM_EXECUTION_ENVIRONMENT_MODE m)
+{
+   switch(m)
+   {
+      case EXECUTION_ENV_NONE:   return "NONE";
+      case EXECUTION_ENV_TESTER: return "TESTER";
+      case EXECUTION_ENV_DEMO:   return "DEMO";
+      case EXECUTION_ENV_LIVE:   return "LIVE";
+   }
+   return "NONE";
+}
+
+ENUM_EXECUTION_ENVIRONMENT_MODE ExecutionEnvironmentModeFromString(string s)
+{
+   if(s == "TESTER") return EXECUTION_ENV_TESTER;
+   if(s == "DEMO")   return EXECUTION_ENV_DEMO;
+   if(s == "LIVE")   return EXECUTION_ENV_LIVE;
+   return EXECUTION_ENV_NONE;
+}
+
+// Phase C1.2: SafetyGate_Evaluate's own verdict - deliberately not a
+// reuse of ENUM_ELIGIBILITY_DECISION (B9's ELIGIBLE/REJECTED axis) or
+// ENUM_RISK_DECISION (B7's sizing-success axis) - a dry-run safety
+// verdict is a different concept from either.
+enum ENUM_SAFETY_GATE_DECISION
+{
+   SAFETY_GATE_NONE,
+   SAFETY_GATE_ACCEPTED,
+   SAFETY_GATE_REJECTED
+};
+
+string SafetyGateDecisionToString(ENUM_SAFETY_GATE_DECISION d)
+{
+   switch(d)
+   {
+      case SAFETY_GATE_NONE:     return "NONE";
+      case SAFETY_GATE_ACCEPTED: return "ACCEPTED";
+      case SAFETY_GATE_REJECTED: return "REJECTED";
+   }
+   return "NONE";
+}
+
+ENUM_SAFETY_GATE_DECISION SafetyGateDecisionFromString(string s)
+{
+   if(s == "ACCEPTED") return SAFETY_GATE_ACCEPTED;
+   if(s == "REJECTED") return SAFETY_GATE_REJECTED;
+   return SAFETY_GATE_NONE;
 }
 
 #endif // __MLQUANTAI_ENUMS_MQH__

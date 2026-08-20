@@ -236,6 +236,23 @@ string Ids_EligibilityDecisionId(string candidateId, string eligibilityPolicyVer
    return Ids_Deterministic("ELIGDEC", key);
 }
 
+// Phase C1.2: execution_request_id - deliberately independent of every
+// content field (side/planned_entry/planned_sl/planned_tp/lot_size/
+// risk_amount/submit_attempt/correlation_id), same identity philosophy
+// as every prior Ids_*Id function. Keyed off the full decision lineage
+// (candidate/eligibility/AI/risk-plan) plus the policy version under
+// which the request was built, so a re-evaluation under the SAME
+// lineage and policy always identifies the same execution intent - see
+// Docs/PhaseC_C1_1_ExecutionRequestContract.md's C1.2 addendum.
+string Ids_ExecutionRequestId(string candidateId, string eligibilityDecisionId,
+                                string aiDecisionId, string riskPlanId,
+                                string executionPolicyVersion)
+{
+   string key = candidateId + "|" + eligibilityDecisionId + "|" +
+                aiDecisionId + "|" + riskPlanId + "|" + executionPolicyVersion;
+   return Ids_Deterministic("EXECREQ", key);
+}
+
 int g_Ids_SessionCounter = 0;
 
 // runtime_session_id: identifies one EA run. Deliberately NOT deterministic
