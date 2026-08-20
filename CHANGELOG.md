@@ -4,6 +4,57 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B9 Commit 1: Execution Eligibility Pure Mapping (Implemented)
+
+Opens after B8.5 SEALED (254/254, all real MetaEditor runs).
+Implements `Docs/PhaseB_B9_ExecutionEligibilityContract.md` (frozen
+before code, after a collision check against `ENUM_RISK_DECISION`,
+`RiskPlan`'s Phase A shadow fields, the dormant `RiskDecision` struct
+(Phase B1, contract-only - not reused, same fate as `AIResult` at
+B8.5's own freeze), the candidate lifecycle state machine
+(`CANDIDATE_SUBMITTED`/`_EXECUTED`/`_REJECTED_BY_RISK` - real, sealed,
+but zero production call sites today), `SafeMode_IsActive()`/
+`SafeMode_AllowNewCandidates()`, `AIResult` (still dormant), the
+existing dormant `REASON_RISK_*` reason-code vocabulary, and
+`AccountSnapshot` (Phase A, already embedded in B7's `RiskContext`,
+already live-populated for `balance`/`equity`/`margin_level`/
+`open_positions_count` - `open_risk_percent`/`daily_pnl_percent`/
+`drawdown_from_peak_percent` stay hard-coded `0` today, accepted as
+inputs exactly as currently populated per this commit's own scope).
+See `Docs/PhaseB_B9_Commit1_ExecutionEligibilityStatus.md`. Not yet
+compiled/run by the user - status is Implemented, not PASSED.
+
+Pure mapping only: no event emission, no
+`CANDIDATE_REJECTED_BY_RISK` or any state-machine transition, no live
+account/tick/broker/`SafeMode` call inside the builder, no
+spread/news/kill-zone re-evaluation (B5's job already), no mutation of
+any input.
+
+### Added
+- `Core/MLQuantAI_Enums.mqh` (additive): `ENUM_ELIGIBILITY_DECISION`
+  (`NONE`/`ELIGIBLE`/`REJECTED`) + `EligibilityDecisionToString`/
+  `EligibilityDecisionFromString` - a new enum, not a reuse of
+  `ENUM_RISK_DECISION` (B7's sizing-success axis) or
+  `ENUM_AI_DECISION_OUTCOME` (B8.5's AI-only axis).
+- `Core/MLQuantAI_ContractVersions.mqh` (additive):
+  `MLQUANTAI_ELIGIBILITY_CONTEXT_SCHEMA_B9_V1`,
+  `MLQUANTAI_ELIGIBILITY_DECISION_SCHEMA_B9_V1`.
+- `Core/MLQuantAI_Ids.mqh` (additive):
+  `Ids_EligibilityDecisionId(candidateId, eligibilityPolicyVersion)`.
+- `Execution/MLQuantAI_EligibilityContract.mqh` (new):
+  `EligibilityContext` (embeds `AccountSnapshot` verbatim, no separate
+  identity - only a content hash, since the same candidate can be
+  legitimately re-evaluated multiple times with different account
+  state each time), `EligibilityPolicy` (explicit, versioned
+  thresholds, `0` = gate disabled), `EligibilityDecision` (frozen
+  output record).
+- `Execution/MLQuantAI_EligibilityBuilder.mqh` (new):
+  `EligibilityDecision_Build` - the fail-closed ladder frozen in the
+  contract, deciding in a frozen precedence order (AI veto first, then
+  each operational gate, then `ELIGIBLE`).
+- `Tests/MLQuantAI_Test_B9_ExecutionEligibility.mq5` (new, 22 test
+  functions).
+
 ## [Unreleased] - Phase B8.5: FULLY SEALED (2026-08-20)
 
 **254/254, all real MetaEditor runs**: Commit 1 (threshold-policy pure
