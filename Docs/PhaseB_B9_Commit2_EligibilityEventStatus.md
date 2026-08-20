@@ -1,6 +1,6 @@
 # Phase B9 — Commit 2: `EXECUTION_ELIGIBILITY_DECIDED` Event + `CANDIDATE_REJECTED_BY_RISK` Lifecycle Wiring + `EligibilityDecisionProjection`
 
-**Status: Implemented, awaiting real MetaEditor compile/test confirmation.**
+**Status: PASSED (84/84, real MetaEditor run, 2026-08-20).**
 Implements the Commit 2 addendum in
 `Docs/PhaseB_B9_ExecutionEligibilityContract.md` (frozen before code).
 Opens after B9 Commit 1 PASSED (120/120, real MetaEditor run,
@@ -115,11 +115,12 @@ path.
 - No fresh account/safe-mode computation anywhere in the replay path -
   only verification of persisted evidence.
 
+## Result
+
+Real MetaEditor run: **84/84 checks passed, ALL PASS.** B9 Commit 2 is
+PASSED and merged to `mlquantai`.
+
 ## Next step
 
-Awaiting a real MetaEditor compile + run of
-`MLQuantAI_Test_B9_Commit2_EligibilityEvent.mq5` (plus its includes).
-Only a genuine, clean real log moves this to PASSED and merges to
-`mlquantai`. B9 Commit 3 ("full-chain regression + seal," per the
-already-discussed B9 roadmap) does not start until this is PASSED and
-the user gives an explicit go-ahead.
+B9 Commit 3 ("full-chain regression + seal," per the already-discussed
+B9 roadmap) does not start until the user gives an explicit go-ahead.

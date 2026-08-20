@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B9 Commit 2: EXECUTION_ELIGIBILITY_DECIDED Event + Lifecycle Wiring (Implemented, awaiting real run)
+## [Unreleased] - Phase B9 Commit 2: EXECUTION_ELIGIBILITY_DECIDED Event + Lifecycle Wiring (PASSED 2026-08-20)
 
 Opens after B9 Commit 1 PASSED (120/120, real MetaEditor run,
 2026-08-20). Implements the Commit 2 addendum in
@@ -20,8 +20,7 @@ upstream event of its own by persisting its raw account/safe-mode
 evidence verbatim inside `EXECUTION_ELIGIBILITY_DECIDED`'s own payload,
 so replay can independently recompute and verify
 `eligibility_context_hash`. See
-`Docs/PhaseB_B9_Commit2_EligibilityEventStatus.md`. Not yet
-compiled/run by the user - status is Implemented, not PASSED.
+`Docs/PhaseB_B9_Commit2_EligibilityEventStatus.md`.
 
 Event ordering is frozen: `EXECUTION_ELIGIBILITY_DECIDED` always first
 (`ELIGIBLE` and `REJECTED` both - audit evidence either way);
@@ -56,7 +55,8 @@ reflect it yet," never "nothing happened."
 - `Tests/MLQuantAI_Test_B9_Commit2_EligibilityEvent.mq5` (new, 10 test
   functions).
 
-Not yet PASSED - awaiting a real MetaEditor compile/run.
+Real MetaEditor run: **84/84 checks passed, ALL PASS.** B9 Commit 2 is
+PASSED and merged to `mlquantai`.
 
 ## [Unreleased] - Phase B9 Commit 1: Execution Eligibility Pure Mapping (PASSED 2026-08-20)
 
