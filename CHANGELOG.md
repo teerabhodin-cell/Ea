@@ -4,6 +4,57 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase C1.2: ExecutionRequest Build + SafetyGate + Dry-Run Emission (Implemented, awaiting real run)
+
+Opens after C1.1's contract freeze was confirmed. Implements
+`Docs/PhaseC_C1_1_ExecutionRequestContract.md`'s C1.2 addendum: the
+frozen 12-step, first-match-wins `SafetyGate_Evaluate` gate order,
+`ExecutionRequest_Build`'s fail-closed ladder (ELIGIBLE-only gate, a
+`REJECTED` `EligibilityDecision` never produces a request), and
+`ExecutionRequest_EmitAndEvaluate`'s dual-event emission
+(`EXECUTION_REQUEST_CREATED` always first, then
+`EXECUTION_DRY_RUN_COMPLETED` always - `ACCEPTED` and `REJECTED` both).
+Still zero broker mutation anywhere - no `OrderSend`/`CTrade`/pending-
+order API, no `CANDIDATE_SUBMITTED` transition, no dormant
+`EVENT_TYPE_ORDER_*` use. See
+`Docs/PhaseC_C1_2_ExecutionRequestSafetyGateStatus.md`. Not yet
+compiled/run by the user - status is Implemented, not PASSED.
+
+Two small amendments made to the C1.1 struct freeze before any code
+shipped (documented in the C1.2 addendum, not a later correction):
+`ExecutionRequest` gained a `risk_amount` field (needed for the
+exposure cap to have something to check without a separate `RiskPlan`
+dependency), and `ExecutionPolicy.max_exposure` was renamed
+`max_planned_risk_amount` (per-trade planned monetary risk at the
+planned stop, deliberately NOT notional value).
+
+### Added
+- `Core/MLQuantAI_ContractVersions.mqh` (additive):
+  `MLQUANTAI_EXECUTION_REQUEST_SCHEMA_C1_V1`/
+  `MLQUANTAI_EXECUTION_POLICY_SCHEMA_C1_V1`/
+  `MLQUANTAI_DRY_RUN_RESULT_SCHEMA_C1_V1`.
+- `Core/MLQuantAI_ReasonCodes.mqh` (additive): 11 new execution-gate
+  `ENUM_REASON_CODE` values (Safe Mode reuses
+  `REASON_RISK_CIRCUIT_BREAKER` rather than a duplicate).
+- `Core/MLQuantAI_Enums.mqh` (additive):
+  `EVENT_TYPE_EXECUTION_REQUEST_CREATED`/`EVENT_TYPE_EXECUTION_DRY_RUN_COMPLETED`,
+  `ENUM_EXECUTION_ENVIRONMENT_MODE`, `ENUM_SAFETY_GATE_DECISION`.
+- `Core/MLQuantAI_Ids.mqh` (additive): `Ids_ExecutionRequestId`.
+- `Execution/MLQuantAI_ExecutionRequestContract.mqh` (new):
+  `ExecutionPolicy`/`ExecutionRequest`/`DryRunExecutionResult` -
+  deliberately NOT a reuse of the dormant Phase-A/pre-B
+  `ExecutionResult`/`ExecutionEvent` structs (those assume a real
+  broker response C1's dry-run never has).
+- `Execution/MLQuantAI_ExecutionRequestBuilder.mqh` (new):
+  `ExecutionRequest_Build`.
+- `Execution/MLQuantAI_SafetyGate.mqh` (new): `SafetyGate_Evaluate`.
+- `Execution/MLQuantAI_ExecutionRequestEventEmission.mqh` (new):
+  `ExecutionRequest_EmitAndEvaluate`.
+- `Tests/MLQuantAI_Test_C1_2_ExecutionRequestSafetyGate.mq5` (new, 20
+  test functions).
+
+Not yet PASSED - awaiting a real MetaEditor compile/run.
+
 ## [Unreleased] - Phase C1.1: ExecutionRequest + Safety Gate + Dry-Run contract (frozen, no code yet)
 
 Opens after B9 FULLY SEALED (283/283, all real MetaEditor runs).

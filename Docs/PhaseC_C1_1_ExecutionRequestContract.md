@@ -402,3 +402,200 @@ C1 never needs to choose demo/live because C1 cannot submit regardless
 of `environment_mode`. `ExecutionPolicy` reserves the field shape;
 C2 freezes the actual allowed values, with the user's explicit
 authorization, as a separate, later step.
+
+---
+
+# Addendum — C1.2: ExecutionRequest build, SafetyGate enforcement, dry-run event emission (FROZEN)
+
+C1.2 implements (still zero broker mutation, zero
+`OrderSend`/`CTrade`/position-mutating call anywhere):
+`ExecutionRequest`/`ExecutionPolicy`/`ExecutionSafetyGate`/
+`DryRunExecutionResult`, the dry-run adapter, execution-request
+lifecycle event emission (`EVENT_TYPE_EXECUTION_REQUEST_CREATED`/
+`EVENT_TYPE_EXECUTION_DRY_RUN_COMPLETED`, both `SystemEvent`s, appended
+after `EVENT_TYPE_EXECUTION_ELIGIBILITY_DECIDED` — the current true
+tail), the deterministic request ID/hash, and the regression suite.
+
+## Amendment to the C1.1 struct freeze (made now, before any code exists)
+
+- **`ExecutionRequest` gains a `risk_amount` field** (copied verbatim
+  from `RiskPlan.risk_amount`, alongside the already-frozen
+  `planned_entry`/`planned_sl`/`planned_tp`/`lot_size`) — needed so the
+  exposure cap has something to check against without `SafetyGate_Evaluate`
+  taking a separate `RiskPlan` dependency, and so a persisted
+  `ExecutionRequest` is self-contained for audit (an auditor should see
+  the planned risk amount directly, not cross-reference a separate
+  projection). Included in `execution_request_hash`'s payload.
+- **`ExecutionPolicy.max_exposure` is renamed `max_planned_risk_amount`**
+  before any code ships, per the exposure definition below — avoids a
+  future name collision with a real notional-exposure cap C2/a later
+  risk phase may add.
+
+## Runtime Safety Context vs. immutable economic intent
+
+```
+Immutable ExecutionRequest (persisted, hashed, never re-read live):
+  execution_request_id, execution_request_hash
+  candidate/eligibility/AI/risk-plan lineage
+  submit_attempt = 1, correlation_id
+  side, planned_entry, planned_sl, planned_tp, lot_size, risk_amount
+
+Runtime Safety Context (read fresh, once, at the START of
+SafetyGate_Evaluate - never persisted as request identity/content):
+  SafeMode_IsActive()
+  _Symbol            (MQL5 built-in - current chart symbol)
+  AccountInfoInteger(ACCOUNT_LOGIN)
+  ExecutionPolicy     (caller-supplied configuration)
+```
+
+Both `_Symbol` and `AccountInfoInteger(ACCOUNT_LOGIN)` are read-only
+terminal/account queries — not broker-mutating, same category as
+`SafeMode_IsActive()`. Each is read exactly once at the start of
+`SafetyGate_Evaluate` and reused as a local value for the rest of that
+evaluation (never re-read mid-evaluation). Neither is stored on
+`ExecutionRequest` itself (both are evaluation-time context, not
+execution intent) but the *observed* values ARE recorded in
+`DryRunExecutionResult`'s minimal audit fields (`observed_symbol`,
+`observed_account_login`) purely for traceability — never fed into
+`execution_request_id`/`execution_request_hash`, never used to mutate
+`TradeCandidate`/`ExecutionRequest`.
+
+C2 must revisit persisting a real `symbol` field into the immutable
+`ExecutionRequest` before any real broker submit — broker
+comment/reconciliation/audit needs a deterministic instrument
+identifier, not just "whatever chart this ran on." Deferred, not
+solved here.
+
+## Zero-cap semantics (deliberately reversed from B9's precedent)
+
+B9's policy thresholds use `0` = gate disabled, because B9's account
+fields are still hard-coded 0 in live population today and an enabled-
+by-default gate would reject every candidate. **C1's execution caps do
+NOT use that convention** — an unset/invalid cap must never become
+unlimited permission:
+
+| Policy field | Invalid/unconfigured | Exceeded |
+|---|---|---|
+| `max_volume` | `<= 0` | `REASON_EXECUTION_VOLUME_POLICY_INVALID` | `lot_size > max_volume` -> `REASON_EXECUTION_VOLUME_CAP_EXCEEDED` |
+| `max_planned_risk_amount` | `<= 0` -> `REASON_EXECUTION_EXPOSURE_POLICY_INVALID` | `risk_amount > max_planned_risk_amount` -> `REASON_EXECUTION_EXPOSURE_CAP_EXCEEDED` |
+| `max_deviation_points` | `< 0` -> `REASON_EXECUTION_DEVIATION_POLICY_INVALID` | no "exceeded" case in C1.2 - nothing in the candidate/plan chain carries a requested deviation value yet (that's a real `OrderSend` slippage parameter, which only exists once C2 submits). `0` is valid (explicit zero-deviation intent). |
+
+## Exposure definition (frozen)
+
+`max_planned_risk_amount` caps **per-trade planned monetary risk at
+the planned stop**, not notional exposure:
+
+```
+requested_exposure = RiskPlan.risk_amount   (== ExecutionRequest.risk_amount)
+requested_exposure <= policy.max_planned_risk_amount
+```
+
+Deliberately NOT notional value (`lot_size x contract_size x price`) —
+that needs contract size/tick value/currency-conversion semantics not
+yet frozen as a canonical execution input, and would risk a
+gate that looks correct but computes the wrong number. A real
+`max_notional_exposure` control is C2's (or a later risk phase's) job,
+built on canonical pricing/instrument specs that exist by then.
+
+## New `ENUM_REASON_CODE` values (append-only, after `REASON_AI_ABSTAIN`, before `REASON_COUNT`)
+
+```
+REASON_EXECUTION_SUBMIT_DISABLED        // dry_run == false (already reserved in C1.1)
+REASON_EXECUTION_ENVIRONMENT_NOT_PERMITTED
+REASON_EXECUTION_MANUAL_APPROVAL_REQUIRED
+REASON_EXECUTION_ACCOUNT_NOT_ALLOWED
+REASON_EXECUTION_SYMBOL_NOT_ALLOWED
+REASON_EXECUTION_ORDER_TYPE_NOT_MARKET
+REASON_EXECUTION_VOLUME_POLICY_INVALID
+REASON_EXECUTION_VOLUME_CAP_EXCEEDED
+REASON_EXECUTION_EXPOSURE_POLICY_INVALID
+REASON_EXECUTION_EXPOSURE_CAP_EXCEEDED
+REASON_EXECUTION_DEVIATION_POLICY_INVALID
+REASON_EXECUTION_LINEAGE_INVALID
+```
+
+Safe Mode reuses the existing `REASON_RISK_CIRCUIT_BREAKER` (same
+concept B9 already uses for `safe_mode_active`) rather than minting a
+duplicate. `REASON_NONE` is the accepted outcome.
+
+## `ExecutionRequest_Build` (fail-closed, no request produced on any failure)
+
+1. `eligibilityDecision.decision != ELIGIBILITY_DECISION_ELIGIBLE` ->
+   fail, no request, no event of any kind (matching acceptance test 1).
+2. 4-way candidate/risk-plan/AI-decision/eligibility-decision lineage
+   cross-check (`candidate_id`/`candidate_hash` agreement across all
+   four inputs) -> fail on any mismatch.
+3. `policy.execution_policy_version == ""` -> fail.
+4. `submit_attempt = 1` (always, in C1.2 - never incremented).
+5. `correlation_id = Ids_CorrelationId(candidate_id, 1)`.
+6. `execution_request_id = Ids_ExecutionRequestId(candidate_id,
+   eligibility_decision_id, ai_decision_id, risk_plan_id,
+   execution_policy_version)`.
+7. `side`/`planned_entry`/`planned_sl`/`planned_tp`/`lot_size`/
+   `risk_amount` copied verbatim from `TradeCandidate`/`RiskPlan` -
+   never recomputed.
+8. `execution_request_hash` computed over the full payload.
+
+## `SafetyGate_Evaluate` — frozen gate order (first match wins)
+
+```
+0. request.execution_request_id == "" -> return false (structural,
+   no DryRunExecutionResult produced at all - not even a REJECTED one)
+1. policy.dry_run == false                     -> REASON_EXECUTION_SUBMIT_DISABLED
+2. SafeMode_IsActive()                         -> REASON_RISK_CIRCUIT_BREAKER
+3. policy.environment_mode == EXECUTION_ENV_NONE -> REASON_EXECUTION_ENVIRONMENT_NOT_PERMITTED
+4. policy.manual_approval_required == true      -> REASON_EXECUTION_MANUAL_APPROVAL_REQUIRED
+   (C1.2 has no approval mechanism - if this flag is set, C1.2 can
+   never pass this gate; that is intentional, not a bug to fix later
+   in C1)
+5. AccountInfoInteger(ACCOUNT_LOGIN) not exact-match-found in
+   policy.account_allowlist (comma-separated; EMPTY allowlist is
+   itself unconfigured -> reject, same "unset never means unlimited"
+   rule as the numeric caps) -> REASON_EXECUTION_ACCOUNT_NOT_ALLOWED
+6. _Symbol not exact-match-found in policy.symbol_allowlist (same
+   empty-means-reject rule)  -> REASON_EXECUTION_SYMBOL_NOT_ALLOWED
+7. request.side not in {ORDER_TYPE_BUY, ORDER_TYPE_SELL} (market-only,
+   a fixed C1 invariant - policy.allowed_order_types stays reserved,
+   unused, for C2) -> REASON_EXECUTION_ORDER_TYPE_NOT_MARKET
+8. policy.max_volume <= 0 -> REASON_EXECUTION_VOLUME_POLICY_INVALID;
+   else request.lot_size > policy.max_volume -> REASON_EXECUTION_VOLUME_CAP_EXCEEDED
+9. policy.max_planned_risk_amount <= 0 -> REASON_EXECUTION_EXPOSURE_POLICY_INVALID;
+   else request.risk_amount > policy.max_planned_risk_amount -> REASON_EXECUTION_EXPOSURE_CAP_EXCEEDED
+10. policy.max_deviation_points < 0 -> REASON_EXECUTION_DEVIATION_POLICY_INVALID
+11. request.execution_request_hash != a fresh recompute over request's
+    own fields -> REASON_EXECUTION_LINEAGE_INVALID (tamper/corruption
+    defensive check - same category as every prior *_Build's hash
+    re-verification)
+12. otherwise -> SAFETY_GATE_ACCEPTED / REASON_NONE
+```
+
+Every branch above: no `OrderSend`/`CTrade`/position-mutating call, no
+`candidate.state` transition, no mutation of `ExecutionRequest`/
+`ExecutionPolicy`/`TradeCandidate`.
+
+## Required event emission (C1.2, not deferred to C1.3)
+
+```
+ExecutionRequest_Build succeeds
+    -> EVENT_TYPE_EXECUTION_REQUEST_CREATED (SystemEvent, always - one per built request)
+    -> SafetyGate_Evaluate (structural failure at step 0 aside)
+    -> EVENT_TYPE_EXECUTION_DRY_RUN_COMPLETED (SystemEvent, always - ACCEPTED and REJECTED both)
+```
+
+Both events' payloads carry no `ticket`/`retcode`/`fill_price`/
+`slippage_points`/any other broker-response-shaped field — only the
+`ExecutionRequest`/`DryRunExecutionResult` fields themselves plus
+`observed_symbol`/`observed_account_login`. C1.3 builds the read-model
+projection over these two event types; C1.2 only emits them.
+
+## Scope guard addendum (all of C1.1's scope guard still applies)
+
+- `ExecutionPolicy.allowed_order_types` stays reserved/unused in C1.2
+  - market-only is a hard-coded C1 invariant, not policy-driven yet.
+- No fresh `_Symbol`/`AccountInfoInteger` re-read mid-evaluation - one
+  snapshot per `SafetyGate_Evaluate` call, used consistently throughout.
+- No incorporation of the observed account login into
+  `execution_request_id`/`execution_request_hash` - Runtime Safety
+  Context never touches immutable request identity/content.
+- No broker reconciliation query anywhere in C1 (`BrokerReconciliation.mqh`
+  is untouched, not a C1 prerequisite).
