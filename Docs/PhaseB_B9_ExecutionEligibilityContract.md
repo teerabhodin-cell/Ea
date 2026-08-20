@@ -518,3 +518,337 @@ B9 Commit 3  Full-chain integration + regression proof, seal                    
   `CTrade`/`AccountInfo*`/`PositionsTotal`/`SafeMode_IsActive`/
   `TimeCurrent` call anywhere in `EligibilityDecision_Build` - verified
   by inspection.
+
+# Addendum — B9 Commit 2: `EXECUTION_ELIGIBILITY_DECIDED` event + `CANDIDATE_REJECTED_BY_RISK` wiring + `EligibilityDecisionProjection`
+
+**Status: FROZEN, before any code exists.** Written the moment Commit 1
+was confirmed PASSED (120/120, real MetaEditor run) and Commit 2 was
+confirmed to proceed, after a collision check against
+`EXECUTION_ELIGIBILITY_DECIDED`/`EligibilityDecisionProjection`/
+`EligibilityDecisionRegistry`/`EligibilityDecision_Emit`/
+`eligibility_decision_id`/`eligibility_decision_hash`/
+`CANDIDATE_REJECTED_BY_RISK`/`TradeCandidate_Transition`/
+`REASON_RISK_*`/`REASON_AI_REJECT`/`REASON_AI_ABSTAIN`/
+`LifecycleEvent` (full findings below).
+
+**Correction to the frozen field list carried in from planning:** the
+payload does **not** include an `eligibility_context_id` — the real,
+already-PASSED (120/120) Commit 1 `EligibilityContext` struct has no
+identity field, only `eligibility_context_schema_version` +
+`eligibility_context_hash` (deliberate - see Commit 1's own "Identity
+and hash" section on why a per-candidate identity would collide with
+the "same candidate legitimately re-evaluated multiple times" case).
+Since Commit 1 is sealed, Commit 2 works with the real shipped struct
+as-is.
+
+## Collision check findings
+
+- **`ENUM_EVENT_TYPE`**: current true tail is
+  `EVENT_TYPE_AI_DECISION_CREATED` (B8.5 Commit 2). No
+  `EXECUTION_ELIGIBILITY_DECIDED` or similar value exists.
+  `EVENT_TYPE_EXECUTION_ELIGIBILITY_DECIDED` is appended after it, same
+  append-only rule.
+- **`CANDIDATE_REJECTED_BY_RISK`/`TradeCandidate_Transition`**: the
+  state machine already allows `CANDIDATE_CREATED -> CANDIDATE_REJECTED_BY_RISK`
+  (a terminal state, no transitions out). A real, general-purpose
+  transition-logging function already exists and is exactly what this
+  commit needs -
+  `EventStore_LogTransition(TradeCandidate &c, ENUM_CANDIDATE_STATE to, ENUM_REASON_CODE reason, string extraJson="")`
+  (`Infrastructure/EventStore/MLQuantAI_EventStore.mqh`) - validates via
+  `StateMachine_CanTransition`, durably appends, commits `c.state` only
+  after the durable write succeeds (fail-closed), auto-derives the
+  event type via `EventTypeForCandidateState(to)`. **`TradeCandidate_Transition`
+  has zero real call sites anywhere and is NOT used** - this commit
+  calls `EventStore_LogTransition` directly, exactly like every prior
+  real test that has driven `CANDIDATE_REJECTED_BY_RISK`
+  (`Tests/MLQuantAI_Test_DummyLifecycle.mq5`).
+- **`REASON_RISK_*`/`REASON_AI_REJECT`/`REASON_AI_ABSTAIN`**: already
+  fully wired into Commit 1's `EligibilityDecision_Build` (which reason
+  code maps to which gate is already frozen there). This commit adds no
+  new reason code - the lifecycle transition's `reason` parameter is
+  always `EligibilityDecision.reason_code`, copied verbatim, never
+  re-derived.
+- **`LifecycleEvent`** (not "`CandidateLifecycleEvent`" - that name
+  does not exist in the codebase;
+  `Infrastructure/EventStore/MLQuantAI_LifecycleEvent.mqh` is the real
+  file/struct name).
+- **`RiskDecision`**: re-confirmed still fully dormant, untouched - no
+  new reference anywhere in this commit.
+- **`CandidateProjection` (B6.1) vs `StateProjector`**: `CandidateProjection`
+  deliberately tracks `CANDIDATE_CREATED` only - its own record struct's
+  `state` field is hard-coded to `CANDIDATE_CREATED` and its own code
+  comment says "B6 never applies later transitions." **It is not
+  extended or touched by this commit.** The already-sealed, separate
+  `StateProjector` (`Infrastructure/EventStore/MLQuantAI_StateProjector.mqh`,
+  B5-era) is the real, already-working full-lifecycle-state tracker -
+  `StateProjector_TryGetState(candidateId, &outState)` already exists
+  and is already proven to round-trip `CANDIDATE_REJECTED_BY_RISK`
+  correctly on replay (`Tests/MLQuantAI_Test_ReplayIntegrity.mq5`).
+  This commit's cross-session/replay idempotency check for the
+  lifecycle transition uses `StateProjector_TryGetState`, never
+  `CandidateProjection`.
+- **Two distinct event families in one commit** (the first time any B
+  phase has needed this): `EXECUTION_ELIGIBILITY_DECIDED` is a
+  `SystemEvent` (`EventStore_LogSystem`/`EventSerializer_ParseSystem`) -
+  same family as `RISK_PLAN_CREATED`/`FEATURE_SNAPSHOT_CREATED`/
+  `MODEL_ARTIFACT_REGISTERED`/`AI_DECISION_CREATED`, since an
+  `EligibilityDecision` is a derived audit artifact tied to a
+  candidate, not itself a candidate-lifecycle transition.
+  `CANDIDATE_REJECTED_BY_RISK` is a real `LifecycleEvent`
+  (`EventStore_LogTransition`/`EventSerializer_ParseLifecycle`) - a
+  genuine state transition. Both are real, both already have sealed
+  infrastructure; this commit is the first to emit one of each kind
+  from the same decision.
+- **No independently-persisted upstream event for `EligibilityContext`**:
+  unlike `RiskPlan`/`AIDecision`/`FeatureSnapshot` (each with its own
+  real `_CREATED`/`_REGISTERED` event elsewhere in the store that a
+  projection can independently rebuild and cross-check against),
+  `EligibilityContext`'s account/safe-mode state has no upstream event
+  of its own - it is captured live by the caller immediately before
+  `EligibilityDecision_Build`. A hash-only payload would be
+  write-only/unverifiable on replay, breaking this project's own
+  "every hash in a persisted event must be independently
+  reconstructable or directly verifiable" discipline every prior layer
+  follows. **Resolution (confirmed by the user): `EXECUTION_ELIGIBILITY_DECIDED`'s
+  own payload persists the raw `EligibilityContext.account.*` fields
+  and `safe_mode_active` verbatim**, so replay can recompute
+  `EligibilityContext_ComputeHash()` from the persisted raw fields and
+  verify it against the persisted `eligibility_context_hash` - the only
+  viable option given no separate reconstructable context event exists.
+
+## Event design
+
+Two event families, by design, in a fixed order:
+
+```
+EligibilityDecision
+    |
+    v
+EXECUTION_ELIGIBILITY_DECIDED         <- SystemEvent, always written first
+    |
+    v (only if decision == REJECTED)
+CANDIDATE_REJECTED_BY_RISK            <- LifecycleEvent, consequence only
+```
+
+- `EXECUTION_ELIGIBILITY_DECIDED` is written for **every** successfully
+  built `EligibilityDecision` - `ELIGIBLE` and `REJECTED` both, audit
+  evidence either way, exactly like B8.5 Commit 2's own
+  `ALLOW`/`REJECT`/`ABSTAIN`-emit-identically precedent. The only gate
+  is a failed build (`eligibility_decision_id == ""`).
+- `CANDIDATE_REJECTED_BY_RISK` is emitted **only** when
+  `decision == ELIGIBILITY_DECISION_REJECTED`, strictly after the
+  `EXECUTION_ELIGIBILITY_DECIDED` write already succeeded - never
+  before it, never for `ELIGIBLE`.
+- `ELIGIBLE` never emits a lifecycle transition and never submits
+  anything - the candidate stays at `CANDIDATE_CREATED`. No
+  `CANDIDATE_SUBMITTED`, no order request, no broker call anywhere in
+  this commit - that is Phase C's job, out of scope here entirely.
+
+## `EXECUTION_ELIGIBILITY_DECIDED`'s `extra_json` - every `EligibilityDecision` field, plus raw `EligibilityContext` evidence
+
+```
+eligibility_decision_schema_version, eligibility_decision_id, eligibility_decision_hash,
+candidate_id, candidate_hash,
+risk_plan_id, plan_hash,
+ai_decision_id, ai_decision_hash,
+eligibility_context_schema_version, eligibility_context_hash,
+eligibility_policy_version, decision, reason_code,
+
+account_balance, account_equity, account_margin_level,
+account_open_positions_count, account_open_risk_percent,
+account_daily_pnl_percent, account_drawdown_from_peak_percent,
+account_context_schema_version,
+safe_mode_active
+```
+
+All 8 real `AccountSnapshot` fields are persisted verbatim (not a
+selective subset, including `context_schema_version` even though it is
+excluded from `EligibilityContext_HashPayload` itself - the full raw
+struct is audit evidence regardless of which fields feed the hash),
+prefixed `account_` to avoid any key collision with
+`EligibilityDecision`'s own fields. `decision`/`reason_code` follow the
+project's standard enum-as-quoted-string convention
+(`EligibilityDecisionToString`/`ReasonCodeToString`).
+`account_id`/`currency`-style fields do **not** exist on the real
+`AccountSnapshot` struct and are not persisted (nothing to persist).
+
+## Live emission: `EligibilityDecision_EmitDecisionAndWireLifecycle` (new)
+
+```cpp
+bool EligibilityDecision_EmitDecisionAndWireLifecycle(const EligibilityDecision &d, const EligibilityContext &context, TradeCandidate &candidate);
+```
+
+1. Returns `false` (no write attempted) if `d.eligibility_decision_id == ""`
+   (a failed `EligibilityDecision_Build`) - same "no partial record"
+   rule every prior emitter follows.
+2. Checks `EligibilityDecisionProjection_TryGet(d.eligibility_decision_id, existing)` -
+   the same coarse, live, in-session guard every prior emitter uses.
+3. Builds `extra_json` via `EligibilityDecision_ToExtraJson(d, context)`,
+   appends via
+   `EventStore_LogSystem(EventTypeToString(EVENT_TYPE_EXECUTION_ELIGIBILITY_DECIDED), "execution eligibility decided", extraJson)`.
+   Returns `false` if this write fails.
+4. Applies the equivalent record to `EligibilityDecisionProjection`'s
+   live in-memory registry (same live-sync fix every prior emitter
+   needs).
+5. If `d.decision != ELIGIBILITY_DECISION_REJECTED`, returns `true` -
+   done, no lifecycle transition.
+6. If `d.decision == ELIGIBILITY_DECISION_REJECTED`, calls
+   `EventStore_LogTransition(candidate, CANDIDATE_REJECTED_BY_RISK, d.reason_code, extraJson)`
+   (the same `extra_json` payload, so the lifecycle line itself also
+   carries the full decision/evidence for anyone reading only that
+   line). Returns whatever that call returns.
+
+**Failure-mode rule (explicit, confirmed by the user): no cross-event
+rollback.** If step 3 (the `EXECUTION_ELIGIBILITY_DECIDED` write)
+succeeds but step 6 (the `CANDIDATE_REJECTED_BY_RISK` write) fails, the
+function returns `false` to the caller, but the already-durable
+`EXECUTION_ELIGIBILITY_DECIDED` line is **never** rolled back, rewritten,
+or deleted - this project's event store is append-only, and erasing a
+durably-written line to "undo" a partial multi-event operation would
+destroy the audit trail worse than leaving an inconsistency for
+reconciliation to find. The caller must treat a `false` return as "the
+eligibility decision is durably recorded, but the candidate's lifecycle
+state may not reflect it yet" and must not claim B9 completed the
+candidate's lifecycle transition on that path. `EventStore_LogTransition`
+itself already trips Safe Mode on its own durable-write failure (its
+existing, sealed behavior - unchanged here). Reconciling "does every
+`REJECTED` `EXECUTION_ELIGIBILITY_DECIDED` have exactly one matching
+terminal `CANDIDATE_REJECTED_BY_RISK`" is deferred to Commit 3's
+integration/replay proof (a real fault-injection test for step 6's
+write failing independently of step 3 succeeding is included in this
+commit's suite only if MQL5 offers a reliable way to force that
+specific failure in isolation; otherwise this recovery semantic is
+documented here and re-verified structurally in Commit 3).
+
+## Replay/projection: `EligibilityDecisionProjection` (new)
+
+`EligibilityDecisionProjectionRecord`: every `EligibilityDecision`
+field, plus the same raw `AccountSnapshot`/`safe_mode_active` evidence
+the event payload carries (so a rebuilt record can prove its own
+`eligibility_context_hash` independently, not merely repeat it), plus
+`source_sequence_number`/`source_log_event_id`.
+
+`EligibilityDecisionProjection_RebuildFromFile(fileName)`:
+
+1. `EventStoreValidator_ValidateLines` - whole-file gate, same as every
+   prior projection.
+2. `RiskPlanProjection_RebuildFromFile(fileName)` - independent
+   rebuild, needed for the direct `RiskPlan` lineage cross-check below.
+3. `AIDecisionProjection_RebuildFromFile(fileName)` - independent
+   rebuild (which itself transitively rebuilds `FeatureSnapshotProjection`
+   and `ModelArtifactProjection` as its own prerequisites).
+4. `FeatureSnapshotProjection_RebuildFromFile(fileName)` - rebuilt
+   again, explicitly and independently at this layer too (defense in
+   depth, matching this project's established "structural, not just
+   behavioral" re-verification precedent - not strictly required by
+   step 3's own internal behavior, but proves the chain of custody at
+   this layer directly rather than only trusting `AIDecisionProjection`'s
+   own prior verification).
+5. If any of steps 1-4 fail, this rebuild fails closed, registry
+   untouched.
+6. Reset `EligibilityDecisionProjection`'s own registry, apply every
+   line via `EligibilityDecisionProjection_ApplyLineWithLineage`.
+
+`EligibilityDecisionProjection_ApplyLineWithLineage` (for each
+`EXECUTION_ELIGIBILITY_DECIDED` line):
+
+1. Line-length defensive bound, two-part type-gate, `EventSerializer_ParseSystem`,
+   required-field presence, numerical integrity - same ladder every
+   prior projection uses.
+2. **Reconstruct `EligibilityContext` from the persisted raw evidence**
+   (`account_*` fields + `safe_mode_active`) and recompute
+   `EligibilityContext_ComputeHash()` - **require an exact match**
+   against the line's own `eligibility_context_hash`. Any mismatch
+   (including a tampered single `account_*` field) is rejected as a
+   context-integrity failure - this is the mechanism that makes the
+   persisted raw evidence actually protective, not just informational:
+   tampering any evidence field changes the recomputed hash and fails
+   closed.
+3. **Referential integrity against `RiskPlanProjection`**: the
+   referenced `risk_plan_id` must exist, and its `plan_hash`/
+   `candidate_id`/`candidate_hash` must match the line's own values.
+   Missing -> orphan, rejected. Mismatch -> rejected.
+4. **Referential integrity against `AIDecisionProjection`**: the
+   referenced `ai_decision_id` must exist, and its `ai_decision_hash`/
+   `candidate_id`/`candidate_hash` must match the line's own values.
+   Missing -> orphan, rejected. Mismatch -> rejected.
+5. **Referential integrity against `FeatureSnapshotProjection`,
+   reached via the `AIDecisionProjection` record found in step 4**: the
+   `AIDecisionProjection` record's own `feature_snapshot_id` must exist
+   in `FeatureSnapshotProjection`, and that record's `candidate_id`/
+   `candidate_hash` must match the line's own `candidate_id`/
+   `candidate_hash` too - confirming the full chain of custody
+   (candidate -> snapshot -> AI decision -> eligibility decision) agrees
+   on candidate identity at every hop, not just trusting
+   `AIDecisionProjection`'s own already-completed internal check.
+6. **Collision-vs-duplicate**: `eligibility_decision_id` already
+   registered with an IDENTICAL `eligibility_decision_hash` ->
+   duplicate, idempotent no-op. DIFFERENT hash -> collision, rejected,
+   whole rebuild fails closed.
+
+## Lifecycle cross-session idempotency
+
+- **Live session**: `EventStore_LogTransition` + `StateMachine_CanTransition`
+  already prevent a second transition attempt once the in-memory
+  `TradeCandidate.state` is `CANDIDATE_REJECTED_BY_RISK` (a terminal
+  state) - free from the existing, sealed state machine.
+- **Cross-session/replay**: before calling
+  `EventStore_LogTransition` for a candidate whose `EligibilityDecision`
+  was just rebuilt as `REJECTED`, the caller checks
+  `StateProjector_TryGetState(candidate_id, &state)` first - if it
+  already reports `CANDIDATE_REJECTED_BY_RISK`, the transition is
+  skipped as an idempotent no-op, never attempted a second time. This
+  commit does not change `StateProjector` itself - only calls its
+  already-sealed `_TryGetState` accessor.
+- The lifecycle transition's `reason` must always equal
+  `EligibilityDecision.reason_code` exactly - never re-derived,
+  verified by a replay-time check that the persisted `LifecycleEvent`
+  line's `reason` matches the paired `EXECUTION_ELIGIBILITY_DECIDED`
+  line's own `reason_code`.
+
+## QA gate for B9 Commit 2 (binding on its test suite)
+
+- `ELIGIBLE`: exactly one `EXECUTION_ELIGIBILITY_DECIDED` event; no
+  lifecycle event; candidate stays at `CANDIDATE_CREATED`.
+- `REJECTED`: `EXECUTION_ELIGIBILITY_DECIDED` then exactly one terminal
+  `CANDIDATE_REJECTED_BY_RISK` `LifecycleEvent`, in that order.
+- Event ordering: a `CANDIDATE_REJECTED_BY_RISK` line can never precede
+  its paired `EXECUTION_ELIGIBILITY_DECIDED` line in the store (checked
+  by sequence number).
+- The raw `account_*`/`safe_mode_active` payload reconstructs the exact
+  same `eligibility_context_hash` on replay.
+- Tampering any single raw evidence field (each isolated individually)
+  causes context-hash validation failure, rejected, whole rebuild fails
+  closed.
+- Missing/mismatched `RiskPlan`/`AIDecision`/`FeatureSnapshot` lineage
+  (each isolated individually, including the two-hop `FeatureSnapshot`
+  check reached via `AIDecisionProjection`) -> fail-closed, orphan or
+  mismatch.
+- `eligibility_decision_id` collision (different hash) -> whole rebuild
+  fails closed. Same id + same hash -> duplicate no-op.
+- A truncated/malformed line anywhere blocks the entire rebuild.
+- Lifecycle `reason` mismatch against the paired decision's
+  `reason_code` -> rejected/flagged as a deterministic inconsistency
+  (not silently accepted).
+- After a valid `REJECTED` flow, `StateProjector_TryGetState` reports
+  `CANDIDATE_REJECTED_BY_RISK` on replay.
+- After a valid `ELIGIBLE` flow, the candidate's state is unchanged
+  (`CANDIDATE_CREATED`) both live and on replay.
+- Cross-session idempotency: replaying a `REJECTED` decision twice
+  produces exactly one `CANDIDATE_REJECTED_BY_RISK` transition, never
+  two.
+- No broker/order/ONNX/live-account read anywhere in the emission or
+  projection path - verified by inspection. Replay never recomputes
+  fresh account/safe-mode values; it only ever reads the persisted
+  payload evidence.
+
+## Scope guard (Commit 2)
+
+Does not resurrect `RiskDecision`. Does not use `TradeCandidate_Transition`
+(calls `EventStore_LogTransition` directly). Does not extend or change
+`CandidateProjection`'s scope (still `CANDIDATE_CREATED`-only, by
+design). Does not wire any execution/order/submission behavior on an
+`ELIGIBLE` verdict - no `CANDIDATE_SUBMITTED`, no broker call anywhere.
+Does not recompute fresh account/safe-mode values during replay - replay
+uses only the persisted payload evidence. No change to any
+already-sealed B5/B6/B7/B8/B9-Commit-1 production file.

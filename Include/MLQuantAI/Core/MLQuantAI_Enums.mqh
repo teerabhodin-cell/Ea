@@ -244,7 +244,17 @@ enum ENUM_EVENT_TYPE
    // transition. Deliberately NOT the same thing as the dormant,
    // Phase-A EVENT_TYPE_CANDIDATE_REJECTED_BY_AI candidate-state value
    // above - that is a state-machine transition B8.5 does not drive.
-   EVENT_TYPE_AI_DECISION_CREATED
+   EVENT_TYPE_AI_DECISION_CREATED,
+
+   // Phase B9 Commit 2: same append-at-end rule. An EligibilityDecision
+   // is a SystemEvent tied to a candidate (via RiskPlan/AIDecision) - a
+   // derived audit artifact, not itself a candidate-lifecycle
+   // transition. The separate CANDIDATE_REJECTED_BY_RISK LifecycleEvent
+   // (already declared above, in the candidate-lifecycle block) is the
+   // real state transition this commit wires as a REJECTED-only
+   // consequence - see Docs/PhaseB_B9_ExecutionEligibilityContract.md's
+   // Commit 2 addendum.
+   EVENT_TYPE_EXECUTION_ELIGIBILITY_DECIDED
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -278,6 +288,7 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_FEATURE_SNAPSHOT_CREATED:           return "FEATURE_SNAPSHOT_CREATED";
       case EVENT_TYPE_MODEL_ARTIFACT_REGISTERED:          return "MODEL_ARTIFACT_REGISTERED";
       case EVENT_TYPE_AI_DECISION_CREATED:                return "AI_DECISION_CREATED";
+      case EVENT_TYPE_EXECUTION_ELIGIBILITY_DECIDED:      return "EXECUTION_ELIGIBILITY_DECIDED";
    }
    return "UNKNOWN";
 }
@@ -311,6 +322,7 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "FEATURE_SNAPSHOT_CREATED")          return EVENT_TYPE_FEATURE_SNAPSHOT_CREATED;
    if(s == "MODEL_ARTIFACT_REGISTERED")         return EVENT_TYPE_MODEL_ARTIFACT_REGISTERED;
    if(s == "AI_DECISION_CREATED")               return EVENT_TYPE_AI_DECISION_CREATED;
+   if(s == "EXECUTION_ELIGIBILITY_DECIDED")     return EVENT_TYPE_EXECUTION_ELIGIBILITY_DECIDED;
    return EVENT_TYPE_UNKNOWN;
 }
 
