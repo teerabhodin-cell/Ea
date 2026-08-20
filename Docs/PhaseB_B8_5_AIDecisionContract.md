@@ -334,3 +334,241 @@ B8.5 Commit 3  Full-chain regression + seal                  <- own contract add
 - No side effects (structural): no `EventStore_Log*`/`OrderSend`/
   `CTrade`/`AccountInfo*`/`SymbolInfo*`/ONNX call anywhere in
   `AIDecision_Build` - verified by inspection.
+
+# Addendum — B8.5 Commit 2: `AI_DECISION_CREATED` event + `AIDecisionProjection`
+
+**Status: FROZEN, before any code exists.** Written the moment Commit 1
+was confirmed PASSED (72/72, real MetaEditor run) and Commit 2 was
+confirmed to proceed, after a collision check against
+`AI_DECISION_CREATED`/`AIDecisionProjection`/`AIDecisionRegistry`/
+`ai_decision_id`/`ai_decision_hash`/`AIDecision_Emit`/
+`EVENT_TYPE_AI_DECISION`/`AI_DECISION`/`ENUM_EVENT_TYPE`/
+`EVENT_TYPE_CANDIDATE_REJECTED_BY_AI`/`AIResult` (full findings below).
+Mirrors B8.2 Commit 2 Part 0 (`FeatureSnapshot_EmitFeatureSnapshotCreated`
++ `FeatureSnapshotProjection`) most closely, since `AIDecision` is the
+same shape of thing `FeatureSnapshot` is: a derived artifact tied to a
+candidate, not a candidate lifecycle transition.
+
+## Collision check findings
+
+- **`ENUM_EVENT_TYPE`**: current true tail is
+  `EVENT_TYPE_MODEL_ARTIFACT_REGISTERED` (B8.3), with the append-only
+  rule explicitly commented at every addition since B7
+  (`RISK_PLAN_CREATED`/`FEATURE_SNAPSHOT_CREATED`/
+  `MODEL_ARTIFACT_REGISTERED`). No `AI_DECISION_CREATED` or similar
+  value exists. `EVENT_TYPE_AI_DECISION_CREATED` is appended after
+  `EVENT_TYPE_MODEL_ARTIFACT_REGISTERED`, same rule.
+- **Serializer/deserializer**: `AI_DECISION_CREATED` does not appear in
+  `EventTypeToString`/`EventTypeFromString` anywhere - single, new
+  ownership, no collision.
+- **`EVENT_TYPE_CANDIDATE_REJECTED_BY_AI`** (Phase A, part of
+  `ENUM_CANDIDATE_STATE`/`ENUM_EVENT_TYPE`'s candidate-lifecycle block,
+  driven by `StateProjector`) is a **different concern entirely**: a
+  candidate *state transition* (`CANDIDATE_CREATED -> REJECTED_BY_AI`),
+  never triggered by any real code path yet, and explicitly confirmed
+  out of B8.5's scope in Commit 1's own collision check (a later,
+  presumably B9-era, concern - the state machine transition is not the
+  same thing as persisting the `AIDecision` record itself).
+  **`AI_DECISION_CREATED` does not touch `ENUM_CANDIDATE_STATE`,
+  `StateProjector`, or drive any `CANDIDATE_REJECTED_BY_AI` transition**
+  - it is a `SystemEvent` recording a decision artifact, exactly the
+    same relationship `FEATURE_SNAPSHOT_CREATED`/`RISK_PLAN_CREATED`
+    have to the candidate lifecycle (adjacent, never mutating it).
+- **`AIResult`**: re-confirmed still fully dormant - no event
+  emission, no projection, no reference from any real code path outside
+  its own Phase A stub. `AI_DECISION_CREATED`/`AIDecisionProjection`
+  create no second, competing truth source for `AIResult`'s concerns;
+  `AIResult` remains untouched by B8.5 in its entirety.
+
+## Why `AI_DECISION_CREATED` is a `SystemEvent`, not a `LifecycleEvent`
+
+Same reasoning as `RISK_PLAN_CREATED`/`FEATURE_SNAPSHOT_CREATED`: an
+`AIDecision` is not itself a candidate state transition, it is a
+derived artifact tied to one candidate (via `candidate_id`/
+`candidate_hash`, copied verbatim from the `FeatureSnapshot` it was
+built from). `AI_DECISION_CREATED` is a `SystemEvent`
+(`EventStore_LogSystem`), every `AIDecision` field flattened into
+`extra_json` as top-level JSON keys, mirroring
+`FeatureSnapshot_ToExtraJson`'s exact convention.
+
+## Event type
+
+`Core/MLQuantAI_Enums.mqh` (additive): `EVENT_TYPE_AI_DECISION_CREATED`
+appended after `EVENT_TYPE_MODEL_ARTIFACT_REGISTERED` - the current
+true tail - with `EventTypeToString`/`EventTypeFromString` cases added.
+Also additive: `AiDecisionOutcomeFromString(string)`, the missing
+inverse of Commit 1's `AiDecisionOutcomeToString`, needed so
+`AIDecisionProjection` can parse `decision_outcome` back from its
+persisted string form (the same enum-string round-trip
+`ReasonCodeToString`/`ReasonCodeFromString` already provide for
+`decision_reason_code`).
+
+## `AI_DECISION_CREATED`'s `extra_json` - every `AIDecision` field
+
+All 18 fields, flattened, `decision_outcome`/`decision_reason_code`
+written as quoted strings via `AiDecisionOutcomeToString`/
+`ReasonCodeToString` (mirrors `ModelArtifact_ToExtraJson`'s
+`promotion_state` convention), `allow_threshold`/`p_success` via
+`CanonicalDouble` (mirrors every other double field ever put in a hash
+payload/extra_json in this project):
+
+```
+ai_decision_schema_version, ai_decision_id, ai_decision_hash,
+candidate_id, candidate_hash,
+feature_snapshot_id, feature_snapshot_hash, feature_vector_hash,
+model_registry_id, model_registry_hash, model_artifact_hash,
+inference_output_hash, output_schema_version, inference_contract_version,
+decision_policy_version, threshold_version, allow_threshold,
+p_success, decision_outcome, decision_reason_code
+```
+
+## Live emission: `AIDecision_EmitAIDecisionCreated` (new)
+
+```cpp
+bool AIDecision_EmitAIDecisionCreated(const AIDecision &d);
+```
+
+Mirrors `FeatureSnapshot_EmitFeatureSnapshotCreated` exactly:
+
+1. Returns `false` (no write attempted) if `d.ai_decision_id == ""` -
+   a decision that failed `AIDecision_Build` (left at `Init()`
+   defaults, `decision_outcome == AI_DECISION_OUTCOME_NONE`) emits no
+   event, same as an unfilled `FeatureSnapshot`/rejected `RiskPlan`
+   emits nothing. **This is the only outcome-based gate** - `ALLOW`,
+   `REJECT`, and (once reachable in a future policy version) `ABSTAIN`
+   are ALL emitted identically, as audit evidence only. Commit 2 never
+   branches on `decision_outcome` to decide whether to emit, and never
+   produces any execution side effect for any outcome value - the
+   event is a durable record of what was decided, nothing more.
+2. Checks `AIDecisionProjection_TryGet(d.ai_decision_id, existing)` -
+   the same coarse, live, in-session guard every prior emitter uses:
+   any existing record for this `ai_decision_id` (regardless of
+   `ai_decision_hash`) blocks re-emission this call. The finer
+   duplicate-vs-collision distinction is the projection/replay layer's
+   job, below.
+3. Builds `extra_json` via `AIDecision_ToExtraJson(d)`, appends via
+   `EventStore_LogSystem(EventTypeToString(EVENT_TYPE_AI_DECISION_CREATED), "ai decision created", extraJson)`.
+4. On a successful durable write, applies the equivalent record
+   directly to `AIDecisionProjection`'s live in-memory registry (the
+   same live-sync fix every prior emitter needs).
+5. Returns `true`.
+
+No referential-integrity check against `FeatureSnapshotProjection`/
+`ModelArtifactProjection` happens at emission time - same
+trust-the-caller-verify-on-replay split every prior emitter uses.
+
+## Replay/projection: `AIDecisionProjection` (new)
+
+`AIDecisionProjectionRecord`: every `AIDecision` field above, plus
+`source_sequence_number`/`source_log_event_id` (audit trail, same
+fields every projection record already carries).
+
+**Referential-integrity scope (the one point genuinely stricter than
+any prior projection in this codebase, confirmed with the user before
+freezing):** `AIDecision` has two independent upstream lineage chains -
+`feature_snapshot_id`/`feature_snapshot_hash`/`feature_vector_hash`
+(from `FeatureSnapshot`) and `model_registry_id`/`model_registry_hash`/
+`model_artifact_hash` (from `ModelArtifact`/`ModelRegistry`). Every
+prior projection in this project (`RiskPlanProjection`,
+`FeatureSnapshotProjection`) only ever had ONE upstream chain to verify.
+`AIDecisionProjection_RebuildFromFile` verifies **both**, independently:
+
+1. `EventStoreValidator_ValidateLines` first - whole-file gate, same as
+   every prior projection.
+2. `FeatureSnapshotProjection_RebuildFromFile(fileName)` - rebuilt from
+   the SAME file (which itself transitively rebuilds
+   `CandidateProjection` first). If it fails, this rebuild fails
+   closed, registry untouched.
+3. `ModelArtifactProjection_RebuildFromFile(fileName)` - rebuilt from
+   the SAME file, independently (it has no `CandidateProjection`
+   prerequisite of its own - `ModelArtifact` is not candidate-tied).
+   If it fails, this rebuild fails closed, registry untouched.
+4. Reset `AIDecisionProjection`'s own registry, apply every line via
+   `AIDecisionProjection_ApplyLine`, referential-integrity-checked
+   against BOTH now-current registries from step 2 and step 3.
+
+`AIDecisionProjection_ApplyLine(line, &outReason) -> bool` - mirrors
+`FeatureSnapshotProjection_ApplyLine`'s exact ladder:
+
+1. Line-length defensive bound.
+2. Type-gate (two-part: `HasKey("type")` AND value check) - not
+   `AI_DECISION_CREATED` -> skip as irrelevant.
+3. `EventSerializer_ParseSystem` - fails -> "not a parsable event line".
+4. Required-field presence: every string field on `AIDecision` non-empty
+   (`ai_decision_id`, `ai_decision_hash`, `candidate_id`,
+   `candidate_hash`, `feature_snapshot_id`, `feature_snapshot_hash`,
+   `feature_vector_hash`, `model_registry_id`, `model_registry_hash`,
+   `model_artifact_hash`, `inference_output_hash`,
+   `output_schema_version`, `inference_contract_version`,
+   `decision_policy_version`, `threshold_version`,
+   `ai_decision_schema_version`).
+5. Numerical integrity: `allow_threshold`/`p_success` both
+   `MathIsValidNumber` and in `[0,1]` - the same defensive re-check
+   `AIDecision_Build` itself applies, now re-verified at the
+   persistence boundary too.
+6. **Referential integrity against `FeatureSnapshotProjection`**: the
+   referenced `feature_snapshot_id` must exist in
+   `FeatureSnapshotProjection`'s registry (rebuilt from the same file),
+   and its `feature_snapshot_hash`/`feature_vector_hash` must both
+   match the line's own values, and its `candidate_id`/`candidate_hash`
+   must both match the line's own `candidate_id`/`candidate_hash`.
+   Missing -> orphan feature snapshot, rejected. Any mismatch -> lineage
+   mismatch, rejected.
+7. **Referential integrity against `ModelArtifactProjection`**: the
+   referenced `model_registry_id` must exist in
+   `ModelArtifactProjection`'s registry (rebuilt from the same file),
+   and its `model_registry_hash`/`model_artifact_hash` must both match
+   the line's own values. Missing -> orphan model registration,
+   rejected. Any mismatch -> lineage mismatch, rejected.
+8. **Collision-vs-duplicate** (payload-aware, same rule every prior
+   projection uses): `ai_decision_id` already registered with an
+   IDENTICAL `ai_decision_hash` -> duplicate, idempotent no-op, returns
+   `true`. Already registered with a DIFFERENT `ai_decision_hash` ->
+   collision, rejected, returns `false`.
+
+## QA gate for B8.5 Commit 2 (binding on its test suite)
+
+- A valid `AIDecision` (any of `ALLOW`/`REJECT`) emits exactly one
+  `AI_DECISION_CREATED` event; re-emitting the identical decision live,
+  same session, is a no-op.
+- A failed `AIDecision_Build` result (`ai_decision_id == ""`) emits no
+  event at all.
+- On replay: same `ai_decision_id` + same `ai_decision_hash` ->
+  duplicate, idempotent no-op. Same `ai_decision_id` + DIFFERENT
+  `ai_decision_hash` -> collision, rejected, registry unchanged for
+  that record.
+- An `AI_DECISION_CREATED` line referencing a `feature_snapshot_id`
+  with no matching `FEATURE_SNAPSHOT_CREATED` anywhere in the file ->
+  orphan, rejected, whole rebuild fails closed.
+- An `AI_DECISION_CREATED` line whose `feature_snapshot_hash`/
+  `feature_vector_hash`/`candidate_id`/`candidate_hash` doesn't match
+  the referenced `FeatureSnapshotProjection` record -> lineage
+  mismatch, rejected, whole rebuild fails closed (each field isolated
+  individually).
+- An `AI_DECISION_CREATED` line referencing a `model_registry_id` with
+  no matching `MODEL_ARTIFACT_REGISTERED` anywhere in the file ->
+  orphan, rejected, whole rebuild fails closed.
+- An `AI_DECISION_CREATED` line whose `model_registry_hash`/
+  `model_artifact_hash` doesn't match the referenced
+  `ModelArtifactProjection` record -> lineage mismatch, rejected, whole
+  rebuild fails closed (each field isolated individually).
+- A truncated/malformed line anywhere in the file (even one unrelated
+  to any `AIDecision`) blocks the ENTIRE rebuild.
+- Replaying the same store repeatedly reconstructs byte-identical
+  `AIDecisionProjectionRecord`s every time.
+- `ALLOW`, `REJECT` decisions both replay correctly and identically -
+  no special-casing by `decision_outcome` anywhere in the projection
+  path (proving the "audit evidence only, no execution behavior"
+  invariant holds structurally, not just by convention).
+- Every field on a rebuilt `AIDecisionProjectionRecord` matches the
+  original `AIDecision` that was emitted, exactly - no drift.
+- No execution/order/broker/account call anywhere in
+  `AIDecision_EmitAIDecisionCreated` or `AIDecisionProjection` -
+  verified by inspection.
+
+## Explicitly out of scope for this commit
+
+No candidate-lifecycle state transition (`CANDIDATE_REJECTED_BY_AI` or
+any `ENUM_CANDIDATE_STATE`/`StateProjector` involvement), no B9
+execution-eligibility logic, no consumption of `AIDecisionProjection`
+by any other module yet, no `RiskPlan` coupling, no `AIResult` change.

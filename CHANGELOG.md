@@ -4,6 +4,64 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B8.5 Commit 2: AI_DECISION_CREATED Event + AIDecisionProjection (PASSED 2026-08-20)
+
+Opens after Commit 1 PASSED (72/72, real MetaEditor run). Implements
+`Docs/PhaseB_B8_5_AIDecisionContract.md`'s Commit 2 addendum (frozen
+before code, after a collision check against
+`AI_DECISION_CREATED`/`AIDecisionProjection`/`AIDecisionRegistry`/
+`ai_decision_id`/`ai_decision_hash`/`AIDecision_Emit`/
+`EVENT_TYPE_AI_DECISION`/`AI_DECISION`/`ENUM_EVENT_TYPE`/
+`EVENT_TYPE_CANDIDATE_REJECTED_BY_AI`/`AIResult` - no ownership
+collisions found). See
+`Docs/PhaseB_B8_5_Commit2_AIDecisionEventStatus.md`. Real MetaEditor
+run 1: compiled clean, 122/123 checks passed, 1 real failure -
+root-caused to a test-file bug (an exact `==` check on a float-sourced,
+`CanonicalDouble`-round-tripped `p_success`, stricter than that
+formatter's own documented 8-decimal precision contract), fixed. Real
+MetaEditor run 2, after the fix: **123/123 checks passed, ALL PASS.**
+B8.5 Commit 2 is PASSED and merged to `mlquantai`.
+
+Persistence + projection + replay only: no execution behavior for any
+`decision_outcome` (`ALLOW`/`REJECT`/`ABSTAIN` are all audit evidence
+only), no candidate-lifecycle state transition, no B9 logic.
+
+### Added
+- `Core/MLQuantAI_Enums.mqh` (additive): `EVENT_TYPE_AI_DECISION_CREATED`
+  appended after `EVENT_TYPE_MODEL_ARTIFACT_REGISTERED` (the true
+  tail), plus `EventTypeToString`/`EventTypeFromString` cases and
+  `AiDecisionOutcomeFromString` (the missing inverse of Commit 1's
+  `AiDecisionOutcomeToString`).
+- `AI/MLQuantAI_AIDecisionEventEmission.mqh` (new):
+  `AIDecision_ToExtraJson` + `AIDecision_EmitAIDecisionCreated` - the
+  only outcome-based gate is `ai_decision_id == ""` (a failed build);
+  `ALLOW`/`REJECT`/`ABSTAIN` all emit identically.
+- `Infrastructure/EventStore/MLQuantAI_AIDecisionProjection.mqh` (new):
+  `AIDecisionProjectionRecord` + live-sync/replay/rebuild, mirroring
+  `FeatureSnapshotProjection.mqh`. `AIDecisionProjection_RebuildFromFile`
+  independently verifies referential integrity against BOTH
+  `FeatureSnapshotProjection` and `ModelArtifactProjection` - the first
+  projection in this project with two independent upstream lineage
+  chains to check.
+- `Tests/MLQuantAI_Test_B8_5_Commit2_AIDecisionEvent.mq5` (new, 15 test
+  functions, using the real B5/B8.1/B8.3/B8.4/B8.5-Commit-1 pipeline
+  for every fixture).
+
+### Fixed (caught by the user's real MetaEditor run - NOT by self-review)
+- `Tests/MLQuantAI_Test_B8_5_Commit2_AIDecisionEvent.mq5`: real run 1
+  was 122/123 (1 fail: `p_success matches` in
+  `Test_ReplayFieldsMatchOriginal`). Root cause: `p_success` is
+  float-sourced (already known lossy, per Commit 1's own fix) AND
+  persisted through `CanonicalDouble`'s deliberately lossy 8-decimal
+  JSON round trip (`DoubleToString(x, 8)` -> `StringToDouble` on
+  replay) - the same documented precision contract the `RiskPlan`
+  Commit 2 test suite already calls out for arithmetic-derived doubles.
+  An exact `==` check was stricter than that contract promises. Fixed
+  with an epsilon comparison. Production code
+  (`AIDecision_EmitAIDecisionCreated`/`AIDecision_ToExtraJson`/
+  `AIDecisionProjection_ApplyLine`) was not touched. See
+  `Docs/PhaseB_B8_5_Commit2_AIDecisionEventStatus.md` for full detail.
+
 ## [Unreleased] - Phase B8.5 Commit 1: AIDecision + Threshold-Policy Pure Mapping (PASSED 2026-08-20)
 
 Opens after B8.4 SEALED (210/210 automated + manual restart checklist
