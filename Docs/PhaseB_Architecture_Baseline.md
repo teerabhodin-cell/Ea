@@ -104,17 +104,33 @@ B8.4  Inference + ONNX Runtime Adapter     SEALED (210/210 automated
       Commit 1 - Inference Contract, Tier A                       PASSED (111/111)
       Commit 2 - Artifact Integrity + Runtime Adapter, Tier B      PASSED (61/61)
       Commit 3 - Runtime Determinism / Handle-Lifetime (same-runtime)  PASSED (38/38)
-B8.5  AIDecision + AI_DECISION_CREATED     NEXT (not yet frozen)
+B8.5  AIDecision + AI_DECISION_CREATED     SEALED (254/254)
+      Commit 1 - threshold-policy pure mapping                     PASSED (72/72)
+      Commit 2 - AI_DECISION_CREATED + AIDecisionProjection         PASSED (123/123)
+      Commit 3 - full-chain integration + regression proof         PASSED (59/59)
+B9    Execution Eligibility Policy               NEXT (not yet frozen)
 ```
 
-B8.4's full seal — automated (210/210) plus the manual restart
-checklist — is now complete. B8.5 (AIDecision) is open next: per
-direction already discussed, it should be contract-first like every
-phase before it, accept only an already-validated `InferenceResult`,
-freeze decision/threshold semantics and persistence identity before
-any code, and grant no execution authority (that stays with B9). See
-the B8.3 direction note at the bottom of this doc for the pipeline
-B8.4 attaches to.
+B8.5 is SEALED: 254/254 across all three commits, all real MetaEditor
+runs, plus a manual re-run of `Test_B8_1_FeatureSnapshot.mq5` (66/66),
+`Test_B8_3_ModelRegistry.mq5` (106/106), `Test_B8_5_AIDecision.mq5`
+(72/72), and `Test_B8_5_Commit2_AIDecisionEvent.mq5` (123/123) in the
+same MetaEditor session, per Commit 3's own Definition of Done - no
+regression anywhere in the B8.1/B8.3/B8.5 chain. See
+`Docs/PhaseB_B8_5_Commit3_IntegrationRegressionStatus.md` for full
+evidence. B9 (Execution Eligibility Policy) is open next.
+
+**Note on the old, informal "B8.6" language**: a few early B8.1/B8.4
+contract docs described the still-to-come AI work informally as
+"B8.5 (decision semantics) / B8.6 (persist/replay/audit)" in their own
+scoping prose. `B8.6` was never a row in this doc's own "phase table"
+(below) - B8 has always been tracked as one umbrella phase with B9
+directly after it. That informal split is now moot: B8.5 Commit 2
+(event emission + `AIDecisionProjection` replay) and Commit 3
+(cross-layer integration/audit-trail proof) together deliver
+everything that language described. No separate B8.6 phase is planned;
+B9 (Execution Eligibility Policy) is next after B8.5 SEALED, exactly as
+the phase table below has always shown.
 
 ## The phase table
 

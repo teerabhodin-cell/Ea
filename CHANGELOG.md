@@ -4,6 +4,55 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase B8.5: FULLY SEALED (2026-08-20)
+
+**254/254, all real MetaEditor runs**: Commit 1 (threshold-policy pure
+mapping) 72/72, Commit 2 (`AI_DECISION_CREATED` event +
+`AIDecisionProjection`) 123/123, Commit 3 (full-chain integration +
+regression) 59/59. Commit 3's own manual regression re-run - required
+by its Definition of Done, not a separate step - also confirmed clean
+in the same MetaEditor session: `Test_B8_1_FeatureSnapshot.mq5` 66/66,
+`Test_B8_3_ModelRegistry.mq5` 106/106, `Test_B8_5_AIDecision.mq5`
+72/72, `Test_B8_5_Commit2_AIDecisionEvent.mq5` 123/123 - no regression
+anywhere in the B8.1/B8.3/B8.5 chain. Full evidence in
+`Docs/PhaseB_B8_5_Commit3_IntegrationRegressionStatus.md`.
+
+B8.5 is the first layer with authority to interpret `p_success` as
+`ALLOW`/`REJECT`/`ABSTAIN` (still unreachable this policy version),
+still without execution authority - B9 remains the sole place
+`RiskPlan` + `AIDecision` + operational policy combine into
+`ELIGIBLE`/`REJECTED`. The old, informal "B8.6: persist/replay/audit"
+scoping language used in a few early B8.1/B8.4 contract docs is fully
+superseded by B8.5 Commit 2/Commit 3 - no separate B8.6 phase remains;
+see `Docs/PhaseB_Architecture_Baseline.md`'s note. B9 opens next.
+
+## [Unreleased] - Phase B8.5 Commit 3: Full-Chain Integration + Regression Proof, Seal (PASSED 59/59, seal pending)
+
+Opens after Commit 2 PASSED (123/123, real MetaEditor run). Implements
+`Docs/PhaseB_B8_5_AIDecisionContract.md`'s Commit 3 addendum (frozen
+before code, mirrors B7 Commit 3 / B8.2 Commit 4). See
+`Docs/PhaseB_B8_5_Commit3_IntegrationRegressionStatus.md`. Real
+MetaEditor run: **59/59 checks passed, ALL PASS.** Adds **zero new
+production behavior** - pure test-suite commit. Per this commit's own
+Definition of Done, B8.5 is not yet declared SEALED until a manual
+re-run of `Test_B8_1_FeatureSnapshot.mq5`/`Test_B8_3_ModelRegistry.mq5`/
+`Test_B8_5_AIDecision.mq5`/`Test_B8_5_Commit2_AIDecisionEvent.mq5` in
+the same MetaEditor session also confirms clean.
+
+### Added
+- `Tests/MLQuantAI_Test_B8_5_Commit3_IntegrationRegression.mq5` (new,
+  6 test functions): end-to-end linkage across all four layers
+  (candidate/snapshot/model artifact/decision); cross-layer failure
+  propagation for BOTH independent upstream chains (candidate/snapshot
+  side, and the model side independently); full-chain multi-decision
+  restart/crash simulation across all four projections; multi-candidate,
+  multi-model cross-linking (shared and distinct models in one store).
+
+On a clean pass (this commit + a manual re-run of
+`Test_B8_1_FeatureSnapshot.mq5`/`Test_B8_3_ModelRegistry.mq5`/
+`Test_B8_5_AIDecision.mq5`/`Test_B8_5_Commit2_AIDecisionEvent.mq5`),
+B8.5 will be declared SEALED.
+
 ## [Unreleased] - Phase B8.5 Commit 2: AI_DECISION_CREATED Event + AIDecisionProjection (PASSED 2026-08-20)
 
 Opens after Commit 1 PASSED (72/72, real MetaEditor run). Implements
