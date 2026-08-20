@@ -1,6 +1,6 @@
 # Phase B9 — Commit 3: Full-Chain Integration + Regression Proof, Seal
 
-**Status: Implemented, awaiting real MetaEditor compile/test confirmation.**
+**Status: PASSED (79/79, real MetaEditor run, 2026-08-21). B9 FULLY SEALED.**
 Implements the Commit 3 addendum in
 `Docs/PhaseB_B9_ExecutionEligibilityContract.md` (frozen before code).
 Opens after B9 Commit 2 PASSED (84/84, real MetaEditor run,
@@ -86,13 +86,24 @@ shipped B9 Commit 1 + Commit 2 pieces compose correctly end to end.
   suite in the same MetaEditor session - manual checklist, since MQL5
   has no cross-script test runner.
 
-## Next step
+## Result
 
-Awaiting a real MetaEditor compile + run of
-`MLQuantAI_Test_B9_Commit3_IntegrationRegression.mq5`, plus the manual
-regression re-run of `Test_B9_ExecutionEligibility.mq5` and
-`Test_B9_Commit2_EligibilityEvent.mq5` in the same session. Only a
-genuine, clean real log for all three moves this to PASSED and seals
-B9: execution eligibility pure mapping (Commit 1) + durable event/
-projection/replay + lifecycle wiring (Commit 2) + full-chain
-integration proof (Commit 3) - the last policy authority before Phase C.
+Real MetaEditor run: **79/79 checks passed, ALL PASS** for
+`MLQuantAI_Test_B9_Commit3_IntegrationRegression.mq5`. Manual regression
+re-run in the same MetaEditor session, both real: `Test_B9_ExecutionEligibility.mq5`
+**120/120 ALL PASS**, `Test_B9_Commit2_EligibilityEvent.mq5` **84/84 ALL
+PASS**. Combined: **283/283, all real**.
+
+B9 Commit 3 is PASSED and merged to `mlquantai`.
+
+## B9 FULLY SEALED
+
+**283/283, all real MetaEditor runs**: Commit 1 (pure eligibility
+mapping) 120/120, Commit 2 (`EXECUTION_ELIGIBILITY_DECIDED` event +
+`CANDIDATE_REJECTED_BY_RISK` lifecycle wiring + replay) 84/84, Commit 3
+(full-chain integration + regression proof) 79/79 + the Commit 1/2
+manual regression re-run in the same session. B9 is the last policy
+authority before Phase C: `RiskPlan` (B7) + `AIDecision` (B8.5) +
+operational constraints combine into `ELIGIBLE`/`REJECTED`, still
+without any broker/execution authority of its own. Phase C (broker
+execution) opens next.

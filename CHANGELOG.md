@@ -4,7 +4,26 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase B9 Commit 3: Full-Chain Integration + Regression Proof, Seal (Implemented, awaiting real run)
+## [Unreleased] - Phase B9: FULLY SEALED (2026-08-21)
+
+**283/283, all real MetaEditor runs**: Commit 1 (pure eligibility
+mapping) 120/120, Commit 2 (`EXECUTION_ELIGIBILITY_DECIDED` event +
+`CANDIDATE_REJECTED_BY_RISK` lifecycle wiring + replay) 84/84, Commit 3
+(full-chain integration + regression proof) 79/79 - Commit 3's own
+manual regression re-run of Commit 1 (120/120) and Commit 2 (84/84) in
+the same MetaEditor session, both real, both ALL PASS.
+
+B9 is the last policy authority before Phase C: `RiskPlan` (B7, sealed)
++ `AIDecision` (B8.5, sealed) + operational constraints (daily loss,
+drawdown, total exposure, open positions, margin, safe-mode/circuit-
+breaker) combine into `ELIGIBLE`/`REJECTED`, with `REJECTED` driving
+the candidate's `CANDIDATE_REJECTED_BY_RISK` lifecycle transition -
+still without any broker/order/execution authority of its own, which
+stays Phase C's exclusive job. See
+`Docs/PhaseB_B9_Commit3_IntegrationRegressionStatus.md`. Phase C
+(broker execution) opens next.
+
+## [Unreleased] - Phase B9 Commit 3: Full-Chain Integration + Regression Proof, Seal (PASSED 2026-08-21)
 
 Opens after B9 Commit 2 PASSED (84/84, real MetaEditor run,
 2026-08-20). Implements the Commit 3 addendum in
@@ -14,8 +33,7 @@ proving Commit 1 + Commit 2's already-shipped pieces compose correctly
 end to end, across all three independent upstream chains
 (`RiskPlanProjection`, `AIDecisionProjection`, `FeatureSnapshotProjection`)
 feeding `EligibilityDecisionProjection`. See
-`Docs/PhaseB_B9_Commit3_IntegrationRegressionStatus.md`. Not yet
-compiled/run by the user - status is Implemented, not PASSED.
+`Docs/PhaseB_B9_Commit3_IntegrationRegressionStatus.md`.
 
 ### Added
 - `Tests/MLQuantAI_Test_B9_Commit3_IntegrationRegression.mq5` (new, 7
@@ -29,9 +47,11 @@ compiled/run by the user - status is Implemented, not PASSED.
   never made it into the store - the non-rollback edge case Commit 2's
   own contract explicitly deferred.
 
-Not yet PASSED - awaiting a real MetaEditor compile/run, plus the
-manual regression re-run of `Test_B9_ExecutionEligibility.mq5` and
-`Test_B9_Commit2_EligibilityEvent.mq5` in the same session.
+Real MetaEditor run: **79/79 checks passed, ALL PASS**, plus the manual
+regression re-run in the same session: `Test_B9_ExecutionEligibility.mq5`
+120/120 and `Test_B9_Commit2_EligibilityEvent.mq5` 84/84, both real, both
+ALL PASS. B9 Commit 3 is PASSED and merged to `mlquantai` - **B9 is
+FULLY SEALED at 283/283.**
 
 ## [Unreleased] - Phase B9 Commit 2: EXECUTION_ELIGIBILITY_DECIDED Event + Lifecycle Wiring (PASSED 2026-08-20)
 

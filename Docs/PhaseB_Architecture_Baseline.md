@@ -108,7 +108,11 @@ B8.5  AIDecision + AI_DECISION_CREATED     SEALED (254/254)
       Commit 1 - threshold-policy pure mapping                     PASSED (72/72)
       Commit 2 - AI_DECISION_CREATED + AIDecisionProjection         PASSED (123/123)
       Commit 3 - full-chain integration + regression proof         PASSED (59/59)
-B9    Execution Eligibility Policy               NEXT (not yet frozen)
+B9    Execution Eligibility Policy         SEALED (283/283)
+      Commit 1 - pure eligibility mapping                           PASSED (120/120)
+      Commit 2 - EXECUTION_ELIGIBILITY_DECIDED + lifecycle wiring    PASSED (84/84)
+      Commit 3 - full-chain integration + regression proof           PASSED (79/79)
+C     Broker Execution + Reconciliation        NEXT (not yet frozen)
 ```
 
 B8.5 is SEALED: 254/254 across all three commits, all real MetaEditor
@@ -118,7 +122,15 @@ runs, plus a manual re-run of `Test_B8_1_FeatureSnapshot.mq5` (66/66),
 same MetaEditor session, per Commit 3's own Definition of Done - no
 regression anywhere in the B8.1/B8.3/B8.5 chain. See
 `Docs/PhaseB_B8_5_Commit3_IntegrationRegressionStatus.md` for full
-evidence. B9 (Execution Eligibility Policy) is open next.
+evidence.
+
+B9 is SEALED: 283/283 across all three commits, all real MetaEditor
+runs, plus a manual re-run of `Test_B9_ExecutionEligibility.mq5`
+(120/120) and `Test_B9_Commit2_EligibilityEvent.mq5` (84/84) in the
+same MetaEditor session, per Commit 3's own Definition of Done - no
+regression anywhere in the B9 chain. See
+`Docs/PhaseB_B9_Commit3_IntegrationRegressionStatus.md` for full
+evidence. Phase C (Broker Execution + Reconciliation) is open next.
 
 **Note on the old, informal "B8.6" language**: a few early B8.1/B8.4
 contract docs described the still-to-come AI work informally as
