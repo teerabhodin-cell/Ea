@@ -104,19 +104,21 @@ B8.4  Inference + ONNX Runtime Adapter     SEALED (210/210 automated
       Commit 1 - Inference Contract, Tier A                       PASSED (111/111)
       Commit 2 - Artifact Integrity + Runtime Adapter, Tier B      PASSED (61/61)
       Commit 3 - Runtime Determinism / Handle-Lifetime (same-runtime)  PASSED (38/38)
-B8.5  AIDecision + AI_DECISION_CREATED     Commit 1+2+3 PASSED (254/254)
+B8.5  AIDecision + AI_DECISION_CREATED     SEALED (254/254)
       Commit 1 - threshold-policy pure mapping                     PASSED (72/72)
       Commit 2 - AI_DECISION_CREATED + AIDecisionProjection         PASSED (123/123)
-      Commit 3 - full-chain integration + regression proof         PASSED (59/59, real run)
-                 - awaiting manual 4-suite regression re-run before SEALED
+      Commit 3 - full-chain integration + regression proof         PASSED (59/59)
+B9    Execution Eligibility Policy               NEXT (not yet frozen)
 ```
 
-B8.5 Commit 3's real MetaEditor run was 59/59, ALL PASS. Per its own
-Definition of Done, B8.5 is not yet declared SEALED until a manual
-re-run of `Test_B8_1_FeatureSnapshot.mq5`/`Test_B8_3_ModelRegistry.mq5`/
-`Test_B8_5_AIDecision.mq5`/`Test_B8_5_Commit2_AIDecisionEvent.mq5` in
-the same MetaEditor session also confirms clean - that log has not
-landed yet.
+B8.5 is SEALED: 254/254 across all three commits, all real MetaEditor
+runs, plus a manual re-run of `Test_B8_1_FeatureSnapshot.mq5` (66/66),
+`Test_B8_3_ModelRegistry.mq5` (106/106), `Test_B8_5_AIDecision.mq5`
+(72/72), and `Test_B8_5_Commit2_AIDecisionEvent.mq5` (123/123) in the
+same MetaEditor session, per Commit 3's own Definition of Done - no
+regression anywhere in the B8.1/B8.3/B8.5 chain. See
+`Docs/PhaseB_B8_5_Commit3_IntegrationRegressionStatus.md` for full
+evidence. B9 (Execution Eligibility Policy) is open next.
 
 **Note on the old, informal "B8.6" language**: a few early B8.1/B8.4
 contract docs described the still-to-come AI work informally as

@@ -1,7 +1,8 @@
 # Phase B8.5 — Commit 3: Full-Chain Integration + Regression Proof, Seal
 
-**Status: PASSED (59/59, real MetaEditor run, 2026-08-20) — awaiting
-the manual 4-suite regression re-run before B8.5 is declared SEALED.**
+**Status: PASSED (59/59, real MetaEditor run, 2026-08-20). Manual
+4-suite regression re-run also confirmed clean in the same session.
+B8.5 is SEALED.**
 Implements `Docs/PhaseB_B8_5_AIDecisionContract.md`'s Commit 3 addendum
 (frozen before code). Opens after Commit 2 PASSED (123/123, real
 MetaEditor run). Adds **zero new production behavior** - no B5/B8.1/
@@ -54,9 +55,27 @@ across every group (end-to-end linkage, all three cross-layer failure
 propagation tests, full-chain restart, multi-candidate/multi-model
 cross-linking).
 
-Do not merge, and do not declare B8.5 SEALED, until a real MetaEditor
-log also confirms a manual re-run of `Test_B8_1_FeatureSnapshot.mq5`,
-`Test_B8_3_ModelRegistry.mq5`, `Test_B8_5_AIDecision.mq5`, and
-`Test_B8_5_Commit2_AIDecisionEvent.mq5` in the same session all still
-pass clean - per this commit's own Definition of Done, that regression
-re-run is part of Commit 3, not a separate step after it.
+## Manual regression re-run - ALL PASS, same MetaEditor session
+(2026-08-20 18:07-18:13)
+
+- `Test_B8_1_FeatureSnapshot.mq5`: 66/66 ALL PASS.
+- `Test_B8_3_ModelRegistry.mq5`: 106/106 ALL PASS.
+- `Test_B8_5_AIDecision.mq5` (Commit 1): 72/72 ALL PASS.
+- `Test_B8_5_Commit2_AIDecisionEvent.mq5` (Commit 2): 123/123 ALL PASS.
+
+Combined with this commit's own 59/59, the full B8.5 seal gate is
+satisfied: **72 + 123 + 59 = 254/254.** No regression anywhere in the
+B8.1/B8.3/B8.5 chain. Merged to `mlquantai`.
+
+# B8.5 — SEALED
+
+**AIDecision + threshold-policy mapping (Commit 1, 72/72) + durable
+event/projection/replay (Commit 2, 123/123) + full-chain integration
+proof (Commit 3, 59/59) = 254/254, all real MetaEditor runs.** B8.5 is
+the first layer with authority to interpret `p_success` as
+`ALLOW`/`REJECT`/`ABSTAIN` (still unreachable this policy version),
+still without execution authority — B9 remains the sole place
+`RiskPlan` + `AIDecision` + operational policy combine into
+`ELIGIBLE`/`REJECTED`. The old, informal "B8.6: persist/replay/audit"
+scoping language (see `Docs/PhaseB_Architecture_Baseline.md`'s note) is
+fully superseded — no separate B8.6 phase remains. B9 is next.
