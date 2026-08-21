@@ -125,4 +125,8 @@
 // a broker fact). See Docs/PhaseC_C2_1_BrokerSubmissionContract.md.
 #define MLQUANTAI_EXECUTION_SUBMISSION_RESULT_SCHEMA_C2_V1 "EXECUTION_SUBMISSION_RESULT_C2_V1"
 
+// C2 manual-approval contract: ManualApprovalGrant's own record-shape
+// stamp. See Docs/PhaseC_C2_ManualApprovalContract.md.
+#define MLQUANTAI_MANUAL_APPROVAL_SCHEMA_C2_V1 "MANUAL_APPROVAL_C2_V1"
+
 #endif // __MLQUANTAI_CONTRACTVERSIONS_MQH__
