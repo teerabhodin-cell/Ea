@@ -116,7 +116,9 @@ C1    ExecutionRequest + Safety Gate + Dry-Run  SEALED (215/215, C1.1 contract-o
       C1.1 - collision-check + frozen contract (no code)
       C1.2 - ExecutionRequest build + SafetyGate + dry-run emission    PASSED (128/128)
       C1.3 - audit projections + integrity checks + reconciliation    PASSED (87/87)
-C2    Broker Submit Adapter                     HELD (pending explicit authorization)
+C2.1  Broker Submission Contract                FROZEN (contract only, no code yet)
+C2.2  Real OrderSend submission + lifecycle wiring  HELD (pending explicit authorization naming the resolved environment)
+C2.3  Audit event/reconciliation/regression/seal  (after C2.2)
 ```
 
 B8.5 is SEALED: 254/254 across all three commits, all real MetaEditor

@@ -4,6 +4,46 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase C2.1: Broker Submission Contract (frozen, no code)
+
+Opens after C1 FULLY SEALED (215/215, all real MetaEditor runs). First
+phase in this project that will eventually call a real broker-mutating
+MT5 API (`OrderSend`). **C2.1 itself is documentation only** - no
+`OrderSend` call, no `OnTradeTransaction` handler, no broker-mutating
+test run anywhere. Froze `Docs/PhaseC_C2_1_BrokerSubmissionContract.md`
+after resolving a real architectural conflict found before any code
+existed: the originally-proposed "local `OrderSend()` failure ->
+`CANDIDATE_ERROR` directly" is illegal under the already-sealed
+`StateMachine_CanTransition` (`ERROR` is reachable only from
+`SUBMITTED`, never `CREATED`) - resolved by keying the lifecycle off
+what `OrderSend()`'s own return value actually means (`false` = never
+reached the server, candidate stays `CREATED`; `true` = reached the
+server, always transitions through `SUBMITTED` first) rather than
+bending the sealed contract.
+
+Adds two new, append-only event types
+(`EVENT_TYPE_EXECUTION_SUBMISSION_ATTEMPTED`/
+`EVENT_TYPE_ORDER_SUBMISSION_ERROR`), reuses the dormant
+`EVENT_TYPE_ORDER_SUBMITTED`/`_ORDER_REJECTED` as-is (confirmed no
+conflicting semantics), and needs **zero new reason codes** - Phase
+A's own dormant "execution" `ENUM_REASON_CODE` block
+(`REASON_SUBMITTED_OK`/`REASON_BROKER_REJECT`/`REASON_INVALID_STOPS`/
+`REASON_INSUFFICIENT_MARGIN`/`REASON_REQUOTE`/`REASON_ERROR_INTERNAL`)
+already anticipated exactly this moment. Freezes a new
+`ExecutionSubmissionResult` struct (not a reuse of the dormant
+`ExecutionResult` - lacks lineage fields and conflates submit-
+acknowledgement with fill truth; `fill_price`/`slippage_points` stay
+out of scope, owned by a later `OnTradeTransaction` reconciliation
+commit). Environment authorization tightened per explicit user
+confirmation: only a real `AccountInfoInteger(ACCOUNT_TRADE_MODE) ==
+ACCOUNT_TRADE_MODE_DEMO` account may receive an `OrderSend` call in
+C2.2 - `REAL` and `CONTEST` both rejected, Strategy Tester support
+held pending separate verification. See
+`Docs/PhaseC_C2_1_BrokerSubmissionContract.md`.
+
+C2.2 (implementation) requires a separate, explicit confirmation
+naming the resolved permitted environment before any code is written.
+
 ## [Unreleased] - Phase C1: FULLY SEALED (2026-08-21)
 
 **C1.2 (128/128) + C1.3 (87/87) = 215/215, all real MetaEditor runs**,
