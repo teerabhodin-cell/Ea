@@ -4,6 +4,44 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C2.2/C2.3 startup audit-rebuild wiring (PASSED, real MetaEditor run, 2026-08-22)
+
+Wires `BrokerSubmissionAudit_StartupRebuild()` into `MLQuantAI.mq5`'s
+`OnInit`, right after the existing EventStore health/validation, and
+makes `BrokerSubmissionGate_Evaluate` fail-closed with the new
+`REASON_EXECUTION_AUDIT_NOT_READY` (`Core/MLQuantAI_ReasonCodes.mqh`,
+append-only) until that rebuild has actually succeeded this session -
+including for a request that has never been attempted anywhere (a
+blanket disablement, since an unready registry might be hiding a real
+prior attempt). New `Execution/MLQuantAI_BrokerSubmissionAuditReadiness.mqh`:
+fail-closed-by-default readiness flag + the one real entry point,
+re-entrant (a later failed rebuild correctly revokes a stale `true`).
+Strictly read-only end to end - no `OrderSend`/broker query/candidate
+mutation/event append/`OnTradeTransaction` anywhere. Both
+`Tests/MLQuantAI_Test_C2_BrokerSubmissionGate_DurableIdempotency.mq5`
+(three new tests: not-ready blocks a brand-new request, a failed
+rebuild blanket-disables an unrelated request too, re-entrancy revokes
+readiness) and `Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5`
+(minimal setup-only amendment) updated accordingly. See
+`Docs/PhaseC_C2_StartupAuditRebuildWiring.md`.
+
+Real MetaEditor confirmation: `MLQuantAI.mq5` itself (the main EA, not
+just a `Tests/*.mq5` script) compiled and ran cleanly - its own real
+event store had pre-existing legacy data with an orphan lineage
+reference, so the startup rebuild correctly failed closed and logged a
+warning, disabling C2 broker submission for that session while every
+other B-phase subsystem kept running normally - the fail-closed design
+working exactly as intended on real, imperfect data. Integration test
+suite: found 2 real `[FAIL]`s on first run (39/41), both in this
+commit's own new test assertions (a missing DEMO/non-DEMO branch, same
+pattern the file's other tests already use), not production code;
+fixed, re-confirmed 41/41 ALL PASS. `Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5`
+re-confirmed 147/147 ALL PASS (was 145/145). Full regression re-run in
+the same session, per the user's explicit ask: `MLQuantAI_Test_C1_2_
+ExecutionRequestSafetyGate.mq5` 128/128, `MLQuantAI_Test_C1_3_
+ExecutionAuditReconciliation.mq5` 87/87, `MLQuantAI_Test_C2_3_
+BrokerSubmissionAuditProjection.mq5` 104/104 - ALL PASS, no regression.
+
 ## [Unreleased] - C2.2/C2.3 durable idempotency integration patch (PASSED 22/22, real MetaEditor run, 2026-08-22)
 
 The previously-deferred follow-up: `BrokerSubmissionGate_Evaluate`

@@ -85,6 +85,16 @@ enum ENUM_REASON_CODE
    // Docs/PhaseC_C2_1_BrokerSubmissionContract.md's C2.2 amendment.
    REASON_EXECUTION_SUBMISSION_AMBIGUOUS,
 
+   // C2.2/C2.3 startup-rebuild integration patch: the durable submission-
+   // attempt audit registry (SubmissionAttemptRegistry) has not been
+   // successfully rebuilt from the event store this session yet - the
+   // gate cannot trust ANY answer from it, so every request is rejected
+   // with this reason until BrokerSubmissionAudit_StartupRebuild()
+   // succeeds. Never the same condition as REASON_DUPLICATE_EVENT (which
+   // means the registry WAS consulted and found a real prior attempt) -
+   // this means the registry could not be consulted at all.
+   REASON_EXECUTION_AUDIT_NOT_READY,
+
    REASON_COUNT
 };
 
@@ -133,6 +143,7 @@ string ReasonCodeToString(ENUM_REASON_CODE r)
       case REASON_EXECUTION_DEVIATION_POLICY_INVALID:   return "EXECUTION_DEVIATION_POLICY_INVALID";
       case REASON_EXECUTION_LINEAGE_INVALID:            return "EXECUTION_LINEAGE_INVALID";
       case REASON_EXECUTION_SUBMISSION_AMBIGUOUS:       return "EXECUTION_SUBMISSION_AMBIGUOUS";
+      case REASON_EXECUTION_AUDIT_NOT_READY:            return "EXECUTION_AUDIT_NOT_READY";
    }
    return "UNKNOWN";
 }
@@ -184,6 +195,7 @@ ENUM_REASON_CODE ReasonCodeFromString(string s)
    if(s == "EXECUTION_DEVIATION_POLICY_INVALID")  return REASON_EXECUTION_DEVIATION_POLICY_INVALID;
    if(s == "EXECUTION_LINEAGE_INVALID")           return REASON_EXECUTION_LINEAGE_INVALID;
    if(s == "EXECUTION_SUBMISSION_AMBIGUOUS")      return REASON_EXECUTION_SUBMISSION_AMBIGUOUS;
+   if(s == "EXECUTION_AUDIT_NOT_READY")           return REASON_EXECUTION_AUDIT_NOT_READY;
    return REASON_NONE;
 }
 

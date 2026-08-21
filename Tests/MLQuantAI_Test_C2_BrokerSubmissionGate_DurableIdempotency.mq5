@@ -286,8 +286,8 @@ void MakeFakeTradeResult(MqlTradeResult &tr, uint retcode, ulong order, ulong de
 //=====================================================================
 void Test_DurableAttempt_BlocksResubmission_IgnoresInSessionState()
 {
-   Print("--- durable check: a prior attempt recovered purely from EventStore replay blocks the gate, even with a FRESH in-session guard (BrokerSubmissionGate_Reset called) ---");
-   ResetAllProjections(); BrokerSubmissionGate_Reset();
+   Print("--- durable check: a prior attempt recovered purely from an ACTUAL SIMULATED RESTART (BrokerSubmissionAudit_StartupRebuild, not a test-side rebuild call) blocks the gate, even with a FRESH in-session guard ---");
+   ResetAllProjections(); BrokerSubmissionGate_Reset(); BrokerSubmissionAuditReadiness_Reset();
    string file = "MLQuantAI_Test_C2Integ_DurableBlock.jsonl";
    FileDelete(file, FILE_COMMON);
    EventStore_Open(file);
@@ -296,8 +296,13 @@ void Test_DurableAttempt_BlocksResubmission_IgnoresInSessionState()
    Check(BuildFullChainThroughAttempt(c, req, policy, "DURBLOCK", 1), "sanity: full chain + durable attempt built");
    EventStore_Close();
 
-   BrokerSubmissionAuditProjectionReport report = BrokerSubmissionAuditProjection_RebuildFromFile(file);
-   Check(report.ok, "sanity: rebuild from the durable store succeeds");
+   // Simulate a real terminal restart: drop every in-memory registry
+   // this process holds, then call the SAME entry point OnInit calls -
+   // not a lower-level test-side projection rebuild.
+   ResetAllProjections(); BrokerSubmissionAuditReadiness_Reset();
+   BrokerSubmissionAuditProjectionReport report = BrokerSubmissionAudit_StartupRebuild(file);
+   Check(report.ok, "sanity: startup rebuild from the durable store succeeds");
+   Check(BrokerSubmissionAuditReadiness_IsReady(), "sanity: audit registry is ready after the simulated restart");
    Check(SubmissionAttemptRegistry_HasAttempt(req.execution_request_id), "sanity: HasAttempt is true after the rebuild");
 
    BrokerSubmissionGate_Reset(); // prove the IN-SESSION guard is NOT what rejects below
@@ -316,8 +321,8 @@ void Test_DurableAttempt_BlocksResubmission_IgnoresInSessionState()
 
 void Test_ResolvedDurableAttempt_StillBlocksResubmission()
 {
-   Print("--- strongest policy: a durable attempt that IS resolved (SUBMITTED) still blocks resubmission - HasAttempt is consulted, not IsUnresolved ---");
-   ResetAllProjections(); BrokerSubmissionGate_Reset();
+   Print("--- strongest policy: a durable attempt that IS resolved (SUBMITTED), recovered via an actual simulated restart, still blocks resubmission - HasAttempt is consulted, not IsUnresolved ---");
+   ResetAllProjections(); BrokerSubmissionGate_Reset(); BrokerSubmissionAuditReadiness_Reset();
    string file = "MLQuantAI_Test_C2Integ_ResolvedBlock.jsonl";
    FileDelete(file, FILE_COMMON);
    EventStore_Open(file);
@@ -331,8 +336,10 @@ void Test_ResolvedDurableAttempt_StillBlocksResubmission()
    Check(sr.submission_status == SUBMISSION_STATUS_SUBMITTED, "sanity: outcome is SUBMITTED - a resolved, conclusive outcome");
    EventStore_Close();
 
-   BrokerSubmissionAuditProjectionReport report = BrokerSubmissionAuditProjection_RebuildFromFile(file);
-   Check(report.ok, "rebuild succeeds");
+   ResetAllProjections(); BrokerSubmissionAuditReadiness_Reset(); // simulate restart
+   BrokerSubmissionAuditProjectionReport report = BrokerSubmissionAudit_StartupRebuild(file);
+   Check(report.ok, "startup rebuild succeeds");
+   Check(BrokerSubmissionAuditReadiness_IsReady(), "audit registry is ready after the simulated restart");
    Check(SubmissionAttemptRegistry_HasAttempt(req.execution_request_id), "sanity: HasAttempt is true");
    Check(!SubmissionAttemptRegistry_IsUnresolved(req.execution_request_id), "sanity: IsUnresolved is false - this attempt IS resolved");
 
@@ -350,8 +357,8 @@ void Test_ResolvedDurableAttempt_StillBlocksResubmission()
 
 void Test_NoDurableAttempt_StillAcceptedAndIsolatedFromOtherRequests()
 {
-   Print("--- no false positive: a request with NO durable attempt of its own is unaffected by a DIFFERENT request's durable attempt in the same store ---");
-   ResetAllProjections(); BrokerSubmissionGate_Reset();
+   Print("--- no false positive: a request with NO durable attempt of its own is unaffected by a DIFFERENT request's durable attempt in the same store, after an actual simulated restart ---");
+   ResetAllProjections(); BrokerSubmissionGate_Reset(); BrokerSubmissionAuditReadiness_Reset();
    string file = "MLQuantAI_Test_C2Integ_NoFalsePositive.jsonl";
    FileDelete(file, FILE_COMMON);
    EventStore_Open(file);
@@ -367,8 +374,10 @@ void Test_NoDurableAttempt_StillAcceptedAndIsolatedFromOtherRequests()
    Check(reqA.execution_request_id != reqB.execution_request_id, "sanity: A and B are distinct requests");
    EventStore_Close();
 
-   BrokerSubmissionAuditProjectionReport report = BrokerSubmissionAuditProjection_RebuildFromFile(file);
-   Check(report.ok, "rebuild succeeds");
+   ResetAllProjections(); BrokerSubmissionAuditReadiness_Reset(); // simulate restart
+   BrokerSubmissionAuditProjectionReport report = BrokerSubmissionAudit_StartupRebuild(file);
+   Check(report.ok, "startup rebuild succeeds");
+   Check(BrokerSubmissionAuditReadiness_IsReady(), "audit registry is ready after the simulated restart");
    Check(SubmissionAttemptRegistry_HasAttempt(reqA.execution_request_id), "A: HasAttempt is true");
    Check(!SubmissionAttemptRegistry_HasAttempt(reqB.execution_request_id), "B: HasAttempt is false - unaffected by A's attempt");
 
@@ -383,22 +392,156 @@ void Test_NoDurableAttempt_StillAcceptedAndIsolatedFromOtherRequests()
             "B: on a non-DEMO account, rejects on environment only, not on A's unrelated attempt");
 }
 
+//=====================================================================
+// Startup-rebuild readiness: fail-closed before/after readiness,
+// failed rebuild keeps submission disabled, re-entrancy revokes a
+// stale readiness on a later failed call.
+//=====================================================================
+void Test_NotReady_RejectsEverySubmission_EvenBrandNewRequest()
+{
+   Print("--- before any startup rebuild ever ran: a BRAND NEW (never attempted anywhere) request is STILL rejected, REASON_EXECUTION_AUDIT_NOT_READY - not ACCEPTED, not REASON_DUPLICATE_EVENT ---");
+   ResetAllProjections(); BrokerSubmissionGate_Reset(); BrokerSubmissionAuditReadiness_Reset();
+   Check(!BrokerSubmissionAuditReadiness_IsReady(), "sanity: registry starts NOT ready (fail-closed default)");
+
+   string file = "MLQuantAI_Test_C2Integ_NotReady.jsonl";
+   FileDelete(file, FILE_COMMON);
+   EventStore_Open(file);
+   TradeCandidate c; FeatureSnapshot snap; ModelArtifact art; InferenceResult inf;
+   RiskPlan plan; AIDecision dec; EligibilityDecision elig; ExecutionPolicy policy;
+   ExecutionRequest req; DryRunExecutionResult dry;
+   // Durably built through an ACCEPTED dry-run (a genuine request that
+   // exists), but BrokerSubmission_RecordAttempt is deliberately NEVER
+   // called - a real "brand new, never attempted" request - and no
+   // BrokerSubmissionAudit_StartupRebuild call happens anywhere in this
+   // test, so readiness stays false regardless of the store's content.
+   Check(BuildFullChain(c, snap, art, inf, plan, dec, elig, policy, req, dry, "NOTREADY", 5), "sanity: request built");
+   EventStore_Close();
+
+   Check(!SubmissionAttemptRegistry_HasAttempt(req.execution_request_id), "sanity: this request has never been attempted, durably or otherwise");
+
+   DryRunExecutionResult result;
+   Check(BrokerSubmissionGate_Evaluate(req, policy, result), "evaluation completes");
+
+   // The readiness check is evaluated AFTER the environment/account-mode
+   // check (same ordering the other tests in this file already branch
+   // on) - on a non-DEMO terminal, the environment check rejects FIRST,
+   // before the readiness check is ever reached, exactly like the other
+   // tests' own "before the durable check is ever reached" branch.
+   long tradeMode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
+   if(tradeMode == ACCOUNT_TRADE_MODE_DEMO)
+      Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == REASON_EXECUTION_AUDIT_NOT_READY,
+            "on a real DEMO account: rejected with REASON_EXECUTION_AUDIT_NOT_READY - a 'cannot be trusted yet' refusal, "
+            "never mistaken for REASON_DUPLICATE_EVENT (which would falsely imply the registry WAS consulted and found a real prior attempt)");
+   else
+      Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == REASON_EXECUTION_ENVIRONMENT_NOT_PERMITTED,
+            "on a non-DEMO account: still rejects on environment, before the readiness check is ever reached");
+}
+
+void Test_FailedStartupRebuild_KeepsSubmissionDisabled()
+{
+   Print("--- a corrupted/orphaned event store fails the startup rebuild - readiness stays false, EVERY request is rejected, not just the corrupted one ---");
+   ResetAllProjections(); BrokerSubmissionGate_Reset(); BrokerSubmissionAuditReadiness_Reset();
+   string file = "MLQuantAI_Test_C2Integ_FailedRebuild.jsonl";
+   FileDelete(file, FILE_COMMON);
+   EventStore_Open(file);
+
+   // A structurally valid EXECUTION_SUBMISSION_ATTEMPTED write referencing
+   // an execution_request_id with NO matching EXECUTION_REQUEST_CREATED
+   // event anywhere in the store - the same orphan corruption C2.3's own
+   // test suite already proves BrokerSubmissionAuditProjection_
+   // RebuildFromFile rejects closed.
+   TradeCandidate dummy; TradeCandidate_Init(dummy);
+   ExecutionRequest orphanReq; ExecutionRequest_Init(orphanReq);
+   orphanReq.execution_request_id = "EXECREQ_ORPHAN_STARTUP_TEST";
+   orphanReq.execution_request_hash = "hash_does_not_matter";
+   orphanReq.correlation_id = "FAKECORR_STARTUP_TEST";
+   orphanReq.submit_attempt = 1;
+   Check(BrokerSubmission_RecordAttempt(dummy, orphanReq), "sanity: the durable (but orphaned) attempt write itself succeeds");
+   EventStore_Close();
+
+   ResetAllProjections(); BrokerSubmissionAuditReadiness_Reset();
+   BrokerSubmissionAuditProjectionReport report = BrokerSubmissionAudit_StartupRebuild(file);
+   Check(!report.ok, "startup rebuild FAILS on the orphaned attempt line");
+   Check(!BrokerSubmissionAuditReadiness_IsReady(), "readiness stays false - a failed rebuild never leaves the registry marked ready");
+
+   // A completely UNRELATED, otherwise-valid, never-attempted request -
+   // proves the disablement is a blanket "C2 broker submission disabled",
+   // not scoped to only the corrupted request_id.
+   string unrelatedFile = "MLQuantAI_Test_C2Integ_FailedRebuild_Unrelated.jsonl";
+   FileDelete(unrelatedFile, FILE_COMMON);
+   EventStore_Open(unrelatedFile);
+   TradeCandidate c; FeatureSnapshot snap; ModelArtifact art; InferenceResult inf;
+   RiskPlan plan; AIDecision dec; EligibilityDecision elig; ExecutionPolicy policy;
+   ExecutionRequest req; DryRunExecutionResult dry;
+   Check(BuildFullChain(c, snap, art, inf, plan, dec, elig, policy, req, dry, "AFTERFAIL", 6),
+         "sanity: an entirely unrelated, otherwise-valid request built");
+   EventStore_Close();
+
+   DryRunExecutionResult result;
+   Check(BrokerSubmissionGate_Evaluate(req, policy, result), "evaluation completes");
+
+   long tradeMode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
+   if(tradeMode == ACCOUNT_TRADE_MODE_DEMO)
+      Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == REASON_EXECUTION_AUDIT_NOT_READY,
+            "on a real DEMO account: the unrelated request is ALSO rejected with REASON_EXECUTION_AUDIT_NOT_READY - blanket disablement, not a per-id check");
+   else
+      Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == REASON_EXECUTION_ENVIRONMENT_NOT_PERMITTED,
+            "on a non-DEMO account: still rejects on environment, before the readiness check is ever reached");
+}
+
+void Test_StartupRebuild_ReEntrant_LaterFailedCallRevokesReadiness()
+{
+   Print("--- re-entrancy: a successful rebuild followed by a LATER failed rebuild call correctly REVOKES readiness - never left stale true ---");
+   ResetAllProjections(); BrokerSubmissionGate_Reset(); BrokerSubmissionAuditReadiness_Reset();
+
+   string goodFile = "MLQuantAI_Test_C2Integ_ReEntrantGood.jsonl";
+   FileDelete(goodFile, FILE_COMMON);
+   EventStore_Open(goodFile);
+   EventStore_Close(); // empty store - trivially succeeds
+
+   BrokerSubmissionAuditProjectionReport r1 = BrokerSubmissionAudit_StartupRebuild(goodFile);
+   Check(r1.ok, "sanity: first rebuild (empty store) succeeds");
+   Check(BrokerSubmissionAuditReadiness_IsReady(), "sanity: readiness is true after the first, successful call");
+
+   string badFile = "MLQuantAI_Test_C2Integ_ReEntrantBad.jsonl";
+   FileDelete(badFile, FILE_COMMON);
+   EventStore_Open(badFile);
+   TradeCandidate dummy; TradeCandidate_Init(dummy);
+   ExecutionRequest orphanReq; ExecutionRequest_Init(orphanReq);
+   orphanReq.execution_request_id = "EXECREQ_ORPHAN_REENTRANT_TEST";
+   orphanReq.execution_request_hash = "hash_does_not_matter";
+   orphanReq.correlation_id = "FAKECORR_REENTRANT_TEST";
+   orphanReq.submit_attempt = 1;
+   Check(BrokerSubmission_RecordAttempt(dummy, orphanReq), "sanity: the durable (but orphaned) attempt write succeeds");
+   EventStore_Close();
+
+   BrokerSubmissionAuditProjectionReport r2 = BrokerSubmissionAudit_StartupRebuild(badFile);
+   Check(!r2.ok, "second rebuild (a DIFFERENT, corrupted file) fails");
+   Check(!BrokerSubmissionAuditReadiness_IsReady(), "readiness is REVOKED - not left stale true from the first call's success");
+}
+
 void Test_NoBrokerMutation_StructuralProof()
 {
-   Print("--- no OrderSend call anywhere in the amended gate path this suite exercises ---");
-   Check(true, "verified by inspection: the amended BrokerSubmissionGate_Evaluate (MLQuantAI_BrokerSubmissionGate.mqh) adds exactly one new "
-               "read: a call into SubmissionAttemptRegistry_HasAttempt() (MLQuantAI_BrokerSubmissionAuditProjection.mqh, itself read-only, "
-               "see that file's own structural proof) - no OrderSend/CTrade/PositionOpen/PositionClose/OrderModify call, no candidate-lifecycle "
-               "transition, no event append anywhere in the amended function.");
+   Print("--- no OrderSend call anywhere in the amended gate/startup-rebuild path this suite exercises ---");
+   Check(true, "verified by inspection: the amended BrokerSubmissionGate_Evaluate (MLQuantAI_BrokerSubmissionGate.mqh) adds two new "
+               "reads: BrokerSubmissionAuditReadiness_IsReady() and (only once ready) SubmissionAttemptRegistry_HasAttempt() - both "
+               "read-only. MLQuantAI_BrokerSubmissionAuditReadiness.mqh's own BrokerSubmissionAudit_StartupRebuild() calls only "
+               "BrokerSubmissionAuditProjection_RebuildFromFile() (itself read-only, see that file's own structural proof) plus "
+               "LogInfo/LogWarn - no OrderSend/CTrade/PositionOpen/PositionClose/OrderModify/HistorySelect/PositionSelect/OrderSelect "
+               "call, no candidate-lifecycle transition, no event append, no OnTradeTransaction, no retry logic anywhere in either file.");
 }
 
 void OnStart()
 {
-   Print("=== MLQuantAI Test: C2.2/C2.3 integration patch - BrokerSubmissionGate durable idempotency check ===");
+   Print("=== MLQuantAI Test: C2.2/C2.3 integration patch - BrokerSubmissionGate durable idempotency + startup-rebuild readiness ===");
 
    Test_DurableAttempt_BlocksResubmission_IgnoresInSessionState();
    Test_ResolvedDurableAttempt_StillBlocksResubmission();
    Test_NoDurableAttempt_StillAcceptedAndIsolatedFromOtherRequests();
+
+   Test_NotReady_RejectsEverySubmission_EvenBrandNewRequest();
+   Test_FailedStartupRebuild_KeepsSubmissionDisabled();
+   Test_StartupRebuild_ReEntrant_LaterFailedCallRevokesReadiness();
 
    Test_NoBrokerMutation_StructuralProof();
 
