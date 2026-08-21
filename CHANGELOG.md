@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase C2.2: Broker Submission Adapter (Implemented, awaiting real MetaEditor run)
+## [Unreleased] - Phase C2.2: Broker Submission Adapter (PASSED 73/73, real MetaEditor run, 2026-08-21)
 
 Implements `Docs/PhaseC_C2_1_BrokerSubmissionContract.md`. Adds
 `MLQUANTAI_MAGIC_NUMBER` (`Core/MLQuantAI_VersionRegistry.mqh`),
@@ -31,7 +31,14 @@ logic) ออกจาก real-submit smoke test"), the automated regression sui
 manual-only script (`Tests/MLQuantAI_SmokeTest_C2_2_RealOrderSend.mq5`,
 gated behind an unchecked-by-default confirmation input plus its own
 independent `ACCOUNT_TRADE_MODE_DEMO` check) is the only place a real
-order may actually be sent. See
+order may actually be sent.
+
+One real bug found and fixed via the user's actual MetaEditor run (not
+self-review): `ZeroMemory()` on `MqlTradeRequest`/`MqlTradeResult` does
+not reliably zero their `string` members (`symbol`/`comment`) - MQL5
+strings are reference-counted handles, not raw bytes. Fixed with manual
+field-by-field zero-init helpers. After the fix: 73/73 ALL PASS,
+reproduced twice. See
 `Docs/PhaseC_C2_2_BrokerSubmissionAdapterStatus.md`.
 
 ## [Unreleased] - Phase C2.1: Broker Submission Contract (frozen, no code)
