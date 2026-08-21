@@ -405,6 +405,125 @@ authorization, as a separate, later step.
 
 ---
 
+# Addendum — C1.3: audit projections + integrity checks + reconciliation read model (FROZEN)
+
+C1.3 is strictly read-only over the event data C1.2 already durably
+writes: `ExecutionRequestProjection`, `DryRunResultProjection`, and a
+reconciliation report over both. No broker query, no broker mutation,
+no candidate-lifecycle transition, no retry mechanism, no C2 event
+type. Same shape as every prior phase's "Commit 3: full-chain
+integration + regression proof, seal."
+
+## Two corrections to precedent, made before any code exists
+
+1. **`ORPHAN_RESULT` is a rebuild-failure category, not a third
+   reconciliation status alongside `PAIRED`/`UNPAIRED`.** A
+   `EXECUTION_DRY_RUN_COMPLETED` line referencing an
+   `execution_request_id` not yet seen means either a real ordering
+   violation or a request that itself failed validation - either way
+   the correct response is the same fail-closed-whole-rebuild rule
+   every prior "orphan reference" case in this project already uses
+   (e.g. B9 Commit 2's orphan `risk_plan_id`/`ai_decision_id`). It can
+   therefore never survive to the reconciliation-report stage, where
+   only a store that already passed structural/referential validation
+   cleanly is examined for `PAIRED`/`UNPAIRED`.
+2. **Rebuild must be a single, sequential, interleaved pass over the
+   file - not two independent full-file passes.** A naive two-pass
+   design (rebuild `ExecutionRequestProjection` from the whole file,
+   then check completions against it) would silently fail to catch a
+   completion event that appears *before* its own request in file
+   order, since by the time completions are checked the request
+   projection has already seen the entire file regardless of true
+   ordering. `ExecutionRequestProjection`/`DryRunResultProjection` are
+   therefore built together, line by line, in strict file order - a
+   completion can only resolve against requests already applied *at
+   that point* in the scan, making event ordering a genuinely tested
+   invariant rather than an assumption.
+
+## Projection semantics (frozen)
+
+| Projection | Cardinality | Identity / dedupe rule |
+|---|---:|---|
+| `ExecutionRequestProjection` | 1 per `execution_request_id` | same id + same hash = no-op; same id + different hash = collision, fail-closed |
+| `DryRunResultProjection` | 0..N per request | every `EXECUTION_DRY_RUN_COMPLETED` is a new audit outcome, keyed by its own durable `source_sequence_number` (the `BaseEvent.sequence_number` `EventStore_LogSystem` already assigns) - never deduped by `execution_request_id` alone, since a legitimate re-evaluation after runtime context changes (Safe Mode cleared, etc.) is real audit history, not a duplicate |
+| Reconciliation report | 1 per request, computed only after both projections rebuild cleanly | `PAIRED` (>= 1 matching completion exists) or `UNPAIRED` (durable request, zero completions - the C1.2 non-rollback failure mode) |
+
+No new deterministic-ID field is minted for `DryRunResultProjectionRecord` -
+`source_sequence_number`/`source_log_event_id` (the same fields
+`EligibilityDecisionProjectionRecord` already carries) are its
+identity, matching event-sourcing semantics directly rather than
+inventing a synthetic id with no canonical durable ordinal behind it.
+
+## `ExecutionRequestProjection` referential integrity (per line)
+
+- Reconstruct and verify `execution_request_hash` from the persisted
+  payload fields (self-contained - `ExecutionRequest` has no "raw
+  evidence" gap the way `EligibilityContext` did, since every hashed
+  field is already in its own event payload).
+- Reconstruct `execution_request_id` via `Ids_ExecutionRequestId` from
+  the persisted `candidate_id`/`eligibility_decision_id`/
+  `ai_decision_id`/`risk_plan_id`/`execution_policy_version` and
+  require an exact match - a stronger check than prior projections
+  used (they didn't have all raw ID components to hand), added because
+  it's cheap and catches a tampered identity field prior hash-only
+  checks would miss.
+- `risk_plan_id`/`plan_hash` resolve against `RiskPlanProjection`.
+- `ai_decision_id`/`ai_decision_hash` resolve against
+  `AIDecisionProjection`.
+- `eligibility_decision_id`/`eligibility_decision_hash` resolve
+  against `EligibilityDecisionProjection` (which itself transitively
+  rebuilds/verifies `FeatureSnapshotProjection`/`ModelArtifactProjection`) -
+  AND that record's own `decision` must be `ELIGIBILITY_DECISION_ELIGIBLE`
+  (re-asserts `ExecutionRequest_Build`'s own gate at replay time).
+- `correlation_id == Ids_CorrelationId(candidate_id, submit_attempt)`
+  and `submit_attempt == 1` (the only value C1 ever produces).
+- Duplicate-vs-collision on `execution_request_id`/`execution_request_hash`.
+
+## `DryRunResultProjection` referential integrity (per line, single interleaved pass)
+
+- `execution_request_id` must already be a known, applied record in
+  `ExecutionRequestProjection` **at this point in the scan** - not
+  found (whether truly absent or merely not-yet-applied due to
+  ordering) fails the whole rebuild closed, `first_error` names the
+  orphan/ordering violation.
+- `execution_request_hash` on the completion line must equal the
+  matching request record's own hash.
+- Outcome invariant: `decision == SAFETY_GATE_ACCEPTED` requires
+  `reason_code == REASON_NONE`; `decision == SAFETY_GATE_REJECTED`
+  requires `reason_code != REASON_NONE`.
+- Defensive tamper check: a `"ticket"`/`"retcode"`/`"fill_price"`/
+  `"slippage_points"` key anywhere in the line fails the line closed -
+  real C1 emission never writes these, so their presence is itself
+  evidence of corruption or a foreign line.
+- Every completion record is inherently a dry-run outcome by
+  construction (C1 has no other emission path for this event type) -
+  no separate persisted `dry_run` flag is needed to check this; it
+  holds structurally, not by an extra field.
+- Every line accepted here is appended to `DryRunResultProjection`,
+  never deduped against an existing `execution_request_id`.
+
+## Reconciliation report
+
+Computed once, only after both projections rebuild cleanly from the
+same file: for every `ExecutionRequestProjection` record, `PAIRED` if
+`DryRunResultProjection` holds at least one record whose
+`execution_request_id`/`execution_request_hash` match it, else
+`UNPAIRED`. `UNPAIRED` is the expected shape of C1.2's own frozen
+non-rollback rule (request durably written, completion write failed) -
+a real, actionable finding, not corruption.
+
+## C1.3 scope guard
+
+```
+No broker query (BrokerReconciliation.mqh untouched, not a dependency)
+No broker mutation
+No candidate lifecycle transition
+No retry mechanism
+No C2 event type
+```
+
+---
+
 # Addendum — C1.2: ExecutionRequest build, SafetyGate enforcement, dry-run event emission (FROZEN)
 
 C1.2 implements (still zero broker mutation, zero
