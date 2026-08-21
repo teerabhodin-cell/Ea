@@ -421,9 +421,20 @@ void Test_NotReady_RejectsEverySubmission_EvenBrandNewRequest()
 
    DryRunExecutionResult result;
    Check(BrokerSubmissionGate_Evaluate(req, policy, result), "evaluation completes");
-   Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == REASON_EXECUTION_AUDIT_NOT_READY,
-         "rejected with REASON_EXECUTION_AUDIT_NOT_READY - a 'cannot be trusted yet' refusal, never mistaken for "
-         "REASON_DUPLICATE_EVENT (which would falsely imply the registry WAS consulted and found a real prior attempt)");
+
+   // The readiness check is evaluated AFTER the environment/account-mode
+   // check (same ordering the other tests in this file already branch
+   // on) - on a non-DEMO terminal, the environment check rejects FIRST,
+   // before the readiness check is ever reached, exactly like the other
+   // tests' own "before the durable check is ever reached" branch.
+   long tradeMode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
+   if(tradeMode == ACCOUNT_TRADE_MODE_DEMO)
+      Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == REASON_EXECUTION_AUDIT_NOT_READY,
+            "on a real DEMO account: rejected with REASON_EXECUTION_AUDIT_NOT_READY - a 'cannot be trusted yet' refusal, "
+            "never mistaken for REASON_DUPLICATE_EVENT (which would falsely imply the registry WAS consulted and found a real prior attempt)");
+   else
+      Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == REASON_EXECUTION_ENVIRONMENT_NOT_PERMITTED,
+            "on a non-DEMO account: still rejects on environment, before the readiness check is ever reached");
 }
 
 void Test_FailedStartupRebuild_KeepsSubmissionDisabled()
@@ -468,8 +479,14 @@ void Test_FailedStartupRebuild_KeepsSubmissionDisabled()
 
    DryRunExecutionResult result;
    Check(BrokerSubmissionGate_Evaluate(req, policy, result), "evaluation completes");
-   Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == REASON_EXECUTION_AUDIT_NOT_READY,
-         "the unrelated request is ALSO rejected with REASON_EXECUTION_AUDIT_NOT_READY - blanket disablement, not a per-id check");
+
+   long tradeMode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
+   if(tradeMode == ACCOUNT_TRADE_MODE_DEMO)
+      Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == REASON_EXECUTION_AUDIT_NOT_READY,
+            "on a real DEMO account: the unrelated request is ALSO rejected with REASON_EXECUTION_AUDIT_NOT_READY - blanket disablement, not a per-id check");
+   else
+      Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == REASON_EXECUTION_ENVIRONMENT_NOT_PERMITTED,
+            "on a non-DEMO account: still rejects on environment, before the readiness check is ever reached");
 }
 
 void Test_StartupRebuild_ReEntrant_LaterFailedCallRevokesReadiness()
