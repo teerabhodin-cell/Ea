@@ -4,6 +4,40 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase C2: FULLY SEALED (2026-08-22)
+
+**C2.2 147/147 + C2.3 104/104 + C2.2/C2.3 integration + startup-rebuild
+wiring 41/41 = 292/292, all real MetaEditor runs**, plus a full manual
+regression re-run of the entire C1 + B9 chain in the same session
+confirming no regression anywhere upstream: `Test_C1_2_
+ExecutionRequestSafetyGate.mq5` 128/128, `Test_C1_3_
+ExecutionAuditReconciliation.mq5` 87/87, `Test_B9_ExecutionEligibility.mq5`
+120/120, `Test_B9_Commit2_EligibilityEvent.mq5` 84/84, and
+`Test_B9_Commit3_IntegrationRegression.mq5` 79/79. Combined with C2.1's
+frozen contract (no code), C2 (Broker Submission + Audit + Durable
+Idempotency) is fully sealed.
+
+Three real issues surfaced by the user's actual MetaEditor runs and
+fixed across this phase: a classification bug
+(`REASON_SUBMITTED_OK` falsely claimed for ambiguous retcodes), a
+self-introduced regression (the durable attempt write moved to *after*
+`OrderSend()` instead of before), and two test-assertion bugs in the
+newest suite (missing the account-mode branch the file's own other
+tests already used). This phase is also the first to touch
+`MLQuantAI.mq5` itself (the main EA) - its own compile/run confirmed
+the new startup audit-rebuild wiring fails closed correctly against
+real, imperfect legacy event-store data, disabling C2 broker
+submission for that session while every other subsystem kept running
+normally. See `Docs/PhaseC_C2_StartupAuditRebuildWiring.md` for full
+evidence.
+
+**Real-submit capability remains explicitly disabled** (the opt-in
+smoke test's confirmation input stays `false`) - it requires the
+still-pending environment-lock checklist, one-time manual approval,
+named allowlisted demo account/server, and separate explicit user
+authorization for each individual smoke run, per the protocol the user
+has laid out.
+
 ## [Unreleased] - C2.2/C2.3 startup audit-rebuild wiring (PASSED, real MetaEditor run, 2026-08-22)
 
 Wires `BrokerSubmissionAudit_StartupRebuild()` into `MLQuantAI.mq5`'s

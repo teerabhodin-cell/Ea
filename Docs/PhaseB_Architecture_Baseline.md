@@ -116,9 +116,11 @@ C1    ExecutionRequest + Safety Gate + Dry-Run  SEALED (215/215, C1.1 contract-o
       C1.1 - collision-check + frozen contract (no code)
       C1.2 - ExecutionRequest build + SafetyGate + dry-run emission    PASSED (128/128)
       C1.3 - audit projections + integrity checks + reconciliation    PASSED (87/87)
-C2.1  Broker Submission Contract                FROZEN (contract only, no code yet)
-C2.2  Real OrderSend submission + lifecycle wiring  PASSED (145/145, real MetaEditor run, 2026-08-21, amended twice)
-C2.3  Audit event/reconciliation/durable idempotency registry  PASSED (104/104, real MetaEditor run, 2026-08-22)
+C2    Broker Submission + Audit + Durable Idempotency  SEALED (292/292, C2.1 contract-only)
+      C2.1 - broker submission contract (no code)
+      C2.2 - real OrderSend submission + lifecycle wiring, amended twice  PASSED (147/147)
+      C2.3 - audit projections + durable idempotency registry             PASSED (104/104)
+      C2.2/C2.3 integration + startup-rebuild wiring (OnInit)             PASSED (41/41)
 ```
 
 B8.5 is SEALED: 254/254 across all three commits, all real MetaEditor
@@ -150,6 +152,27 @@ same MetaEditor session, per Commit 3's own Definition of Done - no
 regression anywhere in the B9 chain. See
 `Docs/PhaseB_B9_Commit3_IntegrationRegressionStatus.md` for full
 evidence. Phase C (Broker Execution + Reconciliation) is open next.
+
+C2 is SEALED: 292/292 - C2.2 147/147 (73/73 original + first amendment
+121/121 + second amendment 145/145 + the durable-idempotency-registry
+integration setup, all real MetaEditor runs) + C2.3 104/104 + the
+C2.2/C2.3 integration + startup-rebuild-wiring commit 41/41 (C2.1 is
+contract-only, no code) - plus a full manual regression re-run in the
+same MetaEditor session confirming no regression anywhere upstream:
+`Test_C1_2_ExecutionRequestSafetyGate.mq5` (128/128),
+`Test_C1_3_ExecutionAuditReconciliation.mq5` (87/87),
+`Test_B9_ExecutionEligibility.mq5` (120/120),
+`Test_B9_Commit2_EligibilityEvent.mq5` (84/84), and
+`Test_B9_Commit3_IntegrationRegression.mq5` (79/79) - all real, all
+ALL PASS. C2 is also the first phase where `MLQuantAI.mq5` itself (the
+main EA, not just a `Tests/*.mq5` script) was compiled and run,
+confirming the new startup audit-rebuild wiring fails closed correctly
+against real, imperfect legacy event-store data. Real-submit capability
+(`Tests/MLQuantAI_SmokeTest_C2_2_RealOrderSend.mq5`) remains explicitly
+disabled - it requires separate, explicit, one-time user authorization
+per the environment-lock/manual-approval/named-demo-account protocol
+still pending. See `Docs/PhaseC_C2_StartupAuditRebuildWiring.md` for
+full evidence.
 
 **Note on the old, informal "B8.6" language**: a few early B8.1/B8.4
 contract docs described the still-to-come AI work informally as
