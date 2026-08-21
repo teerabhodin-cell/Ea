@@ -279,7 +279,17 @@ enum ENUM_EVENT_TYPE
    // above (in the execution/position block) are reused as-is for the
    // post-OrderSend accepted/ambiguous and explicit-rejection cases.
    EVENT_TYPE_EXECUTION_SUBMISSION_ATTEMPTED,
-   EVENT_TYPE_ORDER_SUBMISSION_ERROR
+   EVENT_TYPE_ORDER_SUBMISSION_ERROR,
+
+   // C2.2 second amendment (post-PASSED, real user review): a retcode
+   // that is neither an explicit acceptance nor an explicit rejection
+   // (TRADE_RETCODE_CONNECTION, TRADE_RETCODE_PLACED, or any
+   // unrecognized/future retcode) gets its own event and its own
+   // SUBMISSION_STATUS_UNKNOWN status - never folded into
+   // EVENT_TYPE_ORDER_SUBMITTED (which would falsely imply a positive
+   // acknowledgment) and never transitions the candidate at all. See
+   // Docs/PhaseC_C2_1_BrokerSubmissionContract.md's second amendment.
+   EVENT_TYPE_EXECUTION_SUBMISSION_UNKNOWN
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -318,6 +328,7 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_EXECUTION_DRY_RUN_COMPLETED:        return "EXECUTION_DRY_RUN_COMPLETED";
       case EVENT_TYPE_EXECUTION_SUBMISSION_ATTEMPTED:     return "EXECUTION_SUBMISSION_ATTEMPTED";
       case EVENT_TYPE_ORDER_SUBMISSION_ERROR:             return "ORDER_SUBMISSION_ERROR";
+      case EVENT_TYPE_EXECUTION_SUBMISSION_UNKNOWN:       return "EXECUTION_SUBMISSION_UNKNOWN";
    }
    return "UNKNOWN";
 }
@@ -356,6 +367,7 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "EXECUTION_DRY_RUN_COMPLETED")       return EVENT_TYPE_EXECUTION_DRY_RUN_COMPLETED;
    if(s == "EXECUTION_SUBMISSION_ATTEMPTED")    return EVENT_TYPE_EXECUTION_SUBMISSION_ATTEMPTED;
    if(s == "ORDER_SUBMISSION_ERROR")            return EVENT_TYPE_ORDER_SUBMISSION_ERROR;
+   if(s == "EXECUTION_SUBMISSION_UNKNOWN")      return EVENT_TYPE_EXECUTION_SUBMISSION_UNKNOWN;
    return EVENT_TYPE_UNKNOWN;
 }
 
@@ -449,16 +461,27 @@ ENUM_SAFETY_GATE_DECISION SafetyGateDecisionFromString(string s)
 // axis, which never claims anything about a broker). NONE = never
 // attempted (Init()/unfilled, or the pre-submit gate rejected before
 // OrderSend was ever called). ERROR = OrderSend() itself returned
-// false. REJECTED = OrderSend() returned true but result.retcode was an
-// explicit server rejection. SUBMITTED = accepted or ambiguous -
-// awaiting a later, separately-authorized OnTradeTransaction
-// reconciliation. See Docs/PhaseC_C2_1_BrokerSubmissionContract.md.
+// false - a provable local/pre-dispatch failure (GetLastError()
+// captured as evidence). REJECTED = OrderSend() returned true but
+// result.retcode was an explicit server rejection.
+//
+// C2.2 second amendment (post-PASSED, real user review):
+// SUBMISSION_STATUS_UNKNOWN added, split out of what SUBMITTED used to
+// cover. SUBMITTED now means ONLY a genuine positive acknowledgment
+// (TRADE_RETCODE_DONE/_DONE_PARTIAL) - it transitions the candidate to
+// CANDIDATE_SUBMITTED. UNKNOWN covers every retcode that is neither an
+// explicit acceptance nor an explicit rejection (TRADE_RETCODE_CONNECTION,
+// TRADE_RETCODE_PLACED, or any unrecognized/future retcode) - the
+// candidate is NEVER transitioned for this status, exactly like the
+// ERROR case, since no real acknowledgment happened. See
+// Docs/PhaseC_C2_1_BrokerSubmissionContract.md's second amendment.
 enum ENUM_SUBMISSION_STATUS
 {
    SUBMISSION_STATUS_NONE,
    SUBMISSION_STATUS_ERROR,
    SUBMISSION_STATUS_REJECTED,
-   SUBMISSION_STATUS_SUBMITTED
+   SUBMISSION_STATUS_SUBMITTED,
+   SUBMISSION_STATUS_UNKNOWN
 };
 
 string SubmissionStatusToString(ENUM_SUBMISSION_STATUS s)
@@ -469,6 +492,7 @@ string SubmissionStatusToString(ENUM_SUBMISSION_STATUS s)
       case SUBMISSION_STATUS_ERROR:     return "ERROR";
       case SUBMISSION_STATUS_REJECTED:  return "REJECTED";
       case SUBMISSION_STATUS_SUBMITTED: return "SUBMITTED";
+      case SUBMISSION_STATUS_UNKNOWN:   return "UNKNOWN";
    }
    return "NONE";
 }
@@ -478,6 +502,7 @@ ENUM_SUBMISSION_STATUS SubmissionStatusFromString(string s)
    if(s == "ERROR")     return SUBMISSION_STATUS_ERROR;
    if(s == "REJECTED")  return SUBMISSION_STATUS_REJECTED;
    if(s == "SUBMITTED") return SUBMISSION_STATUS_SUBMITTED;
+   if(s == "UNKNOWN")   return SUBMISSION_STATUS_UNKNOWN;
    return SUBMISSION_STATUS_NONE;
 }
 

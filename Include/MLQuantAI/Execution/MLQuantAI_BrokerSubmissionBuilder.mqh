@@ -105,49 +105,46 @@ bool BrokerSubmission_BuildTradeRequest(const ExecutionRequest &req, const Execu
    return true;
 }
 
-// True = accepted or ambiguous (candidate stays at CANDIDATE_SUBMITTED,
-// awaiting later reconciliation) - the frozen contract's DEFAULT for any
-// retcode not explicitly classified as a rejection below. False =
-// explicit rejection (candidate chains SUBMITTED -> REJECTED_BY_BROKER).
-// The reject list below covers the retcodes realistically returned for
-// a market TRADE_ACTION_DEAL open-only order (C2 never modifies/closes
-// positions) - not an exhaustive enumeration of every ENUM_TRADE_RETCODE
-// value ever defined.
-//
-// C2.2 amendment (post-PASSED, real user review): TRADE_RETCODE_DONE/
-// _DONE_PARTIAL are the ONLY two retcodes that earn REASON_SUBMITTED_OK -
-// a genuine positive broker acknowledgment. Every other unlisted/
-// unrecognized code (including TRADE_RETCODE_CONNECTION - OrderSend()
-// can return true while the terminal itself reports no connection to
-// the trade server, which is NOT a positive acknowledgment despite the
-// true return - and TRADE_RETCODE_PLACED, which applies to pending
-// orders and should never legitimately appear for a TRADE_ACTION_DEAL
-// market order) still classifies as accepted/ambiguous (true - stays
-// CANDIDATE_SUBMITTED, per the sealed state machine and the frozen
-// C2.1 lifecycle, unchanged), but is tagged REASON_EXECUTION_SUBMISSION_AMBIGUOUS
-// instead - never silently claim SUBMITTED_OK for something that was
-// never actually acknowledged.
-bool BrokerSubmission_ClassifyRetcode(uint retcode, ENUM_REASON_CODE &outReason)
+// C2.2 second amendment (post-PASSED, real user review): three-way
+// classification, replacing the original two-way (accept/reject) split.
+// SUBMISSION_STATUS_SUBMITTED = a genuine positive acknowledgment
+// (TRADE_RETCODE_DONE/_DONE_PARTIAL only) - candidate transitions to and
+// stays at CANDIDATE_SUBMITTED. SUBMISSION_STATUS_REJECTED = an explicit
+// server rejection retcode - candidate chains SUBMITTED -> REJECTED_BY_BROKER
+// (still via the mandatory SUBMITTED waypoint, per the sealed state
+// machine). SUBMISSION_STATUS_UNKNOWN = neither of the above -
+// TRADE_RETCODE_CONNECTION (OrderSend() can return true while the
+// terminal itself reports no connection to the trade server - not a
+// positive acknowledgment despite the true return), TRADE_RETCODE_PLACED
+// (applies to pending orders, never legitimate for a TRADE_ACTION_DEAL
+// market order - itself anomalous evidence, not a quiet accept), or any
+// unrecognized/future retcode. The candidate is NEVER transitioned for
+// UNKNOWN - exactly like the OrderSend()==false case, since no real
+// acknowledgment happened. The reject list below covers the retcodes
+// realistically returned for a market TRADE_ACTION_DEAL open-only order
+// (C2 never modifies/closes positions) - not an exhaustive enumeration
+// of every ENUM_TRADE_RETCODE value ever defined.
+ENUM_SUBMISSION_STATUS BrokerSubmission_ClassifyRetcode(uint retcode, ENUM_REASON_CODE &outReason)
 {
    switch(retcode)
    {
       case TRADE_RETCODE_DONE:             // 10009
       case TRADE_RETCODE_DONE_PARTIAL:      // 10010
          outReason = REASON_SUBMITTED_OK;
-         return true;
+         return SUBMISSION_STATUS_SUBMITTED;
 
       case TRADE_RETCODE_REQUOTE:          // 10004
       case TRADE_RETCODE_PRICE_CHANGED:    // 10020
          outReason = REASON_REQUOTE;
-         return false;
+         return SUBMISSION_STATUS_REJECTED;
 
       case TRADE_RETCODE_INVALID_STOPS:    // 10016
          outReason = REASON_INVALID_STOPS;
-         return false;
+         return SUBMISSION_STATUS_REJECTED;
 
       case TRADE_RETCODE_NO_MONEY:         // 10019
          outReason = REASON_INSUFFICIENT_MARGIN;
-         return false;
+         return SUBMISSION_STATUS_REJECTED;
 
       case TRADE_RETCODE_REJECT:           // 10006
       case TRADE_RETCODE_INVALID:          // 10013
@@ -167,11 +164,11 @@ bool BrokerSubmission_ClassifyRetcode(uint retcode, ENUM_REASON_CODE &outReason)
       case TRADE_RETCODE_LONG_ONLY:        // 10042
       case TRADE_RETCODE_SHORT_ONLY:       // 10043
          outReason = REASON_BROKER_REJECT;
-         return false;
+         return SUBMISSION_STATUS_REJECTED;
 
       default:
          outReason = REASON_EXECUTION_SUBMISSION_AMBIGUOUS;
-         return true;
+         return SUBMISSION_STATUS_UNKNOWN;
    }
 }
 

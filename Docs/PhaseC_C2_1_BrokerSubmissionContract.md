@@ -41,6 +41,9 @@ the request **did** reach the server and got some real response
 (`result.retcode`), whether accepted, rejected, or ambiguous. This
 maps cleanly onto the sealed state machine without bending it:
 
+**Superseded by the second amendment below** (kept for history - the
+mandatory step order and the UNKNOWN branch changed):
+
 ```
 final pre-submit safety re-validation (every C1.2 gate, re-run FRESH -
     not trusted from the earlier ACCEPTED evaluation, which may be
@@ -102,6 +105,99 @@ transition at all) is what precisely captures "about to call, no
 claim," fully decoupled from the state-machine's own separate,
 already-frozen `SUBMITTED` semantics.
 
+## C2.2 second amendment — mandatory sequence + UNKNOWN branch (frozen, supersedes the diagram above)
+
+Found via real user review, two real issues in the already-PASSED,
+already-merged first amendment:
+
+1. **A real regression, not a pre-existing gap.** The first
+   amendment's `BrokerSubmission_ProcessSendResult` split accidentally
+   moved the `EXECUTION_SUBMISSION_ATTEMPTED` durable write to run
+   *after* the real `OrderSend()` call, since the wrapper called
+   `OrderSend()` first and only handed control to `ProcessSendResult`
+   afterward - directly violating the ordering this doc's own diagram
+   requires. Fixed by extracting `BrokerSubmission_RecordAttempt()`,
+   called by the thin wrapper strictly *before* `OrderSend()`.
+2. **`CANDIDATE_SUBMITTED` must mean a genuine acknowledgment, not
+   merely "the API call returned true."** The original diagram folded
+   every ambiguous retcode (`TRADE_RETCODE_CONNECTION`,
+   `TRADE_RETCODE_PLACED`, any unrecognized code) into the same
+   `CANDIDATE_SUBMITTED` resting state as a real `TRADE_RETCODE_DONE`
+   acceptance. `TRADE_RETCODE_CONNECTION` in particular can appear even
+   when the terminal itself never actually reached the trade server -
+   transitioning the candidate as if it had is misleading. Fixed with a
+   new `SUBMISSION_STATUS_UNKNOWN` (no candidate transition at all,
+   exactly like the `OrderSend()==false` case).
+
+The frozen mandatory sequence, replacing the diagram above:
+
+```
+1. Final pre-submit gate re-validation + request construction
+2. BrokerSubmission_RecordAttempt()
+     - durable EXECUTION_SUBMISSION_ATTEMPTED write (no broker fields
+       of any kind in its payload - a pre-side-effect audit fact)
+     - only on a successful write: candidate.correlation_id assigned
+       (first-ever write to that field), in-session idempotency guard
+       marked
+3. If step 2 fails: STOP. No OrderSend. No candidate mutation. No
+   idempotency mark that claims an attempt happened.
+4. OrderSend(request, result) - the real, irreversible boundary call
+5. Persist the immediate result, per BrokerSubmission_ClassifyRetcode's
+   now-three-way split:
+
+   OrderSend() == false (per MQL5's own OrderSend() reference, false
+   specifically means the request failed its own basic structural
+   check and was never dispatched at all - a bounded, local condition,
+   distinct from the true+retcode surface entirely. GetLastError(),
+   captured immediately, is MQL5's general error-handling mechanism -
+   not something OrderSend()'s own page walks through, but the
+   standard way to capture why any call failed - and the C2.2
+   implementation always has this evidence, so this branch is never
+   downgraded to UNKNOWN for conservatism):
+       -> ORDER_SUBMISSION_ERROR (audit SystemEvent, terminal_last_error
+          captured)
+       -> candidate.state stays CANDIDATE_CREATED - untouched, retry-
+          ability preserved
+
+   OrderSend() == true, TRADE_RETCODE_DONE / _DONE_PARTIAL (the ONLY
+   genuine positive acknowledgment):
+       -> EventStore_LogTransition(candidate, CANDIDATE_SUBMITTED, ...)
+          [legal: CREATED -> SUBMITTED]
+       -> ORDER_SUBMITTED (audit SystemEvent, full MqlTradeResult
+          captured)
+       -> candidate.state stays CANDIDATE_SUBMITTED - resting state
+          pending a LATER, separately-authorized OnTradeTransaction
+          reconciliation commit
+
+   OrderSend() == true, an explicit rejection retcode:
+       -> EventStore_LogTransition(candidate, CANDIDATE_SUBMITTED, ...)
+          [legal: CREATED -> SUBMITTED - the mandatory waypoint, since
+          REJECTED_BY_BROKER is reachable only from SUBMITTED, never
+          CREATED, under the sealed state machine]
+       -> ORDER_REJECTED (audit SystemEvent, full MqlTradeResult
+          captured)
+       -> EventStore_LogTransition(candidate, CANDIDATE_REJECTED_BY_BROKER, ...)
+          [legal: SUBMITTED -> REJECTED_BY_BROKER]
+
+   OrderSend() == true, TRADE_RETCODE_CONNECTION / TRADE_RETCODE_PLACED
+   / any other unlisted or unrecognized retcode (SUBMISSION_STATUS_UNKNOWN -
+   neither an explicit acceptance nor an explicit rejection; no real
+   acknowledgment happened):
+       -> EXECUTION_SUBMISSION_UNKNOWN (audit SystemEvent, full
+          MqlTradeResult captured)
+       -> candidate.state stays CANDIDATE_CREATED - NO transition,
+          exactly like the OrderSend()==false case. No retry logic
+          exists in C2.2/C2.3 - any future retry policy must mint a
+          new execution_request_id/attempt identity and requires its
+          own explicit, separate authorization; it must never silently
+          reuse this one.
+```
+
+Every `EventStore_LogSystem`/`EventStore_LogTransition` call in this
+sequence keeps the same non-rollback discipline every prior emitter in
+this project already follows: once a write succeeds, it is never
+rolled back, even if a later write in the same call fails.
+
 ## Event vocabulary (frozen)
 
 Two new, append-only `ENUM_EVENT_TYPE` members (after
@@ -118,11 +214,23 @@ EVENT_TYPE_ORDER_SUBMISSION_ERROR
 
 The dormant `EVENT_TYPE_ORDER_SUBMITTED`/`EVENT_TYPE_ORDER_REJECTED`
 (reserved since B1, confirmed no conflicting semantics beyond their
-bare names) are reused as-is for the post-`OrderSend` accepted/
-ambiguous and explicit-rejection cases respectively.
+bare names) are reused as-is for the post-`OrderSend` genuine-
+acceptance and explicit-rejection cases respectively.
 `EVENT_TYPE_ORDER_FILLED` stays untouched, reserved for the later,
 separately-authorized `OnTradeTransaction` reconciliation commit -
 C2.2 never emits it.
+
+**C2.2 second amendment:** one more append-only `ENUM_EVENT_TYPE`
+member added, after `EVENT_TYPE_ORDER_SUBMISSION_ERROR` (the new true
+tail):
+
+```
+EVENT_TYPE_EXECUTION_SUBMISSION_UNKNOWN
+   = OrderSend() returned true but result.retcode is neither an
+     explicit acceptance nor an explicit rejection - no real
+     acknowledgment happened. Never folded into EVENT_TYPE_ORDER_SUBMITTED,
+     which would falsely imply one. No candidate-lifecycle transition.
+```
 
 ## Reason codes
 
@@ -180,7 +288,8 @@ enum ENUM_SUBMISSION_STATUS
    SUBMISSION_STATUS_NONE,
    SUBMISSION_STATUS_ERROR,      // OrderSend() returned false
    SUBMISSION_STATUS_REJECTED,   // explicit server rejection retcode
-   SUBMISSION_STATUS_SUBMITTED   // accepted or ambiguous - awaiting reconciliation
+   SUBMISSION_STATUS_SUBMITTED,  // TRADE_RETCODE_DONE/_DONE_PARTIAL only - a genuine positive acknowledgment
+   SUBMISSION_STATUS_UNKNOWN     // C2.2 second amendment: neither an explicit acceptance nor an explicit rejection - no candidate transition
 };
 
 struct ExecutionSubmissionResult
@@ -291,4 +400,176 @@ No broker-mutating test run of any kind until C2.2 is itself explicitly
         C1.2 and unconditionally fails closed since no approval
         mechanism exists yet; C2.2 inherits this unchanged unless a
         real mechanism is separately designed and authorized)
+```
+
+## C2.3 addendum — Audit Projections + Reconciliation + Regression/Seal
+
+Opens after C2.2 PASSED (real MetaEditor run, including the second
+amendment), merged to `mlquantai`. Strictly additive and read-only over
+the durable `EXECUTION_SUBMISSION_ATTEMPTED`/`ORDER_SUBMISSION_ERROR`/
+`ORDER_SUBMITTED`/`ORDER_REJECTED`/`EXECUTION_SUBMISSION_UNKNOWN`
+events C2.2 already writes - no broker query, no broker mutation, no
+candidate-lifecycle transition, no event append here. No
+`MLQUANTAI_*_SCHEMA_*` constant is needed: `EXECUTION_SUBMISSION_ATTEMPTED`'s
+payload has no schema-version field of its own (see
+`ExecutionSubmissionAttempt_ToExtraJson`), and all four outcome events
+reuse `execution_submission_result_schema_version` verbatim from
+`ExecutionSubmissionResult`.
+
+### Durable idempotency - C2.3's first deliverable (frozen, per user confirmation)
+
+A real gap the user identified: C2.2's `BrokerSubmissionGate`
+idempotency check (`BrokerSubmissionGate_HasAlreadyAttempted`) is an
+in-session, resettable registry only - it cannot prevent a resubmission
+of the same `execution_request_id` across a terminal restart, since
+nothing durable backs it. Building a durable version *inside* C2.2
+would mean duplicating `EXECUTION_SUBMISSION_ATTEMPTED`-parsing logic
+that C2.3's own `SubmissionAttemptProjection` is about to build anyway
+- rejected, same "no duplicate parsers" rule this whole addendum
+already follows. Agreed sequencing:
+
+```
+C2.2 (already fixed, this amendment): RecordAttempt-before-send
+    ordering + in-memory guard only. Real-submit stays disabled
+    (smoke test input defaults false) regardless.
+
+C2.3 first deliverable: SubmissionAttemptProjection (the canonical,
+    single EventStore replay parser for these events) PLUS a frozen
+    query interface other layers may consume without knowing any
+    parsing internals:
+
+      bool SubmissionAttemptRegistry_HasAttempt(string executionRequestId);
+      bool SubmissionAttemptRegistry_IsUnresolved(string executionRequestId);
+
+    Semantics: any durable EXECUTION_SUBMISSION_ATTEMPTED without a
+    conclusive, persisted broker-state resolution (i.e. no matching
+    ORDER_SUBMITTED/ORDER_REJECTED/ORDER_SUBMISSION_ERROR/
+    EXECUTION_SUBMISSION_UNKNOWN yet) -> HasAttempt = true,
+    IsUnresolved = true. For initial safety the simplest policy is
+    stronger still: ANY historical attempt for a given
+    execution_request_id - resolved or not - blocks all automatic
+    resubmission of that exact id. A future manual-retry policy, if
+    ever authorized, must mint a brand new execution_request_id/attempt
+    identity and require its own explicit approval - never silently
+    reuse an already-attempted one.
+
+C2.2 integration follow-up patch (separately scoped, after C2.3's
+    interface exists): BrokerSubmissionGate consults
+    SubmissionAttemptRegistry_HasAttempt/_IsUnresolved as an additional
+    check - no parsing/replay logic added to C2.2 itself, just a call
+    into C2.3's already-frozen interface. Rejects any request already
+    marked attempted/unresolved. Only after this patch lands is a real
+    demo-submit capability considered safe to actually exercise via the
+    opt-in smoke test.
+```
+
+### A real design tension, found and resolved before any code exists
+
+C1.3 froze a hard rule for this project: a projection rebuild must be a
+**single, sequential, interleaved pass**, never a naive two-pass design,
+because a two-pass rebuild silently fails to catch a completion
+appearing before its own request in file order (by the time pass 2
+checks completions, pass 1 has already registered every request in the
+whole file, regardless of position). Naively re-applying that same
+"never stage" rule all the way down to C2.3 would require either
+editing the sealed, PASSED `MLQuantAI_ExecutionAuditProjection.mqh`
+(C1.3), or duplicating its `ExecutionRequestProjection`/
+`DryRunResultProjection` parsing logic wholesale in a new file - both
+rejected, the same way editing the sealed `SafetyGate.mqh` was rejected
+in C2.2.
+
+**Resolution**: re-read C1.3's own rebuild function
+(`ExecutionAuditProjection_RebuildFromFile`) - it already stages ITS
+OWN upstream dependency as a black-box gate:
+`EligibilityDecisionProjectionReport eligReport =
+EligibilityDecisionProjection_RebuildFromFile(fileName);` runs to
+completion, across the *whole* file, *before* C1.3's own interleaved
+pass ever starts. C1.3 never interleaves down into B9's own event
+types - only the two sibling types it introduces itself
+(`EXECUTION_REQUEST_CREATED`/`EXECUTION_DRY_RUN_COMPLETED`) get true
+interleaving. This is an already-established, working precedent, not a
+gap: ordering violations are only ever enforced between the specific
+sibling pair a single commit introduces together; a reference to an
+older, already-sealed layer is checked for existence (orphan check)
+only, never for relative ordering.
+
+C2.3 follows the identical, already-precedented shape: calls C1.3's
+own `ExecutionAuditProjection_RebuildFromFile` unmodified, as a
+black-box gate, across the whole file, first. `MLQuantAI_ExecutionAuditProjection.mqh`
+is never edited. C2.3's own two new sibling types
+(`EXECUTION_SUBMISSION_ATTEMPTED` and the outcome quartet
+`ORDER_SUBMISSION_ERROR`/`ORDER_SUBMITTED`/`ORDER_REJECTED`/
+`EXECUTION_SUBMISSION_UNKNOWN`) are then
+processed in ONE new, genuinely interleaved pass in a new file - an
+outcome line's `execution_request_id` must already have a matching
+attempt applied earlier in *this same new pass*, or it fails the whole
+rebuild closed as an orphan/ordering violation, exactly C1.3's own
+rule, now applied to the pair C2.3 itself introduces. An attempt line's
+reference back to `ExecutionRequestProjection`/`DryRunResultProjection`
+(already fully populated by the staged C1.3 gate) is an orphan-only
+check - it must exist, with a matching hash, and its `DryRunResultProjection`
+must contain at least one `SAFETY_GATE_ACCEPTED` record for that exact
+request (never merely "any" record - a submission built from a
+`REJECTED` dry-run would be a real, separate bug this check exists to
+catch) - never a relative-ordering check against C1's own events.
+
+### New projections (frozen shape)
+
+`SubmissionAttemptProjection` - **0..N records per `execution_request_id`,
+never deduped**, same rule `DryRunResultProjection` already established
+(a legitimate future retry after a local `OrderSend()` failure, even
+though C2.2 itself implements no retry logic, would produce a second
+real attempt for the same id - this must not collapse to 1). Keyed by
+the event's own durable `source_sequence_number`. `submit_attempt` must
+equal `1` (C2.2/C2.3's own frozen invariant - no retry logic exists
+yet even though the shape tolerates a future one).
+
+`SubmissionOutcomeProjection` - same 0..N, never-deduped,
+`source_sequence_number`-keyed shape. One record per
+`ORDER_SUBMISSION_ERROR`/`ORDER_SUBMITTED`/`ORDER_REJECTED`/
+`EXECUTION_SUBMISSION_UNKNOWN` line, `submission_status` set from
+which of the four the line's own `type` field says (a mismatch between
+the line's `type` and its own `submission_status` payload field is
+corruption, rejected). Outcome invariants enforced per status,
+mirroring `DryRunResultProjection`'s own decision/reason_code
+invariant: `ERROR` requires `order_send_returned == false`;
+`SUBMITTED`/`REJECTED`/`UNKNOWN` all require `order_send_returned ==
+true`; `SUBMITTED`'s `reason_code` must be `REASON_SUBMITTED_OK`
+exactly (never a lesser claim); `REJECTED`'s `reason_code` must be one
+of `{REASON_BROKER_REJECT, REASON_INVALID_STOPS, REASON_INSUFFICIENT_MARGIN,
+REASON_REQUOTE}`; `UNKNOWN`'s `reason_code` must be
+`REASON_EXECUTION_SUBMISSION_AMBIGUOUS`; never `REASON_NONE`/`REASON_ERROR_INTERNAL`
+on any of the three `orderSendReturned==true` statuses.
+
+### Reconciliation (frozen shape)
+
+`BrokerSubmissionReconciliationReport` - one row per distinct
+`execution_request_id` with at least one applied `SubmissionAttemptProjection`
+record. Status is computed from the **latest** (highest
+`source_sequence_number`) matching `SubmissionOutcomeProjection`
+record, if any: `NO_OUTCOME` (an attempt exists with no outcome yet -
+the legitimate non-rollback edge case if a session ends exactly
+between `EXECUTION_SUBMISSION_ATTEMPTED` and its outcome write, same
+class of edge case C1.2's own non-rollback discipline already
+documents), `ERRORED`, `REJECTED`, `SUBMITTED`, or `UNKNOWN`. Never a
+sixth, softer status - an id with zero attempts at all simply never
+appears in this report (it belongs to C1.3's own `ExecutionReconciliationReport`
+instead, unaffected and untouched by C2.3).
+
+### Scope guard (frozen)
+
+```
+Read-only over the event store - no OrderSend/broker query/broker
+    mutation anywhere in this commit.
+No edit to any sealed file (MLQuantAI_ExecutionAuditProjection.mqh,
+    MLQuantAI_SafetyGate.mqh, MLQuantAI_BrokerSubmissionGate.mqh,
+    MLQuantAI_BrokerSubmissionBuilder.mqh,
+    MLQuantAI_BrokerSubmissionAdapter.mqh) - strictly additive, a new
+    file only.
+No OnTradeTransaction handler, no EVENT_TYPE_ORDER_FILLED, no
+    CANDIDATE_EXECUTED anywhere - still reserved for a later,
+    separately-authorized reconciliation commit.
+Full B9 + C1 + C2 regression re-run required before "C2 FULLY SEALED"
+    is declared, same discipline the "C1 FULLY SEALED" checkpoint
+    already set.
 ```

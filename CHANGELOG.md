@@ -4,6 +4,45 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase C2.2 second amendment: attempt-before-send fix + SUBMISSION_STATUS_UNKNOWN (PASSED 145/145, real MetaEditor run, 2026-08-21)
+
+Found via a second real user review of the merged, PASSED (121/121)
+first amendment: (1) a real regression the first amendment itself
+introduced - `EXECUTION_SUBMISSION_ATTEMPTED` moved to run *after* the
+real `OrderSend()` call instead of before, violating the frozen C2.1
+lifecycle's own ordering. Fixed by extracting `BrokerSubmission_RecordAttempt()`,
+called by the thin `BrokerSubmission_Submit()` wrapper strictly before
+`OrderSend()` - if it fails, `OrderSend()` is never called. (2) A real
+semantic gap: `TRADE_RETCODE_CONNECTION` (and other ambiguous/
+unrecognized retcodes) still transitioned the candidate to
+`CANDIDATE_SUBMITTED`, implying an acknowledgment that never happened.
+Added `SUBMISSION_STATUS_UNKNOWN` + `EVENT_TYPE_EXECUTION_SUBMISSION_UNKNOWN`
+(`Core/MLQuantAI_Enums.mqh`) - `BrokerSubmission_ClassifyRetcode` now
+returns a real 3-way `ENUM_SUBMISSION_STATUS`; the candidate is never
+transitioned for `UNKNOWN`, reusing the existing "stays CREATED"
+resting place rather than adding a new `ENUM_CANDIDATE_STATE` value.
+`OrderSend()==false` stays `ERROR` (not downgraded to `UNKNOWN`) since
+`GetLastError()` already provides real proof of a local/pre-dispatch
+failure. Durable, restart-safe idempotency was agreed as a real gap but
+deliberately deferred: C2.3 will build the canonical
+`SubmissionAttemptRegistry` query interface first, and a small,
+separately-scoped C2.2 integration patch will wire the gate to it
+afterward - real-submit capability isn't considered safe until then.
+`OrderSend()==false`'s `ERROR` classification was challenged a third
+time and re-verified directly against the real MQL5 `OrderSend()`
+reference page (fetched, not recalled from memory): confirmed `false`
+means a failed basic structural check - the request never dispatched
+at all, a bounded local condition - so `ERROR` stands unchanged. See
+`Docs/PhaseC_C2_1_BrokerSubmissionContract.md`'s "C2.2 second
+amendment" and "Durable idempotency" sections, and
+`Docs/PhaseC_C2_2_BrokerSubmissionAdapterStatus.md`'s "C2.2 second
+amendment" section, for full reasoning. Confirmed by a real MetaEditor
+run: 145/145 ALL PASS. Real-submit smoke test stays disabled regardless
+- per the user's own laid-out operational gate (durable idempotency
+from C2.3 first, then a full pre-send environment/approval checklist,
+then separate explicit authorization every time before any real demo
+`OrderSend` is ever exercised).
+
 ## [Unreleased] - Phase C2.2 amendment: ambiguous-retcode fix + testable orchestration (PASSED 121/121, real MetaEditor run, 2026-08-21)
 
 Found via real user review after C2.2's first 73/73 PASSED run (not

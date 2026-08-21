@@ -1,13 +1,26 @@
 # Phase C2.2 — Broker Submission Adapter
 
-**Status: PASSED (121/121, real MetaEditor run, 2026-08-21) - amended.**
-Original 73/73 PASSED run (same day) covered gate/build/classification
-only - a real user review after that run found a genuine classification
-bug and a real test-coverage gap in the merged code (see "C2.2
-amendment" below), fixed and confirmed by a fresh real MetaEditor run
-reaching 121/121 (73 original + 48 net new/rewritten checks from the
-amendment). Smoke test script re-confirmed to still compile and
-correctly self-abort (input left at its default `false`).
+**Status: PASSED (145/145, real MetaEditor run, 2026-08-21) - amended twice.**
+73/73 PASSED (2026-08-21) covered gate/build/classification only. First
+amendment (121/121, same day) fixed a classification bug and closed a
+test-coverage gap. Second amendment (145/145, same day, confirmed by a
+real MetaEditor run) fixed a genuine regression the first amendment
+itself introduced (`EXECUTION_SUBMISSION_ATTEMPTED` moved to *after*
+`OrderSend()` instead of before) plus a real semantic gap (ambiguous
+retcodes like `TRADE_RETCODE_CONNECTION` were still transitioning the
+candidate to `CANDIDATE_SUBMITTED`) - see "C2.2 second amendment"
+below. `OrderSend()==false`'s `ERROR` classification was challenged a
+third time and re-verified directly against the real MQL5 `OrderSend()`
+reference page (fetched, not recalled) - confirmed correct, see that
+section's closing note. **Real-submit smoke test stays disabled
+regardless of this PASSED status** (input defaults `false`) - per the
+durable-idempotency sequencing agreed with the user: real-submit
+capability isn't considered safe until C2.3's `SubmissionAttemptRegistry`
+interface exists and a follow-up C2.2 integration patch wires the gate
+to it, on top of the full operational gate (named allowlisted demo
+account/server, one-time manual approval, hard-capped minimal volume,
+post-send reconciliation-first, separate explicit authorization every
+time) the user has since laid out for that eventual smoke run.
 
 Implements `Docs/PhaseC_C2_1_BrokerSubmissionContract.md` (frozen
 before code). Opens after C2.1 frozen and the user's explicit,
@@ -175,6 +188,66 @@ resolved. `SUBMITTED` is a non-terminal "awaiting confirmation" state,
 not a success claim - the fix above corrects the *reason code*
 attached to that state, not the state transition itself.
 
+## C2.2 second amendment (post-PASSED, found via real user review, not self-review)
+
+Two more genuine issues found in the merged, PASSED (121/121) code:
+
+1. **A real regression, introduced by the first amendment itself.**
+   The `ProcessSendResult` split accidentally moved the
+   `EXECUTION_SUBMISSION_ATTEMPTED` durable write to run *after* the
+   real `OrderSend()` call - the thin wrapper called `OrderSend()`
+   first and only then handed off to `ProcessSendResult`, which is
+   where the attempt write lived. This directly violated the frozen
+   C2.1 lifecycle's own ordering requirement. Fixed by extracting
+   `BrokerSubmission_RecordAttempt()` - does the durable write +
+   `candidate.correlation_id` assignment + idempotency mark, called by
+   the thin wrapper strictly *before* `OrderSend()`. If it fails,
+   `OrderSend()` is never called, no candidate mutation, no idempotency
+   mark.
+2. **The original review's "SUBMITTED must mean a real acknowledgment"
+   point was right for the ambiguous-retcode case** (just not for the
+   explicit-rejection case addressed above). `TRADE_RETCODE_CONNECTION`
+   can appear even when `OrderSend()` returns `true` without the
+   terminal ever actually reaching the trade server - transitioning the
+   candidate to `CANDIDATE_SUBMITTED` for that case was misleading.
+   Added `SUBMISSION_STATUS_UNKNOWN` + `EVENT_TYPE_EXECUTION_SUBMISSION_UNKNOWN`
+   (`Core/MLQuantAI_Enums.mqh`) - `BrokerSubmission_ClassifyRetcode` now
+   returns a real 3-way `ENUM_SUBMISSION_STATUS` instead of a bool.
+   `TRADE_RETCODE_CONNECTION`/`TRADE_RETCODE_PLACED`/any unrecognized
+   retcode now classify as `UNKNOWN`, and the candidate is **never
+   transitioned** for that outcome - it stays `CANDIDATE_CREATED`,
+   exactly like the `OrderSend()==false` case. This does NOT introduce
+   a new `ENUM_CANDIDATE_STATE` value - it reuses the state machine's
+   own existing "stays CREATED" resting place.
+
+`OrderSend()==false` stays classified as `ERROR` (not downgraded to
+`UNKNOWN`, per the reviewer's own conditional) - verified against the
+real MQL5 `OrderSend()` reference page (fetched directly, not recalled
+from memory): it documents `false` as the result of a failed *basic
+structural check*, meaning the request was never dispatched at all -
+a bounded, local condition, categorically different from the
+`true`+`retcode` surface (which the same page documents as requiring
+inspection of `MqlTradeResult.retcode`, never `GetLastError()`, for
+the actual outcome). `GetLastError()`, captured immediately after the
+call and persisted in `terminal_last_error`, is MQL5's *general*
+error-handling mechanism (not something `OrderSend()`'s own page
+walks through, but the standard practice for any failed call) - real,
+persisted evidence, not a guess. Given this, the conservative
+downgrade-to-`UNKNOWN` the reviewer asked for isn't warranted here;
+`ERROR` and `UNKNOWN` already produce identical candidate-lifecycle
+behavior regardless (no transition, retry-eligible), so the
+disagreement was ultimately about label accuracy, not candidate safety.
+
+Durable, restart-safe idempotency (the reviewer's other major point)
+was evaluated and agreed as a real gap, but deliberately NOT built into
+C2.2 this round - see `Docs/PhaseC_C2_1_BrokerSubmissionContract.md`'s
+"Durable idempotency - C2.3's first deliverable" section for the agreed
+sequencing (C2.3 builds the canonical `SubmissionAttemptRegistry`
+query interface first; a small, separately-scoped C2.2 integration
+patch wires the gate to it afterward). Real-submit capability is not
+considered safe until that follow-up patch lands, regardless of what
+this round's test suite proves.
+
 ## Definition of Done
 
 - [x] Every file above compiles with zero errors/warnings (real
@@ -187,10 +260,15 @@ attached to that state, not the state transition itself.
       its default `false`). Actually exercising a real `OrderSend` call
       through it remains optional, manual, and entirely the user's
       call - not required for C2.2 to be marked PASSED.
-- [x] Real MetaEditor re-run of the amended suite — 121/121 ALL PASS
-      (2026-08-21).
+- [x] Real MetaEditor re-run of the first amendment's suite — 121/121
+      ALL PASS (2026-08-21).
+- [x] Real MetaEditor re-run of the second amendment's suite — 145/145
+      ALL PASS (2026-08-21).
 - [ ] Full B9 + C1 regression re-run — deferred to the "C2 FULLY
       SEALED" checkpoint after C2.3, matching the precedent C1 itself
       set (the B9 regression re-run happened once, at the "C1 FULLY
       SEALED" declaration after C1.3 - not separately at each of
       C1.2/C1.3's own PASSED declarations).
+- [ ] Durable idempotency integration patch (C2.2 consuming C2.3's
+      `SubmissionAttemptRegistry` interface) — not yet started; required
+      before real-submit capability is considered safe to exercise.
