@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase C2.2 amendment: ambiguous-retcode fix + testable orchestration (post-PASSED, awaiting real re-run)
+## [Unreleased] - Phase C2.2 amendment: ambiguous-retcode fix + testable orchestration (PASSED 121/121, real MetaEditor run, 2026-08-21)
 
 Found via real user review after C2.2's first 73/73 PASSED run (not
 self-review): (1) `BrokerSubmission_ClassifyRetcode` classified
@@ -28,8 +28,8 @@ call. Six new branch-coverage tests added (`true+DONE`,
 One proposed change ("no `CANDIDATE_SUBMITTED` until positive
 acknowledgment") was evaluated and rejected as illegal under the
 sealed state machine - see `Docs/PhaseC_C2_2_BrokerSubmissionAdapterStatus.md`'s
-"C2.2 amendment" section for the full reasoning. Awaiting a real
-MetaEditor re-run before re-declaring PASSED.
+"C2.2 amendment" section for the full reasoning. Confirmed by a real
+MetaEditor run: 121/121 ALL PASS.
 
 ## [Unreleased] - Phase C2.2: Broker Submission Adapter (PASSED 73/73, real MetaEditor run, 2026-08-21)
 

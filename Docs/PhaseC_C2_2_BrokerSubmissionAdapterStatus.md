@@ -1,11 +1,13 @@
 # Phase C2.2 — Broker Submission Adapter
 
-**Status: AMENDED, awaiting a real MetaEditor re-run. Original 73/73
-PASSED run (2026-08-21) covered gate/build/classification only - a real
-user review after that run found a genuine classification bug and a
-real test-coverage gap in the merged code (see "C2.2 amendment"
-below). Not re-declared PASSED until a fresh real MetaEditor run
-confirms the amended suite.**
+**Status: PASSED (121/121, real MetaEditor run, 2026-08-21) - amended.**
+Original 73/73 PASSED run (same day) covered gate/build/classification
+only - a real user review after that run found a genuine classification
+bug and a real test-coverage gap in the merged code (see "C2.2
+amendment" below), fixed and confirmed by a fresh real MetaEditor run
+reaching 121/121 (73 original + 48 net new/rewritten checks from the
+amendment). Smoke test script re-confirmed to still compile and
+correctly self-abort (input left at its default `false`).
 
 Implements `Docs/PhaseC_C2_1_BrokerSubmissionContract.md` (frozen
 before code). Opens after C2.1 frozen and the user's explicit,
@@ -185,11 +187,8 @@ attached to that state, not the state transition itself.
       its default `false`). Actually exercising a real `OrderSend` call
       through it remains optional, manual, and entirely the user's
       call - not required for C2.2 to be marked PASSED.
-- [ ] Real MetaEditor re-run of the amended suite (73 original checks,
-      plus one `Test_Classify_UnlistedRetcodesDefaultToAmbiguousAccept`
-      renamed/rewritten in place, plus one new `Test_Classify_OnlyDoneVariantsEarnSubmittedOk`,
-      plus six new `Test_ProcessSendResult_*` functions) — exact N/N
-      not yet known until a real compile/run confirms it.
+- [x] Real MetaEditor re-run of the amended suite — 121/121 ALL PASS
+      (2026-08-21).
 - [ ] Full B9 + C1 regression re-run — deferred to the "C2 FULLY
       SEALED" checkpoint after C2.3, matching the precedent C1 itself
       set (the B9 regression re-run happened once, at the "C1 FULLY
