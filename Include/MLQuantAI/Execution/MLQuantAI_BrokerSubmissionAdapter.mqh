@@ -4,13 +4,27 @@
 //| orchestration boundary from                                        |
 //| Docs/PhaseC_C2_1_BrokerSubmissionContract.md's lifecycle diagram.  |
 //| THIS FILE CALLS THE REAL OrderSend() AND, ON A REAL DEMO ACCOUNT,  |
-//| WILL OPEN A REAL POSITION. The automated regression suite          |
-//| (Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5) MUST NEVER     |
-//| call BrokerSubmission_Submit() - it only exercises                 |
-//| BrokerSubmissionGate_Evaluate/BrokerSubmission_BuildTradeRequest/   |
-//| BrokerSubmission_ClassifyRetcode directly, none of which touch     |
-//| OrderSend. Only the separate, explicitly opt-in real-submit smoke  |
-//| test may call this function, run manually by the user.             |
+//| WILL OPEN A REAL POSITION.                                          |
+//|                                                                     |
+//| C2.2 amendment (post-PASSED, real user review): the event-          |
+//| sequencing/state-transition orchestration around the OrderSend      |
+//| call had ZERO automated test coverage, because it lived entirely    |
+//| inside the one function nobody may call from the automated suite.   |
+//| Split into BrokerSubmission_ProcessSendResult() - pure, takes        |
+//| orderSendReturned/terminalLastError/tradeResult as ALREADY-COMPUTED |
+//| INPUT parameters, never calls OrderSend itself, fully unit-testable |
+//| for every branch (true+DONE, true+DONE_PARTIAL, explicit rejection  |
+//| retcodes, false+error, true+CONNECTION/unknown retcode) - and        |
+//| BrokerSubmission_Submit(), now a thin wrapper that does ONLY the     |
+//| real OrderSend() call and delegates everything else to               |
+//| ProcessSendResult. The automated regression suite                    |
+//| (Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5) exercises        |
+//| BrokerSubmissionGate_Evaluate/BrokerSubmission_BuildTradeRequest/     |
+//| BrokerSubmission_ClassifyRetcode/BrokerSubmission_ProcessSendResult   |
+//| directly - none of these touch OrderSend. ONLY BrokerSubmission_     |
+//| Submit() itself calls the real OrderSend() - the automated suite     |
+//| MUST NEVER call it; only the separate, explicitly opt-in real-       |
+//| submit smoke test may, run manually by the user.                     |
 //|                                                                     |
 //| Return value convention (matches EventStore_LogTransition/         |
 //| EventStore_LogCandidateCreated precedent): true iff every event    |
@@ -81,8 +95,19 @@ string ExecutionSubmissionResult_ToExtraJson(const ExecutionSubmissionResult &r)
    return s;
 }
 
-bool BrokerSubmission_Submit(TradeCandidate &candidate, const ExecutionRequest &request, const ExecutionPolicy &policy,
-                               ExecutionSubmissionResult &outResult)
+// Pure orchestration core - no OrderSend call anywhere in this function.
+// Takes the real OrderSend() call's own outcome as already-computed
+// input (orderSendReturned/terminalLastError/tradeResult), so every
+// branch of the frozen C2.1 lifecycle can be exercised by the
+// automated regression suite with fabricated inputs, with zero risk
+// of ever touching a real broker. Assumes the caller already ran the
+// pre-submit gate + build successfully (candidate/request/tradeResult
+// are assumed consistent - BrokerSubmission_Submit is the only real
+// caller and guarantees this).
+bool BrokerSubmission_ProcessSendResult(TradeCandidate &candidate, const ExecutionRequest &request,
+                                          double requestedPrice, bool orderSendReturned, int terminalLastError,
+                                          datetime submissionTimestamp, const MqlTradeResult &tradeResult,
+                                          ExecutionSubmissionResult &outResult)
 {
    ExecutionSubmissionResult_Init(outResult);
    outResult.execution_request_id   = request.execution_request_id;
@@ -90,51 +115,24 @@ bool BrokerSubmission_Submit(TradeCandidate &candidate, const ExecutionRequest &
    outResult.correlation_id         = request.correlation_id;
    outResult.submit_attempt         = request.submit_attempt;
 
-   // Only a CREATED candidate may legally reach SUBMITTED - a structural
-   // precondition, not itself part of the frozen retcode/event lifecycle.
-   if(candidate.candidate_id != request.candidate_id || candidate.state != CANDIDATE_CREATED)
-      return false;
-
-   DryRunExecutionResult gateResult;
-   if(!BrokerSubmissionGate_Evaluate(request, policy, gateResult))
-      return false; // structural failure inside the gate itself
-
-   if(gateResult.decision != SAFETY_GATE_ACCEPTED)
-   {
-      outResult.reason_code = gateResult.reason_code;
-      return false; // gate rejected - no event, no OrderSend, no state change
-   }
-
-   MqlTradeRequest tradeRequest;
-   ENUM_REASON_CODE buildRejectReason;
-   if(!BrokerSubmission_BuildTradeRequest(request, policy, gateResult.observed_symbol, tradeRequest, buildRejectReason))
-   {
-      outResult.reason_code = buildRejectReason;
-      return false; // construction failed - no event, no OrderSend, no state change
-   }
-
    // Crossed the final gate - audit the intent BEFORE any broker claim.
    // First-ever write to candidate.correlation_id.
    candidate.correlation_id = request.correlation_id;
    string attemptJson = ExecutionSubmissionAttempt_ToExtraJson(request.execution_request_id, request.execution_request_hash,
                                                                   request.correlation_id, request.submit_attempt);
    if(!EventStore_LogSystem(EventTypeToString(EVENT_TYPE_EXECUTION_SUBMISSION_ATTEMPTED), "execution submission attempted", attemptJson))
-      return false; // could not durably record intent - abort before ever calling OrderSend
+      return false; // could not durably record intent - abort before "sending" is considered to have happened
 
    BrokerSubmissionGate_MarkAttempted(request.execution_request_id);
 
-   MqlTradeResult tradeResult;
-   MqlTradeResult_ZeroInit(tradeResult);
-   bool sendReturned = OrderSend(tradeRequest, tradeResult);
+   outResult.order_send_returned  = orderSendReturned;
+   outResult.requested_price      = requestedPrice;
+   outResult.submission_timestamp = submissionTimestamp;
 
-   outResult.order_send_returned  = sendReturned;
-   outResult.requested_price      = tradeRequest.price;
-   outResult.submission_timestamp = TimeCurrent();
-
-   if(!sendReturned)
+   if(!orderSendReturned)
    {
       outResult.submission_status  = SUBMISSION_STATUS_ERROR;
-      outResult.terminal_last_error = GetLastError();
+      outResult.terminal_last_error = terminalLastError;
       outResult.reason_code         = REASON_ERROR_INTERNAL;
 
       string errJson = ExecutionSubmissionResult_ToExtraJson(outResult);
@@ -185,6 +183,53 @@ bool BrokerSubmission_Submit(TradeCandidate &candidate, const ExecutionRequest &
       return false; // ORDER_REJECTED already durable and NOT rolled back; SafeMode already tripped
 
    return true;
+}
+
+// The thin, real-world wrapper. THIS is the only function anywhere in
+// this codebase that calls the real OrderSend(). Everything else is
+// delegated to BrokerSubmission_ProcessSendResult.
+bool BrokerSubmission_Submit(TradeCandidate &candidate, const ExecutionRequest &request, const ExecutionPolicy &policy,
+                               ExecutionSubmissionResult &outResult)
+{
+   ExecutionSubmissionResult_Init(outResult);
+   outResult.execution_request_id   = request.execution_request_id;
+   outResult.execution_request_hash = request.execution_request_hash;
+   outResult.correlation_id         = request.correlation_id;
+   outResult.submit_attempt         = request.submit_attempt;
+
+   // Only a CREATED candidate may legally reach SUBMITTED - a structural
+   // precondition, not itself part of the frozen retcode/event lifecycle.
+   if(candidate.candidate_id != request.candidate_id || candidate.state != CANDIDATE_CREATED)
+      return false;
+
+   DryRunExecutionResult gateResult;
+   if(!BrokerSubmissionGate_Evaluate(request, policy, gateResult))
+      return false; // structural failure inside the gate itself
+
+   if(gateResult.decision != SAFETY_GATE_ACCEPTED)
+   {
+      outResult.reason_code = gateResult.reason_code;
+      return false; // gate rejected - no event, no OrderSend, no state change
+   }
+
+   MqlTradeRequest tradeRequest;
+   ENUM_REASON_CODE buildRejectReason;
+   if(!BrokerSubmission_BuildTradeRequest(request, policy, gateResult.observed_symbol, tradeRequest, buildRejectReason))
+   {
+      outResult.reason_code = buildRejectReason;
+      return false; // construction failed - no event, no OrderSend, no state change
+   }
+
+   MqlTradeResult tradeResult;
+   MqlTradeResult_ZeroInit(tradeResult);
+   bool sendReturned = OrderSend(tradeRequest, tradeResult);
+   // GetLastError() must be read immediately after OrderSend(), before
+   // any other runtime call could overwrite it - captured here, in the
+   // thin wrapper, and handed to ProcessSendResult as a plain value.
+   int lastError = sendReturned ? 0 : GetLastError();
+   datetime ts = TimeCurrent();
+
+   return BrokerSubmission_ProcessSendResult(candidate, request, tradeRequest.price, sendReturned, lastError, ts, tradeResult, outResult);
 }
 
 #endif // __MLQUANTAI_BROKERSUBMISSIONADAPTER_MQH__

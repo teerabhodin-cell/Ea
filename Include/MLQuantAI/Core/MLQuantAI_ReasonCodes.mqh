@@ -72,6 +72,19 @@ enum ENUM_REASON_CODE
    REASON_EXECUTION_DEVIATION_POLICY_INVALID,
    REASON_EXECUTION_LINEAGE_INVALID,
 
+   // C2.2 amendment (post-PASSED, real user review): OrderSend()
+   // returning true with a retcode that is neither an explicit
+   // acceptance (TRADE_RETCODE_DONE/_DONE_PARTIAL) nor an explicit
+   // rejection - e.g. TRADE_RETCODE_CONNECTION, TRADE_RETCODE_PLACED,
+   // or any unrecognized/future retcode. The candidate still legally
+   // transitions to and stays at CANDIDATE_SUBMITTED (per the sealed
+   // state machine and the frozen C2.1 lifecycle), but REASON_SUBMITTED_OK
+   // would falsely claim a positive broker acknowledgment that never
+   // happened - this reason makes that distinction honest without
+   // touching the state transition itself. See
+   // Docs/PhaseC_C2_1_BrokerSubmissionContract.md's C2.2 amendment.
+   REASON_EXECUTION_SUBMISSION_AMBIGUOUS,
+
    REASON_COUNT
 };
 
@@ -119,6 +132,7 @@ string ReasonCodeToString(ENUM_REASON_CODE r)
       case REASON_EXECUTION_EXPOSURE_CAP_EXCEEDED:      return "EXECUTION_EXPOSURE_CAP_EXCEEDED";
       case REASON_EXECUTION_DEVIATION_POLICY_INVALID:   return "EXECUTION_DEVIATION_POLICY_INVALID";
       case REASON_EXECUTION_LINEAGE_INVALID:            return "EXECUTION_LINEAGE_INVALID";
+      case REASON_EXECUTION_SUBMISSION_AMBIGUOUS:       return "EXECUTION_SUBMISSION_AMBIGUOUS";
    }
    return "UNKNOWN";
 }
@@ -169,6 +183,7 @@ ENUM_REASON_CODE ReasonCodeFromString(string s)
    if(s == "EXECUTION_EXPOSURE_CAP_EXCEEDED")     return REASON_EXECUTION_EXPOSURE_CAP_EXCEEDED;
    if(s == "EXECUTION_DEVIATION_POLICY_INVALID")  return REASON_EXECUTION_DEVIATION_POLICY_INVALID;
    if(s == "EXECUTION_LINEAGE_INVALID")           return REASON_EXECUTION_LINEAGE_INVALID;
+   if(s == "EXECUTION_SUBMISSION_AMBIGUOUS")      return REASON_EXECUTION_SUBMISSION_AMBIGUOUS;
    return REASON_NONE;
 }
 

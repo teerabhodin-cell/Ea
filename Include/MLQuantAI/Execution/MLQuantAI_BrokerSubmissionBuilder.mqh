@@ -112,16 +112,30 @@ bool BrokerSubmission_BuildTradeRequest(const ExecutionRequest &req, const Execu
 // The reject list below covers the retcodes realistically returned for
 // a market TRADE_ACTION_DEAL open-only order (C2 never modifies/closes
 // positions) - not an exhaustive enumeration of every ENUM_TRADE_RETCODE
-// value ever defined. TRADE_RETCODE_DONE/_DONE_PARTIAL are the two
-// retcodes the contract names explicitly as "accepted"; every other
-// unlisted code (including transient ones like TRADE_RETCODE_CONNECTION)
-// falls through to the same "ambiguous, not explicitly a rejection"
-// default per the contract's own stated rule - this file never guesses
-// a rejection for a code it wasn't told to.
+// value ever defined.
+//
+// C2.2 amendment (post-PASSED, real user review): TRADE_RETCODE_DONE/
+// _DONE_PARTIAL are the ONLY two retcodes that earn REASON_SUBMITTED_OK -
+// a genuine positive broker acknowledgment. Every other unlisted/
+// unrecognized code (including TRADE_RETCODE_CONNECTION - OrderSend()
+// can return true while the terminal itself reports no connection to
+// the trade server, which is NOT a positive acknowledgment despite the
+// true return - and TRADE_RETCODE_PLACED, which applies to pending
+// orders and should never legitimately appear for a TRADE_ACTION_DEAL
+// market order) still classifies as accepted/ambiguous (true - stays
+// CANDIDATE_SUBMITTED, per the sealed state machine and the frozen
+// C2.1 lifecycle, unchanged), but is tagged REASON_EXECUTION_SUBMISSION_AMBIGUOUS
+// instead - never silently claim SUBMITTED_OK for something that was
+// never actually acknowledged.
 bool BrokerSubmission_ClassifyRetcode(uint retcode, ENUM_REASON_CODE &outReason)
 {
    switch(retcode)
    {
+      case TRADE_RETCODE_DONE:             // 10009
+      case TRADE_RETCODE_DONE_PARTIAL:      // 10010
+         outReason = REASON_SUBMITTED_OK;
+         return true;
+
       case TRADE_RETCODE_REQUOTE:          // 10004
       case TRADE_RETCODE_PRICE_CHANGED:    // 10020
          outReason = REASON_REQUOTE;
@@ -156,7 +170,7 @@ bool BrokerSubmission_ClassifyRetcode(uint retcode, ENUM_REASON_CODE &outReason)
          return false;
 
       default:
-         outReason = REASON_SUBMITTED_OK;
+         outReason = REASON_EXECUTION_SUBMISSION_AMBIGUOUS;
          return true;
    }
 }

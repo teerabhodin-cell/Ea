@@ -3,19 +3,25 @@
 //| Phase C2.2 DoD, per Docs/PhaseC_C2_1_BrokerSubmissionContract.md:   |
 //| BrokerSubmissionGate_Evaluate (final pre-submit re-validation +     |
 //| real account-mode/idempotency checks), BrokerSubmission_           |
-//| BuildTradeRequest (MqlTradeRequest construction), and               |
-//| BrokerSubmission_ClassifyRetcode (accepted-vs-rejection split).     |
+//| BuildTradeRequest (MqlTradeRequest construction),                   |
+//| BrokerSubmission_ClassifyRetcode (accepted-vs-rejection split), and |
+//| - per the C2.2 amendment - BrokerSubmission_ProcessSendResult (the  |
+//| full event-sequencing/state-transition orchestration around         |
+//| OrderSend, fed fabricated orderSendReturned/tradeResult inputs).    |
 //|                                                                      |
 //| THIS FILE NEVER CALLS BrokerSubmission_Submit() AND NEVER CALLS      |
 //| THE REAL OrderSend() - it includes MLQuantAI_BrokerSubmissionAdapter|
-//| .mqh only to reach the pure JSON serialization helpers               |
+//| .mqh to reach the pure JSON serialization helpers                    |
 //| (ExecutionSubmissionAttempt_ToExtraJson/                            |
-//| ExecutionSubmissionResult_ToExtraJson) and the                       |
-//| ExecutionSubmissionResult struct; BrokerSubmission_Submit itself is  |
-//| declared there but is NEVER invoked anywhere below. Running this     |
-//| script on a real demo account is therefore safe: no position is      |
-//| ever opened. A separate, explicitly opt-in real-submit smoke test    |
-//| script is the only place BrokerSubmission_Submit may be called.      |
+//| ExecutionSubmissionResult_ToExtraJson), the                          |
+//| ExecutionSubmissionResult struct, and BrokerSubmission_             |
+//| ProcessSendResult (pure - never calls OrderSend); BrokerSubmission_ |
+//| Submit itself is declared there too but is NEVER invoked anywhere    |
+//| below - it is the ONLY function in this codebase that calls the      |
+//| real OrderSend(). Running this script on a real demo account is      |
+//| therefore safe: no position is ever opened. A separate, explicitly   |
+//| opt-in real-submit smoke test script is the only place               |
+//| BrokerSubmission_Submit may be called.                                |
 //+------------------------------------------------------------------+
 #property copyright "MLQuantAI"
 #property script_show_inputs
@@ -228,13 +234,23 @@ void BuildC2AcceptingExecutionPolicy(ExecutionPolicy &policy)
    policy.max_deviation_points = 20.0;
 }
 
-bool BuildAcceptedRequest(ExecutionRequest &req, ExecutionPolicy &policy, string suffix, int dayOffset)
+// C2.2 amendment: outCandidate is the CANDIDATE_CREATED TradeCandidate
+// the request was built from - needed by the new ProcessSendResult
+// branch-coverage tests (which take a real TradeCandidate&), unused by
+// every pre-existing call site below (they only need req/policy).
+bool BuildAcceptedRequestWithCandidate(TradeCandidate &outCandidate, ExecutionRequest &req, ExecutionPolicy &policy, string suffix, int dayOffset)
 {
-   TradeCandidate c; RiskPlan plan; AIDecision decision; EligibilityDecision eligDecision;
-   if(!BuildEligibleChain(c, plan, decision, eligDecision, suffix, dayOffset)) return false;
+   RiskPlan plan; AIDecision decision; EligibilityDecision eligDecision;
+   if(!BuildEligibleChain(outCandidate, plan, decision, eligDecision, suffix, dayOffset)) return false;
    BuildC2AcceptingExecutionPolicy(policy);
    string rd;
-   return ExecutionRequest_Build(c, eligDecision, decision, plan, policy, req, rd);
+   return ExecutionRequest_Build(outCandidate, eligDecision, decision, plan, policy, req, rd);
+}
+
+bool BuildAcceptedRequest(ExecutionRequest &req, ExecutionPolicy &policy, string suffix, int dayOffset)
+{
+   TradeCandidate c;
+   return BuildAcceptedRequestWithCandidate(c, req, policy, suffix, dayOffset);
 }
 
 //=====================================================================
@@ -437,16 +453,215 @@ void Test_Classify_ExplicitRejectionRetcodes()
          "TRADE_RETCODE_TRADE_DISABLED -> rejected, REASON_BROKER_REJECT");
 }
 
-void Test_Classify_UnlistedRetcodesDefaultToAmbiguousAccept()
+// C2.2 amendment (post-PASSED, real user review): unlisted/ambiguous
+// retcodes still classify as accepted (true - stays CANDIDATE_SUBMITTED,
+// unchanged), but must NEVER claim REASON_SUBMITTED_OK - that would be
+// a false positive-acknowledgment claim for something that was never
+// actually acknowledged (TRADE_RETCODE_CONNECTION in particular: a
+// terminal-detected no-connection condition, not a server response).
+void Test_Classify_UnlistedRetcodesAreAmbiguousNeverClaimedOK()
 {
-   Print("--- Classify: any retcode not explicitly listed as a rejection defaults to accepted/ambiguous, per the contract's own stated default ---");
+   Print("--- Classify: any retcode not explicitly listed as a rejection stays accepted/ambiguous, but is tagged REASON_EXECUTION_SUBMISSION_AMBIGUOUS, never the misleading REASON_SUBMITTED_OK ---");
    ENUM_REASON_CODE reason;
-   Check(BrokerSubmission_ClassifyRetcode(TRADE_RETCODE_CONNECTION, reason) && reason == REASON_SUBMITTED_OK,
-         "TRADE_RETCODE_CONNECTION (not an explicit rejection) -> default accept");
-   Check(BrokerSubmission_ClassifyRetcode(TRADE_RETCODE_PLACED, reason) && reason == REASON_SUBMITTED_OK,
-         "TRADE_RETCODE_PLACED (not an explicit rejection for a market order) -> default accept");
-   Check(BrokerSubmission_ClassifyRetcode(999999, reason) && reason == REASON_SUBMITTED_OK,
-         "a wholly unrecognized retcode -> default accept, never guessed as a rejection");
+   Check(BrokerSubmission_ClassifyRetcode(TRADE_RETCODE_CONNECTION, reason) && reason == REASON_EXECUTION_SUBMISSION_AMBIGUOUS,
+         "TRADE_RETCODE_CONNECTION -> accepted/ambiguous, REASON_EXECUTION_SUBMISSION_AMBIGUOUS (never SUBMITTED_OK - no real acknowledgment happened)");
+   Check(BrokerSubmission_ClassifyRetcode(TRADE_RETCODE_PLACED, reason) && reason == REASON_EXECUTION_SUBMISSION_AMBIGUOUS,
+         "TRADE_RETCODE_PLACED (never legitimate for a market order) -> accepted/ambiguous, REASON_EXECUTION_SUBMISSION_AMBIGUOUS");
+   Check(BrokerSubmission_ClassifyRetcode(999999, reason) && reason == REASON_EXECUTION_SUBMISSION_AMBIGUOUS,
+         "a wholly unrecognized retcode -> accepted/ambiguous, REASON_EXECUTION_SUBMISSION_AMBIGUOUS, never guessed as a rejection and never claimed OK");
+}
+
+// Only TRADE_RETCODE_DONE/_DONE_PARTIAL earn the genuine positive-
+// acknowledgment reason - the boundary this whole amendment exists to
+// draw precisely.
+void Test_Classify_OnlyDoneVariantsEarnSubmittedOk()
+{
+   Print("--- Classify: REASON_SUBMITTED_OK is earned ONLY by TRADE_RETCODE_DONE/_DONE_PARTIAL, never by an ambiguous/unlisted code ---");
+   ENUM_REASON_CODE reasonDone; BrokerSubmission_ClassifyRetcode(TRADE_RETCODE_DONE, reasonDone);
+   ENUM_REASON_CODE reasonAmbiguous; BrokerSubmission_ClassifyRetcode(TRADE_RETCODE_CONNECTION, reasonAmbiguous);
+   Check(reasonDone == REASON_SUBMITTED_OK && reasonAmbiguous != REASON_SUBMITTED_OK,
+         "DONE and CONNECTION produce genuinely different reason codes, not the same optimistic default");
+}
+
+//=====================================================================
+// BrokerSubmission_ProcessSendResult - C2.2 amendment. Pure orchestration,
+// no OrderSend call anywhere - orderSendReturned/tradeResult are fed in
+// as fabricated inputs, so every branch of the frozen C2.1 lifecycle is
+// exercised here with zero risk of ever touching a real broker.
+//=====================================================================
+void MakeFakeTradeResult(MqlTradeResult &tr, uint retcode, ulong order, ulong deal, double price)
+{
+   MqlTradeResult_ZeroInit(tr);
+   tr.retcode = retcode;
+   tr.order = order;
+   tr.deal = deal;
+   tr.price = price;
+}
+
+int CountLinesOfType(string &lines[], int n, string typeStr)
+{
+   int count = 0;
+   for(int i = 0; i < n; i++)
+      if(StringFind(lines[i], "\"type\":\"" + typeStr + "\"") >= 0)
+         count++;
+   return count;
+}
+
+void Test_ProcessSendResult_Accepted_Done()
+{
+   Print("--- ProcessSendResult: OrderSend()==true, retcode=DONE -> SUBMITTED, REASON_SUBMITTED_OK, candidate CANDIDATE_SUBMITTED ---");
+   TradeCandidate candidate; ExecutionRequest req; ExecutionPolicy policy;
+   Check(BuildAcceptedRequestWithCandidate(candidate, req, policy, "PSRDONE", 20), "sanity: request+candidate built");
+   Check(candidate.state == CANDIDATE_CREATED, "sanity: candidate starts at CANDIDATE_CREATED");
+   Check(candidate.correlation_id == "", "sanity: candidate.correlation_id starts empty");
+
+   MqlTradeResult tr; MakeFakeTradeResult(tr, TRADE_RETCODE_DONE, 111, 222, 2000.50);
+
+   string file = "MLQuantAI_Test_C2_2_PSR_Done.jsonl";
+   FileDelete(file, FILE_COMMON);
+   EventStore_Open(file);
+   ExecutionSubmissionResult result;
+   bool ok = BrokerSubmission_ProcessSendResult(candidate, req, 2000.55, true, 0, TimeCurrent(), tr, result);
+   EventStore_Close();
+
+   Check(ok, "ProcessSendResult returns true - every event write succeeded");
+   Check(result.submission_status == SUBMISSION_STATUS_SUBMITTED, "submission_status is SUBMITTED");
+   Check(result.reason_code == REASON_SUBMITTED_OK, "reason_code is REASON_SUBMITTED_OK - a genuine positive acknowledgment");
+   Check(result.order_ticket == 111 && result.deal_ticket == 222, "order_ticket/deal_ticket copied from the fabricated MqlTradeResult");
+   Check(candidate.state == CANDIDATE_SUBMITTED, "candidate transitioned to CANDIDATE_SUBMITTED");
+   Check(candidate.correlation_id == req.correlation_id, "candidate.correlation_id set to req.correlation_id - first-ever write");
+
+   string lines[]; int n = EventStore_ReadAllLines(file, lines);
+   Check(CountLinesOfType(lines, n, "EXECUTION_SUBMISSION_ATTEMPTED") == 1, "exactly one EXECUTION_SUBMISSION_ATTEMPTED written");
+   Check(CountLinesOfType(lines, n, "CANDIDATE_SUBMITTED") == 1, "exactly one CANDIDATE_SUBMITTED lifecycle event written");
+   Check(CountLinesOfType(lines, n, "ORDER_SUBMITTED") == 1, "exactly one ORDER_SUBMITTED written");
+   Check(CountLinesOfType(lines, n, "ORDER_REJECTED") == 0 && CountLinesOfType(lines, n, "ORDER_SUBMISSION_ERROR") == 0 &&
+         CountLinesOfType(lines, n, "CANDIDATE_REJECTED_BY_BROKER") == 0,
+         "no rejection/error lines of any kind");
+}
+
+void Test_ProcessSendResult_Accepted_DonePartial()
+{
+   Print("--- ProcessSendResult: OrderSend()==true, retcode=DONE_PARTIAL -> SUBMITTED, REASON_SUBMITTED_OK ---");
+   TradeCandidate candidate; ExecutionRequest req; ExecutionPolicy policy;
+   Check(BuildAcceptedRequestWithCandidate(candidate, req, policy, "PSRPART", 21), "sanity: request+candidate built");
+
+   MqlTradeResult tr; MakeFakeTradeResult(tr, TRADE_RETCODE_DONE_PARTIAL, 333, 444, 2001.00);
+
+   string file = "MLQuantAI_Test_C2_2_PSR_DonePartial.jsonl";
+   FileDelete(file, FILE_COMMON);
+   EventStore_Open(file);
+   ExecutionSubmissionResult result;
+   bool ok = BrokerSubmission_ProcessSendResult(candidate, req, 2001.05, true, 0, TimeCurrent(), tr, result);
+   EventStore_Close();
+
+   Check(ok, "ProcessSendResult returns true");
+   Check(result.submission_status == SUBMISSION_STATUS_SUBMITTED, "submission_status is SUBMITTED");
+   Check(result.reason_code == REASON_SUBMITTED_OK, "reason_code is REASON_SUBMITTED_OK");
+   Check(candidate.state == CANDIDATE_SUBMITTED, "candidate transitioned to CANDIDATE_SUBMITTED");
+}
+
+void Test_ProcessSendResult_ExplicitRejection()
+{
+   Print("--- ProcessSendResult: OrderSend()==true, retcode=INVALID_STOPS -> REJECTED, candidate chains SUBMITTED -> REJECTED_BY_BROKER ---");
+   TradeCandidate candidate; ExecutionRequest req; ExecutionPolicy policy;
+   Check(BuildAcceptedRequestWithCandidate(candidate, req, policy, "PSRREJ", 22), "sanity: request+candidate built");
+
+   MqlTradeResult tr; MakeFakeTradeResult(tr, TRADE_RETCODE_INVALID_STOPS, 0, 0, 2002.00);
+
+   string file = "MLQuantAI_Test_C2_2_PSR_Rejected.jsonl";
+   FileDelete(file, FILE_COMMON);
+   EventStore_Open(file);
+   ExecutionSubmissionResult result;
+   bool ok = BrokerSubmission_ProcessSendResult(candidate, req, 2002.05, true, 0, TimeCurrent(), tr, result);
+   EventStore_Close();
+
+   Check(ok, "ProcessSendResult returns true");
+   Check(result.submission_status == SUBMISSION_STATUS_REJECTED, "submission_status is REJECTED");
+   Check(result.reason_code == REASON_INVALID_STOPS, "reason_code is REASON_INVALID_STOPS");
+   Check(candidate.state == CANDIDATE_REJECTED_BY_BROKER, "candidate ended at CANDIDATE_REJECTED_BY_BROKER (via the mandatory SUBMITTED waypoint)");
+
+   string lines[]; int n = EventStore_ReadAllLines(file, lines);
+   Check(CountLinesOfType(lines, n, "EXECUTION_SUBMISSION_ATTEMPTED") == 1, "exactly one EXECUTION_SUBMISSION_ATTEMPTED written");
+   Check(CountLinesOfType(lines, n, "CANDIDATE_SUBMITTED") == 1,
+         "exactly one CANDIDATE_SUBMITTED written - the sealed state machine requires CREATED -> SUBMITTED before -> REJECTED_BY_BROKER is even legal");
+   Check(CountLinesOfType(lines, n, "ORDER_REJECTED") == 1, "exactly one ORDER_REJECTED written");
+   Check(CountLinesOfType(lines, n, "CANDIDATE_REJECTED_BY_BROKER") == 1, "exactly one CANDIDATE_REJECTED_BY_BROKER lifecycle event written");
+   Check(CountLinesOfType(lines, n, "ORDER_SUBMITTED") == 0 && CountLinesOfType(lines, n, "ORDER_SUBMISSION_ERROR") == 0,
+         "no accept/error lines of any kind");
+}
+
+void Test_ProcessSendResult_LocalError()
+{
+   Print("--- ProcessSendResult: OrderSend()==false -> ERROR, candidate.state stays CANDIDATE_CREATED, untouched ---");
+   TradeCandidate candidate; ExecutionRequest req; ExecutionPolicy policy;
+   Check(BuildAcceptedRequestWithCandidate(candidate, req, policy, "PSRERR", 23), "sanity: request+candidate built");
+
+   MqlTradeResult tr; MqlTradeResult_ZeroInit(tr); // never reached the server - result is meaningless, never read on this branch
+
+   string file = "MLQuantAI_Test_C2_2_PSR_Error.jsonl";
+   FileDelete(file, FILE_COMMON);
+   EventStore_Open(file);
+   ExecutionSubmissionResult result;
+   bool ok = BrokerSubmission_ProcessSendResult(candidate, req, 2003.00, false, 4756, TimeCurrent(), tr, result);
+   EventStore_Close();
+
+   Check(ok, "ProcessSendResult returns true - the ATTEMPTED and ERROR events both wrote durably");
+   Check(result.submission_status == SUBMISSION_STATUS_ERROR, "submission_status is ERROR");
+   Check(result.reason_code == REASON_ERROR_INTERNAL, "reason_code is REASON_ERROR_INTERNAL");
+   Check(result.terminal_last_error == 4756, "terminal_last_error carries the fabricated GetLastError() value through");
+   Check(candidate.state == CANDIDATE_CREATED, "candidate.state stays CANDIDATE_CREATED - untouched, retry-ability preserved");
+   Check(candidate.correlation_id == req.correlation_id, "candidate.correlation_id is still set even on the ERROR branch - the audit intent was still real");
+
+   string lines[]; int n = EventStore_ReadAllLines(file, lines);
+   Check(CountLinesOfType(lines, n, "EXECUTION_SUBMISSION_ATTEMPTED") == 1, "exactly one EXECUTION_SUBMISSION_ATTEMPTED written - an attempt genuinely happened");
+   Check(CountLinesOfType(lines, n, "ORDER_SUBMISSION_ERROR") == 1, "exactly one ORDER_SUBMISSION_ERROR written");
+   Check(CountLinesOfType(lines, n, "CANDIDATE_SUBMITTED") == 0 && CountLinesOfType(lines, n, "ORDER_SUBMITTED") == 0 &&
+         CountLinesOfType(lines, n, "ORDER_REJECTED") == 0 && CountLinesOfType(lines, n, "CANDIDATE_REJECTED_BY_BROKER") == 0,
+         "no lifecycle transition, no accept/reject line of any kind - nothing ever reached the server");
+}
+
+void Test_ProcessSendResult_AmbiguousConnection()
+{
+   Print("--- ProcessSendResult: OrderSend()==true, retcode=CONNECTION -> SUBMITTED but REASON_EXECUTION_SUBMISSION_AMBIGUOUS, never REASON_SUBMITTED_OK ---");
+   TradeCandidate candidate; ExecutionRequest req; ExecutionPolicy policy;
+   Check(BuildAcceptedRequestWithCandidate(candidate, req, policy, "PSRCONN", 24), "sanity: request+candidate built");
+
+   MqlTradeResult tr; MakeFakeTradeResult(tr, TRADE_RETCODE_CONNECTION, 0, 0, 2004.00);
+
+   string file = "MLQuantAI_Test_C2_2_PSR_Connection.jsonl";
+   FileDelete(file, FILE_COMMON);
+   EventStore_Open(file);
+   ExecutionSubmissionResult result;
+   bool ok = BrokerSubmission_ProcessSendResult(candidate, req, 2004.05, true, 0, TimeCurrent(), tr, result);
+   EventStore_Close();
+
+   Check(ok, "ProcessSendResult returns true");
+   Check(result.submission_status == SUBMISSION_STATUS_SUBMITTED,
+         "submission_status is still SUBMITTED - CONNECTION is not an explicit rejection retcode, per the frozen contract's own default rule");
+   Check(result.reason_code == REASON_EXECUTION_SUBMISSION_AMBIGUOUS,
+         "reason_code is REASON_EXECUTION_SUBMISSION_AMBIGUOUS - never the misleading REASON_SUBMITTED_OK");
+   Check(candidate.state == CANDIDATE_SUBMITTED, "candidate still transitions to CANDIDATE_SUBMITTED (the only legal resting place once OrderSend returned true)");
+}
+
+void Test_ProcessSendResult_AmbiguousUnknownRetcode()
+{
+   Print("--- ProcessSendResult: OrderSend()==true, wholly unrecognized retcode -> SUBMITTED, REASON_EXECUTION_SUBMISSION_AMBIGUOUS ---");
+   TradeCandidate candidate; ExecutionRequest req; ExecutionPolicy policy;
+   Check(BuildAcceptedRequestWithCandidate(candidate, req, policy, "PSRUNK", 25), "sanity: request+candidate built");
+
+   MqlTradeResult tr; MakeFakeTradeResult(tr, 777777, 0, 0, 2005.00);
+
+   string file = "MLQuantAI_Test_C2_2_PSR_Unknown.jsonl";
+   FileDelete(file, FILE_COMMON);
+   EventStore_Open(file);
+   ExecutionSubmissionResult result;
+   bool ok = BrokerSubmission_ProcessSendResult(candidate, req, 2005.05, true, 0, TimeCurrent(), tr, result);
+   EventStore_Close();
+
+   Check(ok, "ProcessSendResult returns true");
+   Check(result.submission_status == SUBMISSION_STATUS_SUBMITTED, "submission_status is SUBMITTED");
+   Check(result.reason_code == REASON_EXECUTION_SUBMISSION_AMBIGUOUS, "reason_code is REASON_EXECUTION_SUBMISSION_AMBIGUOUS");
 }
 
 //=====================================================================
@@ -504,13 +719,15 @@ void Test_ExecutionSubmissionResult_ToExtraJson_AllFieldsPresent()
 //=====================================================================
 void Test_NoBrokerMutation_StructuralProof()
 {
-   Print("--- no OrderSend call anywhere in the gate/construction/classification code path this suite exercises ---");
-   Check(true, "verified by inspection: MLQuantAI_BrokerSubmissionGate.mqh and MLQuantAI_BrokerSubmissionBuilder.mqh "
-               "contain no OrderSend/CTrade/PositionOpen/PositionClose/OrderModify call anywhere - "
-               "BrokerSubmissionGate_Evaluate only reads AccountInfoInteger(ACCOUNT_TRADE_MODE) plus the sealed, "
-               "unmodified SafetyGate_Evaluate's own read-only checks, and BrokerSubmission_BuildTradeRequest only "
-               "reads _Symbol/SymbolInfoDouble (both read-only market queries). The real OrderSend() call lives "
-               "exclusively inside BrokerSubmission_Submit() in MLQuantAI_BrokerSubmissionAdapter.mqh, which this "
+   Print("--- no OrderSend call anywhere in the gate/construction/classification/orchestration code path this suite exercises ---");
+   Check(true, "verified by inspection: MLQuantAI_BrokerSubmissionGate.mqh, MLQuantAI_BrokerSubmissionBuilder.mqh, and "
+               "BrokerSubmission_ProcessSendResult (in MLQuantAI_BrokerSubmissionAdapter.mqh) contain no OrderSend/CTrade/"
+               "PositionOpen/PositionClose/OrderModify call anywhere - BrokerSubmissionGate_Evaluate only reads "
+               "AccountInfoInteger(ACCOUNT_TRADE_MODE) plus the sealed, unmodified SafetyGate_Evaluate's own read-only "
+               "checks, BrokerSubmission_BuildTradeRequest only reads _Symbol/SymbolInfoDouble (both read-only market "
+               "queries), and BrokerSubmission_ProcessSendResult takes orderSendReturned/tradeResult as caller-supplied "
+               "input parameters rather than ever calling OrderSend itself. The real OrderSend() call lives exclusively "
+               "inside the thin BrokerSubmission_Submit() wrapper in MLQuantAI_BrokerSubmissionAdapter.mqh, which this "
                "test suite never calls - see this file's own header comment.");
 }
 
@@ -534,7 +751,15 @@ void OnStart()
 
    Test_Classify_AcceptedRetcodes();
    Test_Classify_ExplicitRejectionRetcodes();
-   Test_Classify_UnlistedRetcodesDefaultToAmbiguousAccept();
+   Test_Classify_UnlistedRetcodesAreAmbiguousNeverClaimedOK();
+   Test_Classify_OnlyDoneVariantsEarnSubmittedOk();
+
+   Test_ProcessSendResult_Accepted_Done();
+   Test_ProcessSendResult_Accepted_DonePartial();
+   Test_ProcessSendResult_ExplicitRejection();
+   Test_ProcessSendResult_LocalError();
+   Test_ProcessSendResult_AmbiguousConnection();
+   Test_ProcessSendResult_AmbiguousUnknownRetcode();
 
    Test_ExecutionSubmissionResult_InitDefaults();
    Test_ExecutionSubmissionAttempt_ToExtraJson_NoBrokerFields();

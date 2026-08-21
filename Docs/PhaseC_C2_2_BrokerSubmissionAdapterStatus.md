@@ -1,6 +1,13 @@
 # Phase C2.2 — Broker Submission Adapter
 
-**Status: PASSED (73/73, real MetaEditor run, 2026-08-21).**
+**Status: PASSED (121/121, real MetaEditor run, 2026-08-21) - amended.**
+Original 73/73 PASSED run (same day) covered gate/build/classification
+only - a real user review after that run found a genuine classification
+bug and a real test-coverage gap in the merged code (see "C2.2
+amendment" below), fixed and confirmed by a fresh real MetaEditor run
+reaching 121/121 (73 original + 48 net new/rewritten checks from the
+amendment). Smoke test script re-confirmed to still compile and
+correctly self-abort (input left at its default `false`).
 
 Implements `Docs/PhaseC_C2_1_BrokerSubmissionContract.md` (frozen
 before code). Opens after C2.1 frozen and the user's explicit,
@@ -50,25 +57,35 @@ test").
   `type_filling = ORDER_FILLING_IOC`/`type_time = ORDER_TIME_GTC` as a
   minimal, flagged, **not part of the frozen field list** implementation
   default). `BrokerSubmission_ClassifyRetcode()` implements the frozen
-  accepted-vs-explicit-rejection split: `TRADE_RETCODE_DONE`/
-  `_DONE_PARTIAL` and every other/unlisted retcode default to
-  accepted/ambiguous (stays `SUBMITTED`); a documented, non-exhaustive
-  list of retcodes realistic for a market open-only order (requote,
-  invalid stops, no money, reject, market closed, trade disabled, and
-  others) map to explicit rejection.
+  accepted-vs-explicit-rejection split: only `TRADE_RETCODE_DONE`/
+  `_DONE_PARTIAL` earn `REASON_SUBMITTED_OK` (a genuine positive
+  acknowledgment); every other unlisted/unrecognized retcode (including
+  `TRADE_RETCODE_CONNECTION` and `TRADE_RETCODE_PLACED`) still
+  classifies as accepted/ambiguous (stays `SUBMITTED`, unchanged), but
+  is tagged `REASON_EXECUTION_SUBMISSION_AMBIGUOUS` instead - see the
+  "C2.2 amendment" section below; a documented, non-exhaustive list of
+  retcodes realistic for a market open-only order (requote, invalid
+  stops, no money, reject, market closed, trade disabled, and others)
+  map to explicit rejection.
 - **`Execution/MLQuantAI_BrokerSubmissionAdapter.mqh`** (new):
-  `BrokerSubmission_Submit()` — **the only place in this codebase that
-  calls the real `OrderSend()`.** Implements the frozen lifecycle
-  exactly: pre-submit gate re-validation → `EXECUTION_SUBMISSION_ATTEMPTED`
-  audit event (sets `candidate.correlation_id`, first-ever write, no
-  state transition) → `OrderSend()` → branch on its own return value
-  (`false`: `ORDER_SUBMISSION_ERROR` audit event, candidate stays
+  `BrokerSubmission_ProcessSendResult()` — pure orchestration, takes
+  `orderSendReturned`/`terminalLastError`/`tradeResult` as
+  already-computed input, never calls `OrderSend` itself. Implements
+  the frozen lifecycle exactly: `EXECUTION_SUBMISSION_ATTEMPTED` audit
+  event (sets `candidate.correlation_id`, first-ever write, no state
+  transition) → branch on `orderSendReturned` (`false`:
+  `ORDER_SUBMISSION_ERROR` audit event, candidate stays
   `CANDIDATE_CREATED`, untouched; `true`: `CREATED → SUBMITTED`
-  transition always first, then classify `result.retcode` into either
-  `ORDER_SUBMITTED` (stays `SUBMITTED`) or `ORDER_REJECTED` +
+  transition always first, then classify `tradeResult.retcode` into
+  either `ORDER_SUBMITTED` (stays `SUBMITTED`) or `ORDER_REJECTED` +
   `SUBMITTED → REJECTED_BY_BROKER`). Same non-rollback discipline as
   every prior emitter: once an event write succeeds it is never rolled
   back even if a later write in the same call fails.
+  `BrokerSubmission_Submit()` — **the only place in this codebase that
+  calls the real `OrderSend()`.** Now a thin wrapper: pre-submit gate
+  re-validation → build → real `OrderSend()` (capturing
+  `GetLastError()` immediately, per MQL5's own requirement) → delegates
+  to `ProcessSendResult`.
 
 ## Unit test / real-submit smoke test split (per the user's explicit instruction)
 
@@ -121,28 +138,59 @@ helpers (`MqlTradeRequest_ZeroInit` in
 `MLQuantAI_BrokerSubmissionAdapter.mqh`) that explicitly set every
 numeric field to `0` and every string field to `""`.
 
+## C2.2 amendment (post-PASSED, found via real user review, not self-review)
+
+The first 73/73 PASSED run only proved gate/build/classification logic
+in isolation and confirmed the opt-in smoke test correctly self-aborts
+- it never proved anything about the orchestration/event-sequencing
+logic around a real `OrderSend()` call, because that logic lived
+entirely inside the one function the automated suite may never call.
+A real review surfaced two genuine issues in the merged, PASSED code:
+
+1. **Classification bug**: `BrokerSubmission_ClassifyRetcode` defaulted
+   *every* unlisted/unrecognized retcode - including
+   `TRADE_RETCODE_CONNECTION` - to `REASON_SUBMITTED_OK`. `OrderSend()`
+   can return `true` while `result.retcode == TRADE_RETCODE_CONNECTION`
+   (the terminal itself detected no connection to the trade server) -
+   that is not a positive acknowledgment, and `REASON_SUBMITTED_OK` was
+   a false claim. Fixed by adding `REASON_EXECUTION_SUBMISSION_AMBIGUOUS`
+   (`Core/MLQuantAI_ReasonCodes.mqh`) and reserving `REASON_SUBMITTED_OK`
+   for `TRADE_RETCODE_DONE`/`_DONE_PARTIAL` only. The candidate's state
+   transition is unchanged - still legally `CANDIDATE_SUBMITTED` either
+   way, per the sealed state machine.
+2. **Zero test coverage of the OrderSend-adjacent orchestration**: split
+   `BrokerSubmission_Submit` into pure `BrokerSubmission_ProcessSendResult`
+   (takes `orderSendReturned`/`tradeResult` as input, fully testable) +
+   a thin real-`OrderSend`-only wrapper. Added six new branch-coverage
+   tests: `true+DONE`, `true+DONE_PARTIAL`, `true+`explicit-rejection
+   retcode, `false+`error, `true+CONNECTION`, `true+`unknown retcode -
+   none call real `OrderSend`.
+
+One point in the original review was evaluated and NOT implemented as
+proposed: "no `CANDIDATE_SUBMITTED` until a positive acknowledgment"
+is illegal under the sealed `StateMachine_CanTransition`
+(`REJECTED_BY_BROKER` is reachable only from `SUBMITTED`, never
+`CREATED`) and would have reopened the exact conflict C2.1 already
+resolved. `SUBMITTED` is a non-terminal "awaiting confirmation" state,
+not a success claim - the fix above corrects the *reason code*
+attached to that state, not the state transition itself.
+
 ## Definition of Done
 
 - [x] Every file above compiles with zero errors/warnings (real
-      MetaEditor, confirmed).
-- [x] Real MetaEditor compile of `Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5`
-      — 0 errors, 0 warnings.
-- [x] Real MetaEditor run — 73/73 ALL PASS (reproduced twice, same
-      session, 2026-08-21).
+      MetaEditor, confirmed for the pre-amendment version).
+- [x] Real MetaEditor run of the pre-amendment suite — 73/73 ALL PASS
+      (reproduced twice, same session, 2026-08-21).
 - [x] `Tests/MLQuantAI_SmokeTest_C2_2_RealOrderSend.mq5` compiles with
       zero errors/warnings (real MetaEditor, confirmed - script ran and
       correctly self-aborted since the confirmation input was left at
       its default `false`). Actually exercising a real `OrderSend` call
       through it remains optional, manual, and entirely the user's
       call - not required for C2.2 to be marked PASSED.
+- [x] Real MetaEditor re-run of the amended suite — 121/121 ALL PASS
+      (2026-08-21).
 - [ ] Full B9 + C1 regression re-run — deferred to the "C2 FULLY
       SEALED" checkpoint after C2.3, matching the precedent C1 itself
       set (the B9 regression re-run happened once, at the "C1 FULLY
       SEALED" declaration after C1.3 - not separately at each of
       C1.2/C1.3's own PASSED declarations).
-
-## Fixed after PASSED
-
-None - the one real failure (`ZeroMemory` on `MqlTradeRequest`/
-`MqlTradeResult`, see "Fixed" section above) was caught and fixed
-*before* the run that reached 73/73.

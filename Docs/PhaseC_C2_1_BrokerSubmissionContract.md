@@ -124,17 +124,47 @@ ambiguous and explicit-rejection cases respectively.
 separately-authorized `OnTradeTransaction` reconciliation commit -
 C2.2 never emits it.
 
-## Reason codes — no new values needed
+## Reason codes
 
 Phase A's own dormant "execution" `ENUM_REASON_CODE` block
-(`Core/MLQuantAI_ReasonCodes.mqh`) already anticipated exactly this
+(`Core/MLQuantAI_ReasonCodes.mqh`) already anticipated most of this
 moment and is reused verbatim: `REASON_SUBMITTED_OK` (accepted),
 `REASON_BROKER_REJECT` (generic explicit rejection),
 `REASON_INVALID_STOPS`/`REASON_INSUFFICIENT_MARGIN`/`REASON_REQUOTE`
 (specific rejection retcodes, where `result.retcode` maps cleanly),
-`REASON_ERROR_INTERNAL` (local/API failure). No collision, no
-duplication - this vocabulary was frozen and dormant since Phase A
-waiting for exactly this use.
+`REASON_ERROR_INTERNAL` (local/API failure).
+
+**C2.2 amendment (post-PASSED, real user review):** one new value WAS
+needed after all - `REASON_EXECUTION_SUBMISSION_AMBIGUOUS`. The
+original "zero new values" claim above missed a real gap:
+`OrderSend()` can return `true` while `result.retcode` is
+`TRADE_RETCODE_CONNECTION` (the terminal itself detected no connection
+to the trade server - not a positive acknowledgment from anyone) or
+any other retcode not on the explicit-rejection list. Classifying that
+as `REASON_SUBMITTED_OK` would be a false claim. The candidate's state
+transition is unaffected by this fix - it still legally transitions to
+and stays at `CANDIDATE_SUBMITTED` either way, per the sealed state
+machine and this doc's own lifecycle diagram above; only the reason
+code attached to that resting state changes, from a false "OK" claim
+to an honest "ambiguous, no real acknowledgment" one.
+
+## C2.2 amendment — testable orchestration split
+
+The event-sequencing/state-transition logic around the `OrderSend()`
+call (everything from `EXECUTION_SUBMISSION_ATTEMPTED` through the
+final classification and lifecycle transition) originally lived
+entirely inside the one function nobody may call from the automated
+suite, leaving it with zero automated coverage - a real gap, found via
+real user review after C2.2's first PASSED run. Split into
+`BrokerSubmission_ProcessSendResult()` (pure - takes
+`orderSendReturned`/`terminalLastError`/`tradeResult` as
+already-computed input parameters, never calls `OrderSend` itself, so
+every branch is exercisable by the automated suite with fabricated
+inputs and zero risk to a real account) and `BrokerSubmission_Submit()`
+(now a thin wrapper: calls the real `OrderSend()`, captures
+`GetLastError()` immediately per MQL5's own requirement, then
+delegates everything else to `ProcessSendResult`). `Submit()` remains
+the only function in this codebase that calls the real `OrderSend()`.
 
 ## `ExecutionSubmissionResult` (frozen shape, new struct)
 

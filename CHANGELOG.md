@@ -4,6 +4,33 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase C2.2 amendment: ambiguous-retcode fix + testable orchestration (PASSED 121/121, real MetaEditor run, 2026-08-21)
+
+Found via real user review after C2.2's first 73/73 PASSED run (not
+self-review): (1) `BrokerSubmission_ClassifyRetcode` classified
+`TRADE_RETCODE_CONNECTION` and every other unlisted retcode as
+`REASON_SUBMITTED_OK` - a false positive-acknowledgment claim for a
+retcode where `OrderSend()` returned `true` but the terminal itself
+detected no connection to the trade server. Fixed by adding
+`REASON_EXECUTION_SUBMISSION_AMBIGUOUS` (`Core/MLQuantAI_ReasonCodes.mqh`)
+and reserving `REASON_SUBMITTED_OK` for `TRADE_RETCODE_DONE`/
+`_DONE_PARTIAL` only - the candidate's state transition is unchanged
+(still legally `CANDIDATE_SUBMITTED` either way). (2) The event-
+sequencing/state-transition orchestration around `OrderSend()` had zero
+automated test coverage, since it lived entirely inside the one
+function the automated suite may never call. Split into pure
+`BrokerSubmission_ProcessSendResult` (takes `orderSendReturned`/
+`tradeResult` as input, never calls `OrderSend`, fully testable) plus a
+thin `BrokerSubmission_Submit` wrapper that now only makes the real
+call. Six new branch-coverage tests added (`true+DONE`,
+`true+DONE_PARTIAL`, `true+`explicit-rejection, `false+`error,
+`true+CONNECTION`, `true+`unknown retcode) - none call real `OrderSend`.
+One proposed change ("no `CANDIDATE_SUBMITTED` until positive
+acknowledgment") was evaluated and rejected as illegal under the
+sealed state machine - see `Docs/PhaseC_C2_2_BrokerSubmissionAdapterStatus.md`'s
+"C2.2 amendment" section for the full reasoning. Confirmed by a real
+MetaEditor run: 121/121 ALL PASS.
+
 ## [Unreleased] - Phase C2.2: Broker Submission Adapter (PASSED 73/73, real MetaEditor run, 2026-08-21)
 
 Implements `Docs/PhaseC_C2_1_BrokerSubmissionContract.md`. Adds
