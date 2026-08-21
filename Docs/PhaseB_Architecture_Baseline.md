@@ -118,7 +118,7 @@ C1    ExecutionRequest + Safety Gate + Dry-Run  SEALED (215/215, C1.1 contract-o
       C1.3 - audit projections + integrity checks + reconciliation    PASSED (87/87)
 C2.1  Broker Submission Contract                FROZEN (contract only, no code yet)
 C2.2  Real OrderSend submission + lifecycle wiring  PASSED (145/145, real MetaEditor run, 2026-08-21, amended twice)
-C2.3  Audit event/reconciliation/regression/seal  (after C2.2, opens next)
+C2.3  Audit event/reconciliation/durable idempotency registry  PASSED (104/104, real MetaEditor run, 2026-08-22)
 ```
 
 B8.5 is SEALED: 254/254 across all three commits, all real MetaEditor

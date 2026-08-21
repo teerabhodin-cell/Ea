@@ -404,8 +404,11 @@ No broker-mutating test run of any kind until C2.2 is itself explicitly
 
 ## C2.3 addendum — Audit Projections + Reconciliation + Regression/Seal
 
-Opens after C2.2 PASSED (real MetaEditor run, including the second
-amendment), merged to `mlquantai`. Strictly additive and read-only over
+**Implemented and PASSED (104/104, real MetaEditor run, 2026-08-22)** —
+see `Docs/PhaseC_C2_3_BrokerSubmissionAuditProjectionStatus.md` for the
+full commit report. Opened after C2.2 PASSED (real MetaEditor run,
+including the second amendment), merged to `mlquantai`. Strictly
+additive and read-only over
 the durable `EXECUTION_SUBMISSION_ATTEMPTED`/`ORDER_SUBMISSION_ERROR`/
 `ORDER_SUBMITTED`/`ORDER_REJECTED`/`EXECUTION_SUBMISSION_UNKNOWN`
 events C2.2 already writes - no broker query, no broker mutation, no

@@ -4,6 +4,36 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase C2.3: Broker Submission Audit Projection + durable idempotency registry (PASSED 104/104, real MetaEditor run, 2026-08-22)
+
+C2.3's first deliverable, per the sequencing agreed with the user in
+C2.2's second amendment: `Execution/MLQuantAI_BrokerSubmissionAuditProjection.mqh`
+adds `SubmissionAttemptProjection`/`SubmissionOutcomeProjection` (a
+single, genuinely interleaved rebuild pass over C2.2's own
+`EXECUTION_SUBMISSION_ATTEMPTED`/outcome-quartet events, staged on top
+of C1.3's sealed, unmodified `ExecutionAuditProjection_RebuildFromFile()`
+as a black-box gate — no sealed file edited anywhere), the frozen
+`SubmissionAttemptRegistry_HasAttempt`/`_IsUnresolved` durable
+idempotency interface (proves restart-safety purely from EventStore
+replay — an attempt with no recorded outcome reads `HasAttempt=true`/
+`IsUnresolved=true` from a cold rebuild alone, zero in-memory state
+required), and `BrokerSubmissionReconciliation_Build()` (one row per
+`execution_request_id` with ≥1 attempt, status computed from the latest
+matching outcome: `NO_OUTCOME`/`ERROR`/`REJECTED`/`SUBMITTED`/`UNKNOWN`).
+Strictly read-only: no `OrderSend`/broker query/broker mutation/
+candidate-lifecycle transition/event append anywhere in this file.
+Test suite drives the real B5-C1/C2.2 pipeline for every fixture and
+covers 0..N never-deduped attempts, idempotent duplicate-event replay,
+a `log_event_id` collision with a different payload failing the whole
+rebuild closed, and every orphan/hash-mismatch/ordering-violation/
+outcome-invariant rejection the frozen contract specifies. One real
+compile error found on the user's first MetaEditor run (a test function
+name over MQL5's 63-character identifier limit) — fixed, then confirmed
+104/104 ALL PASS. See `Docs/PhaseC_C2_3_BrokerSubmissionAuditProjectionStatus.md`.
+The C2.2 integration follow-up patch (wiring `BrokerSubmissionGate` to
+this registry) is not yet started — real-submit capability, and the
+opt-in smoke test, stay disabled/unauthorized until it lands.
+
 ## [Unreleased] - Phase C2.2 second amendment: attempt-before-send fix + SUBMISSION_STATUS_UNKNOWN (PASSED 145/145, real MetaEditor run, 2026-08-21)
 
 Found via a second real user review of the merged, PASSED (121/121)
