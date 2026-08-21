@@ -289,7 +289,15 @@ enum ENUM_EVENT_TYPE
    // EVENT_TYPE_ORDER_SUBMITTED (which would falsely imply a positive
    // acknowledgment) and never transitions the candidate at all. See
    // Docs/PhaseC_C2_1_BrokerSubmissionContract.md's second amendment.
-   EVENT_TYPE_EXECUTION_SUBMISSION_UNKNOWN
+   EVENT_TYPE_EXECUTION_SUBMISSION_UNKNOWN,
+
+   // C2 manual-approval contract (per
+   // Docs/PhaseC_C2_ManualApprovalContract.md): a durable, human-granted
+   // authorization fact, written only by the standalone
+   // MLQuantAI_ManualScript_GrantApproval.mq5 script - never by the EA
+   // itself, never implying any candidate-lifecycle transition or
+   // broker action on its own.
+   EVENT_TYPE_EXECUTION_MANUAL_APPROVAL_GRANTED
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -329,6 +337,7 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_EXECUTION_SUBMISSION_ATTEMPTED:     return "EXECUTION_SUBMISSION_ATTEMPTED";
       case EVENT_TYPE_ORDER_SUBMISSION_ERROR:             return "ORDER_SUBMISSION_ERROR";
       case EVENT_TYPE_EXECUTION_SUBMISSION_UNKNOWN:       return "EXECUTION_SUBMISSION_UNKNOWN";
+      case EVENT_TYPE_EXECUTION_MANUAL_APPROVAL_GRANTED:  return "EXECUTION_MANUAL_APPROVAL_GRANTED";
    }
    return "UNKNOWN";
 }
@@ -368,6 +377,7 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "EXECUTION_SUBMISSION_ATTEMPTED")    return EVENT_TYPE_EXECUTION_SUBMISSION_ATTEMPTED;
    if(s == "ORDER_SUBMISSION_ERROR")            return EVENT_TYPE_ORDER_SUBMISSION_ERROR;
    if(s == "EXECUTION_SUBMISSION_UNKNOWN")      return EVENT_TYPE_EXECUTION_SUBMISSION_UNKNOWN;
+   if(s == "EXECUTION_MANUAL_APPROVAL_GRANTED") return EVENT_TYPE_EXECUTION_MANUAL_APPROVAL_GRANTED;
    return EVENT_TYPE_UNKNOWN;
 }
 

@@ -4,6 +4,46 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C2 manual-approval contract + dry code (awaiting real MetaEditor run)
+
+Frozen design doc, `Docs/PhaseC_C2_ManualApprovalContract.md`, resolving
+the real architectural tension found before any code was written:
+`SafetyGate_Evaluate`'s sealed `manual_approval_required` check stays
+unchanged (an unconditional C1 rejection when `true` - never becomes
+the live approval mechanism); real approval is instead a new,
+C2-owned, always-mandatory gate, independent of that field's value.
+Per the user's explicit consumption-boundary instruction, the new
+`ManualApprovalRegistry` will expose a pure `HasValidApproval()` read
+only and never itself track single-use - `SubmissionAttemptRegistry_
+HasAttempt()` (already frozen, C2.3) remains the sole consumption
+boundary.
+
+Only the write side is implemented as code this round ("dry code" -
+no broker mutation, no decision-making): new
+`Execution/MLQuantAI_ManualApprovalContract.mqh` (`ManualApprovalGrant`
+struct, binding all FIVE identity fields - execution_request_id/hash/
+policy_version/candidate_id/correlation_id, not just id+hash, per the
+user's "collision-check" instruction), new
+`Execution/MLQuantAI_ManualApprovalEmission.mqh`
+(`ManualApproval_NewNonce()`, mirroring `Ids_NewRuntimeSessionId()`'s
+own counter+microsecond+random technique with an `APPR_` prefix and
+its own dedicated counter; `ManualApproval_Grant()`, a pure durable
+write with only structural validation - no lineage/projection checks,
+which stay the deferred read side's job), and the standalone, human-run
+`Tests/MLQuantAI_ManualScript_GrantApproval.mq5` (never calls OrderSend/
+CTrade/any broker API - its only side effect is one durable event
+write). New append-only `EVENT_TYPE_EXECUTION_MANUAL_APPROVAL_GRANTED`
+and `MLQUANTAI_MANUAL_APPROVAL_SCHEMA_C2_V1`. Write-side-only test
+suite, `Tests/MLQuantAI_Test_C2_ManualApprovalEmission.mq5` (nonce
+uniqueness, JSON round-trip, structural-rejection/no-partial-write
+cases, never-deduped-at-write-time).
+
+Explicitly deferred, pending the user's confirmation of the contract
+doc: the projection (read side), `ManualApprovalRegistry_
+HasValidApproval()`, readiness wiring, and the C2 gate integration into
+`BrokerSubmissionEnvironmentLock_Evaluate` (its third amendment) plus
+`MLQuantAI.mq5`'s `OnInit` wiring. No sealed file touched.
+
 ## [Unreleased] - C2 environment-lock checklist (PASSED 26/26, real MetaEditor run, 2026-08-22)
 
 The final, read-only, consolidated re-verification pass before a real
