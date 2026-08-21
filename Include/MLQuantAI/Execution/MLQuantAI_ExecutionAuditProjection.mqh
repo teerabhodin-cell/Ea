@@ -318,7 +318,31 @@ bool ExecutionRequestProjection_ApplyLine(string line, string &outReason)
    candidate.lot_size = lotSize;
    candidate.risk_amount = riskAmount;
 
-   string recomputedHash = ExecutionRequest_ComputeHash(candidate);
+   // ExecutionRequest_ComputeHash takes the real ExecutionRequest type,
+   // not this file's own ExecutionRequestProjectionRecord (a different
+   // struct, despite sharing field names) - reconstruct a real one from
+   // the same persisted fields purely to recompute the hash against.
+   ExecutionRequest reconstructed;
+   ExecutionRequest_Init(reconstructed);
+   reconstructed.candidate_id = candidateId;
+   reconstructed.candidate_hash = candidateHash;
+   reconstructed.risk_plan_id = riskPlanId;
+   reconstructed.plan_hash = planHash;
+   reconstructed.ai_decision_id = aiDecisionId;
+   reconstructed.ai_decision_hash = aiDecisionHash;
+   reconstructed.eligibility_decision_id = eligibilityDecisionId;
+   reconstructed.eligibility_decision_hash = eligibilityDecisionHash;
+   reconstructed.execution_policy_version = executionPolicyVersion;
+   reconstructed.correlation_id = correlationId;
+   reconstructed.submit_attempt = submitAttempt;
+   reconstructed.side = side;
+   reconstructed.planned_entry = plannedEntry;
+   reconstructed.planned_sl = plannedSl;
+   reconstructed.planned_tp = plannedTp;
+   reconstructed.lot_size = lotSize;
+   reconstructed.risk_amount = riskAmount;
+
+   string recomputedHash = ExecutionRequest_ComputeHash(reconstructed);
    if(recomputedHash != requestHash)
    {
       outReason = "execution_request_hash does not match a fresh recompute from the persisted payload - tampered or corrupted";
