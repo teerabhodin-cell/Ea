@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - C2 manual-approval contract + dry code (awaiting real MetaEditor run)
+## [Unreleased] - C2 manual-approval contract + dry code (PASSED 38/38, real MetaEditor run, 2026-08-22)
 
 Frozen design doc, `Docs/PhaseC_C2_ManualApprovalContract.md`, resolving
 the real architectural tension found before any code was written:
@@ -38,11 +38,23 @@ suite, `Tests/MLQuantAI_Test_C2_ManualApprovalEmission.mq5` (nonce
 uniqueness, JSON round-trip, structural-rejection/no-partial-write
 cases, never-deduped-at-write-time).
 
-Explicitly deferred, pending the user's confirmation of the contract
-doc: the projection (read side), `ManualApprovalRegistry_
-HasValidApproval()`, readiness wiring, and the C2 gate integration into
+Explicitly deferred, pending its own separate contract review: the
+projection (read side), `ManualApprovalRegistry_HasValidApproval()`,
+readiness wiring, and the C2 gate integration into
 `BrokerSubmissionEnvironmentLock_Evaluate` (its third amendment) plus
 `MLQuantAI.mq5`'s `OnInit` wiring. No sealed file touched.
+
+Confirmed by a real MetaEditor run: both new files compile with 0
+errors/0 warnings; `Tests/MLQuantAI_Test_C2_ManualApprovalEmission.mq5`
+is 38/38 ALL PASS (nonce uniqueness, JSON round-trip, structural
+rejection/no-partial-write for all nine invalid-field/invalid-expiry
+cases, never-deduped-at-write-time, no-broker-mutation proof); the
+standalone `Tests/MLQuantAI_ManualScript_GrantApproval.mq5` correctly
+aborts with no write attempted when run with its required inputs left
+blank. Zero regression: `Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5`
+147/147, `Tests/MLQuantAI_Test_C2_3_BrokerSubmissionAuditProjection.mq5`
+104/104, `Tests/MLQuantAI_Test_C2_BrokerSubmissionGate_DurableIdempotency.mq5`
+41/41 - all still ALL PASS, unchanged from their own sealed counts.
 
 ## [Unreleased] - C2 environment-lock checklist (PASSED 26/26, real MetaEditor run, 2026-08-22)
 
