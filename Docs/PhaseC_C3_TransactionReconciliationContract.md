@@ -209,12 +209,12 @@ Verified directly from the real MQL5 reference
   fabricate one under a test harness) - see section 9 for what CAN be
   tested without one.
 
-## 6. Ownership of `ORDER_FILLED`/`ORDER_REJECTED`/`CANDIDATE_EXECUTED` - a real collision found and left unresolved here
+## 6. Ownership of `ORDER_FILLED`/`ORDER_REJECTED`/`CANDIDATE_EXECUTED` - collision found, now resolved and frozen by the user
 
 Per section 0, `EVENT_TYPE_ORDER_FILLED` and `EVENT_TYPE_CANDIDATE_EXECUTED`
 are dormant and reserved for exactly this purpose - no collision there.
 
-**A genuine collision, found by this collision-check**:
+**The collision, found by this collision-check**:
 `EVENT_TYPE_ORDER_REJECTED` is **already claimed** by C2.2 for a
 DIFFERENT, narrower meaning: an explicit-rejection retcode returned
 **synchronously, from `OrderSend()` itself** (see
@@ -235,14 +235,33 @@ exclusive with, and always preceding, any `ORDER_SUBMITTED` for the
 same request - see `SubmissionOutcomeProjection_ApplyLineWithLineage`'s
 outcome-invariant checks, C2.3).
 
-**Left explicitly unresolved here, for C3.2's own separate approval to
-decide**: whether the late case gets a brand-new event type (e.g., an
-`EVENT_TYPE_ORDER_LATE_CANCELLED`-shaped name, not frozen) or is folded
-into `EVENT_TYPE_ORDER_FILLED`'s sibling space some other way. This
-doc's job is to surface the collision before implementation, not to
-resolve it - resolving it is exactly the kind of design decision this
-project's "freeze contract before code" discipline reserves for its
-own dedicated round.
+**Resolution, frozen by the user's explicit instruction - a separate
+namespace, not a shared one**:
+
+| Event type | Scope | Fired by |
+|---|---|---|
+| `EVENT_TYPE_ORDER_REJECTED` | Synchronous submit-response rejection ONLY - unchanged, still exactly C2.2's own meaning | `BrokerSubmission_ProcessSendResult`/`BrokerSubmission_Submit` (C2.2), at `OrderSend()` return time |
+| `EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED` (new, frozen name - not yet added to `ENUM_EVENT_TYPE`, C3.2's job) | Asynchronous, `OnTradeTransaction`-derived rejection/cancellation/expiry ONLY - can only ever fire strictly after a matching `EVENT_TYPE_ORDER_SUBMITTED` for the same `execution_request_id` | C3.2's future handler, never C2.2 |
+
+The two names are permanently mutually exclusive by construction: an
+`ORDER_REJECTED` line can never be followed by a
+`TRANSACTION_REJECTION_CONFIRMED` line for the same request (rejected
+orders never reach the trade server, so no transaction stream exists
+for them to begin with), and a `TRANSACTION_REJECTION_CONFIRMED` line
+can never exist without an earlier `ORDER_SUBMITTED` for the same
+request. C3.2's future projection must treat a `TRANSACTION_REJECTION_
+CONFIRMED` line with no preceding `ORDER_SUBMITTED` the same way C2.3
+already treats an outcome with no preceding attempt - an
+ordering/orphan violation, rejected closed (section 7).
+
+Per the user's explicit instruction, a `TRANSACTION_REJECTION_CONFIRMED`
+fact must NEVER drive `CANDIDATE_SUBMITTED -> CANDIDATE_REJECTED_BY_BROKER`
+until it is matched to its owning `ExecutionRequest` deterministically
+via section 1's full matching hierarchy - an unmatched or ambiguous
+transaction-derived rejection fact is recorded only as a diagnostic/
+reconciliation finding (section 8), never a lifecycle mutation. This
+sharpens, and is now the frozen version of, section 7's general rule
+as applied specifically to the rejection case.
 
 `EVENT_TYPE_CANDIDATE_EXECUTED`'s ownership is cleaner: it is the
 candidate-lifecycle counterpart (via `EventStore_LogTransition`, not
@@ -250,8 +269,11 @@ candidate-lifecycle counterpart (via `EventStore_LogTransition`, not
 - `CANDIDATE_SUBMITTED -> CANDIDATE_EXECUTED`. A late
 rejection/cancellation is the candidate-lifecycle counterpart
 `CANDIDATE_SUBMITTED -> CANDIDATE_REJECTED_BY_BROKER` (also already
-declared, dormant, Phase A) - symmetrical to the fill case, and equally
-deferred to C3.2.
+declared, dormant, Phase A) - symmetrical to the fill case, driven only
+by a deterministically-matched `TRANSACTION_REJECTION_CONFIRMED` fact,
+per the paragraph above. Adding `EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED`
+to `ENUM_EVENT_TYPE` itself is still C3.2's job, not this document's -
+this section freezes the NAME and its scope, not the code.
 
 ## 7. No transition on unmatched/ambiguous facts
 

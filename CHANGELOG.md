@@ -36,15 +36,23 @@ unmatched/ambiguous fact" rule; and the required testing approach
 matching function - no real callback can be synthesized under a test
 harness).
 
-**A genuine collision was found and left explicitly unresolved, for a
-future, separately-approved round to decide**: `EVENT_TYPE_ORDER_REJECTED`
-is already claimed by C2.2 for a synchronous, `OrderSend()`-return-time
-rejection - a LATE rejection/cancellation observed only via
-`OnTradeTransaction` (which can only happen strictly after C2.2's own
-`ORDER_SUBMITTED`) is a different fact and cannot reuse that name
-without breaking C2.3's own outcome-invariant checks. `EVENT_TYPE_ORDER_FILLED`
-and `EVENT_TYPE_CANDIDATE_EXECUTED` (Phase A, dormant) remain cleanly
-reserved for the real fill-confirmation case - no collision there.
+**A genuine collision was found, and resolved by the user's explicit
+follow-up instruction**: `EVENT_TYPE_ORDER_REJECTED` is already claimed
+by C2.2 for a synchronous, `OrderSend()`-return-time rejection - a LATE
+rejection/cancellation observed only via `OnTradeTransaction` (which
+can only happen strictly after C2.2's own `ORDER_SUBMITTED`) is a
+different fact and cannot reuse that name without breaking C2.3's own
+outcome-invariant checks. Resolution, now frozen: `EVENT_TYPE_ORDER_REJECTED`
+stays scoped to the synchronous case only (unchanged); a new,
+separately-namespaced `EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED`
+(name frozen, not yet added to `ENUM_EVENT_TYPE` - still C3.2's job)
+covers the asynchronous, transaction-derived case, and can never itself
+drive a candidate-lifecycle transition until deterministically matched
+to its owning `ExecutionRequest` via the matching hierarchy - an
+unmatched/ambiguous rejection fact stays a diagnostic/reconciliation
+finding only. `EVENT_TYPE_ORDER_FILLED` and `EVENT_TYPE_CANDIDATE_EXECUTED`
+(Phase A, dormant) remain cleanly reserved for the real fill-confirmation
+case - no collision there.
 
 Implementation (the real handler + `History*` calls) is explicitly
 separate approval, not authorized by this document. No sealed file
