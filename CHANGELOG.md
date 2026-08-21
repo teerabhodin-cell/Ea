@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase C2.2 second amendment: attempt-before-send fix + SUBMISSION_STATUS_UNKNOWN (awaiting real re-run)
+## [Unreleased] - Phase C2.2 second amendment: attempt-before-send fix + SUBMISSION_STATUS_UNKNOWN (PASSED 145/145, real MetaEditor run, 2026-08-21)
 
 Found via a second real user review of the merged, PASSED (121/121)
 first amendment: (1) a real regression the first amendment itself
@@ -28,11 +28,20 @@ deliberately deferred: C2.3 will build the canonical
 `SubmissionAttemptRegistry` query interface first, and a small,
 separately-scoped C2.2 integration patch will wire the gate to it
 afterward - real-submit capability isn't considered safe until then.
-See `Docs/PhaseC_C2_1_BrokerSubmissionContract.md`'s "C2.2 second
+`OrderSend()==false`'s `ERROR` classification was challenged a third
+time and re-verified directly against the real MQL5 `OrderSend()`
+reference page (fetched, not recalled from memory): confirmed `false`
+means a failed basic structural check - the request never dispatched
+at all, a bounded local condition - so `ERROR` stands unchanged. See
+`Docs/PhaseC_C2_1_BrokerSubmissionContract.md`'s "C2.2 second
 amendment" and "Durable idempotency" sections, and
 `Docs/PhaseC_C2_2_BrokerSubmissionAdapterStatus.md`'s "C2.2 second
-amendment" section, for full reasoning. Awaiting a real MetaEditor
-re-run before re-declaring PASSED.
+amendment" section, for full reasoning. Confirmed by a real MetaEditor
+run: 145/145 ALL PASS. Real-submit smoke test stays disabled regardless
+- per the user's own laid-out operational gate (durable idempotency
+from C2.3 first, then a full pre-send environment/approval checklist,
+then separate explicit authorization every time before any real demo
+`OrderSend` is ever exercised).
 
 ## [Unreleased] - Phase C2.2 amendment: ambiguous-retcode fix + testable orchestration (PASSED 121/121, real MetaEditor run, 2026-08-21)
 

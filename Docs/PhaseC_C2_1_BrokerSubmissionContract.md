@@ -145,11 +145,15 @@ The frozen mandatory sequence, replacing the diagram above:
 5. Persist the immediate result, per BrokerSubmission_ClassifyRetcode's
    now-three-way split:
 
-   OrderSend() == false (a provable local/pre-dispatch failure -
-   GetLastError(), captured immediately, is the MQL5-documented
-   mechanism that proves this; the C2.2 implementation always has this
-   proof, so this branch is never downgraded to UNKNOWN for
-   conservatism - the evidence already exists):
+   OrderSend() == false (per MQL5's own OrderSend() reference, false
+   specifically means the request failed its own basic structural
+   check and was never dispatched at all - a bounded, local condition,
+   distinct from the true+retcode surface entirely. GetLastError(),
+   captured immediately, is MQL5's general error-handling mechanism -
+   not something OrderSend()'s own page walks through, but the
+   standard way to capture why any call failed - and the C2.2
+   implementation always has this evidence, so this branch is never
+   downgraded to UNKNOWN for conservatism):
        -> ORDER_SUBMISSION_ERROR (audit SystemEvent, terminal_last_error
           captured)
        -> candidate.state stays CANDIDATE_CREATED - untouched, retry-

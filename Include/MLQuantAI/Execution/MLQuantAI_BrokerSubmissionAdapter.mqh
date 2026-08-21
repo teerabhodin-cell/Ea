@@ -149,10 +149,15 @@ bool BrokerSubmission_ProcessSendResult(TradeCandidate &candidate, const Executi
 
    if(!orderSendReturned)
    {
-      // A provable local/pre-dispatch failure: OrderSend() itself
-      // returned false, and terminalLastError (GetLastError(), captured
-      // immediately after the call) is the MQL5-documented mechanism for
-      // determining why - a real, persisted diagnostic, not a guess.
+      // A provable local/pre-dispatch failure: MQL5's own OrderSend()
+      // reference documents false as "successful basic check of
+      // structures" failing - the request never reached the server, a
+      // genuinely bounded, local condition, distinct from the true+
+      // retcode surface entirely. terminalLastError (GetLastError(),
+      // captured immediately after the call, per MQL5's general
+      // error-handling convention - not something OrderSend()'s own
+      // page walks through, but the standard mechanism for any failed
+      // MQL5 call) is a real, persisted diagnostic, not a guess.
       outResult.submission_status  = SUBMISSION_STATUS_ERROR;
       outResult.terminal_last_error = terminalLastError;
       outResult.reason_code         = REASON_ERROR_INTERNAL;

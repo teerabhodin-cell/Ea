@@ -1,20 +1,26 @@
 # Phase C2.2 — Broker Submission Adapter
 
-**Status: AMENDED a second time, awaiting a real MetaEditor re-run.**
+**Status: PASSED (145/145, real MetaEditor run, 2026-08-21) - amended twice.**
 73/73 PASSED (2026-08-21) covered gate/build/classification only. First
 amendment (121/121, same day) fixed a classification bug and closed a
-test-coverage gap. A second real user review of that amendment found a
-genuine regression it had introduced (`EXECUTION_SUBMISSION_ATTEMPTED`
-moved to *after* `OrderSend()` instead of before) plus a real semantic
-gap (ambiguous retcodes like `TRADE_RETCODE_CONNECTION` were still
-transitioning the candidate to `CANDIDATE_SUBMITTED`) - see "C2.2
-second amendment" below. Not re-declared PASSED until a fresh real
-MetaEditor run confirms it. **Real-submit smoke test stays disabled
-regardless** (input defaults `false`) - not just because of this fix,
-but per the durable-idempotency sequencing agreed with the user:
-real-submit capability isn't considered safe until C2.3's
-`SubmissionAttemptRegistry` interface exists and a follow-up C2.2
-integration patch wires the gate to it.
+test-coverage gap. Second amendment (145/145, same day, confirmed by a
+real MetaEditor run) fixed a genuine regression the first amendment
+itself introduced (`EXECUTION_SUBMISSION_ATTEMPTED` moved to *after*
+`OrderSend()` instead of before) plus a real semantic gap (ambiguous
+retcodes like `TRADE_RETCODE_CONNECTION` were still transitioning the
+candidate to `CANDIDATE_SUBMITTED`) - see "C2.2 second amendment"
+below. `OrderSend()==false`'s `ERROR` classification was challenged a
+third time and re-verified directly against the real MQL5 `OrderSend()`
+reference page (fetched, not recalled) - confirmed correct, see that
+section's closing note. **Real-submit smoke test stays disabled
+regardless of this PASSED status** (input defaults `false`) - per the
+durable-idempotency sequencing agreed with the user: real-submit
+capability isn't considered safe until C2.3's `SubmissionAttemptRegistry`
+interface exists and a follow-up C2.2 integration patch wires the gate
+to it, on top of the full operational gate (named allowlisted demo
+account/server, one-time manual approval, hard-capped minimal volume,
+post-send reconciliation-first, separate explicit authorization every
+time) the user has since laid out for that eventual smoke run.
 
 Implements `Docs/PhaseC_C2_1_BrokerSubmissionContract.md` (frozen
 before code). Opens after C2.1 frozen and the user's explicit,
@@ -215,12 +221,22 @@ Two more genuine issues found in the merged, PASSED (121/121) code:
    own existing "stays CREATED" resting place.
 
 `OrderSend()==false` stays classified as `ERROR` (not downgraded to
-`UNKNOWN`, per the reviewer's own conditional): `GetLastError()`,
-captured immediately after the call and persisted in
-`terminal_last_error`, is the MQL5-documented mechanism for proving a
-local/pre-dispatch failure - the implementation always has this
-evidence, so the conservative fallback the reviewer asked for isn't
-needed here.
+`UNKNOWN`, per the reviewer's own conditional) - verified against the
+real MQL5 `OrderSend()` reference page (fetched directly, not recalled
+from memory): it documents `false` as the result of a failed *basic
+structural check*, meaning the request was never dispatched at all -
+a bounded, local condition, categorically different from the
+`true`+`retcode` surface (which the same page documents as requiring
+inspection of `MqlTradeResult.retcode`, never `GetLastError()`, for
+the actual outcome). `GetLastError()`, captured immediately after the
+call and persisted in `terminal_last_error`, is MQL5's *general*
+error-handling mechanism (not something `OrderSend()`'s own page
+walks through, but the standard practice for any failed call) - real,
+persisted evidence, not a guess. Given this, the conservative
+downgrade-to-`UNKNOWN` the reviewer asked for isn't warranted here;
+`ERROR` and `UNKNOWN` already produce identical candidate-lifecycle
+behavior regardless (no transition, retry-eligible), so the
+disagreement was ultimately about label accuracy, not candidate safety.
 
 Durable, restart-safe idempotency (the reviewer's other major point)
 was evaluated and agreed as a real gap, but deliberately NOT built into
@@ -246,10 +262,8 @@ this round's test suite proves.
       call - not required for C2.2 to be marked PASSED.
 - [x] Real MetaEditor re-run of the first amendment's suite — 121/121
       ALL PASS (2026-08-21).
-- [ ] Real MetaEditor re-run of the second amendment's suite (adds
-      `Test_RecordAttempt_*` (2), rewrites the `Test_Classify_*`/
-      `Test_ProcessSendResult_*` groups for the 3-way status and the
-      `UNKNOWN`-no-transition branches) — not yet run for real.
+- [x] Real MetaEditor re-run of the second amendment's suite — 145/145
+      ALL PASS (2026-08-21).
 - [ ] Full B9 + C1 regression re-run — deferred to the "C2 FULLY
       SEALED" checkpoint after C2.3, matching the precedent C1 itself
       set (the B9 regression re-run happened once, at the "C1 FULLY
