@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - C2 environment-lock checklist (NOT YET real-MetaEditor-confirmed)
+## [Unreleased] - C2 environment-lock checklist (PASSED 26/26, real MetaEditor run, 2026-08-22)
 
 The final, read-only, consolidated re-verification pass before a real
 `OrderSend()` would ever be authorized, per the user's explicit 18-item
@@ -30,7 +30,9 @@ describes a real, not-yet-designed approval mechanism, not a runtime
 assertion this gate can check from existing data - stays out of scope
 pending its own separate freeze. See
 `Docs/PhaseC_C2_EnvironmentLockChecklist.md` for the full item-by-item
-mapping. Not yet real-MetaEditor-confirmed.
+mapping. Confirmed by a real MetaEditor run: 26/26 ALL PASS. No sealed
+file was touched (only new, additive files plus an append-only
+`ENUM_REASON_CODE` addition), so no regression re-run was required.
 
 ## [Unreleased] - Phase C2: FULLY SEALED (2026-08-22)
 
