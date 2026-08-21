@@ -173,6 +173,25 @@ void BuildAcceptingExecutionPolicy(ExecutionPolicy &policy)
    policy.max_deviation_points = 20.0;
 }
 
+// Rewrites a line's own "seq":N field to newSeq - used only to
+// renumber a physically-reordered file so it still passes
+// EventStoreValidator's own strict-monotonic-seq gate, isolating this
+// project's OWN single-pass ordering invariant (which the validator's
+// separate, more general seq-monotonicity check would otherwise catch
+// first, for a different reason, before ever reaching this file's own
+// per-line logic).
+string RenumberSeq(string line, int newSeq)
+{
+   string needle = "\"seq\":";
+   int p = StringFind(line, needle);
+   if(p < 0) return line;
+   int start = p + StringLen(needle);
+   int n = StringLen(line);
+   int end = start;
+   while(end < n && StringGetCharacter(line, end) != ',') end++;
+   return StringSubstr(line, 0, start) + IntegerToString(newSeq) + StringSubstr(line, end);
+}
+
 void ResetAllProjections()
 {
    CandidateProjection_Reset();
@@ -468,16 +487,27 @@ void Test_OrderingViolation_CompletionBeforeRequest_Rejected()
    }
    Check(reqIdx >= 0 && resultIdx >= 0 && reqIdx < resultIdx, "sanity: the real store has the request strictly before its own completion");
 
-   // Physically swap the two lines - a naive two-pass rebuild would
-   // still succeed here (the request projection would have already
-   // seen the whole file); the single interleaved pass this project
-   // freezes must fail instead, since ordering is a tested invariant.
+   // Physically swap the two lines AND renumber every line's own "seq"
+   // field to match its new physical position (1-indexed). Without the
+   // renumbering, EventStoreValidator's own separate, more general
+   // strict-monotonic-seq gate (Infrastructure/EventStore/
+   // MLQuantAI_EventStoreValidator.mqh) would reject the file first, as
+   // a "backwards seq" corruption - a real, earlier gate, but not the
+   // one this test means to isolate. Renumbering makes the file
+   // validator-clean while still carrying the genuine semantic
+   // violation (a completion whose own persisted position now precedes
+   // its own request) that only THIS project's single interleaved pass
+   // is designed to catch - a naive two-pass rebuild would still
+   // succeed here, since the request projection would have already
+   // seen the whole file by the time completions are checked.
    string swapped[];
    ArrayResize(swapped, n);
    for(int i = 0; i < n; i++) swapped[i] = lines[i];
    string tmp = swapped[reqIdx];
    swapped[reqIdx] = swapped[resultIdx];
    swapped[resultIdx] = tmp;
+   for(int i = 0; i < n; i++)
+      swapped[i] = RenumberSeq(swapped[i], i + 1);
 
    FileDelete(file, FILE_COMMON);
    int h = FileOpen(file, FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_COMMON);
@@ -488,7 +518,7 @@ void Test_OrderingViolation_CompletionBeforeRequest_Rejected()
    ExecutionAuditProjectionReport report = ExecutionAuditProjection_RebuildFromFile(file);
    Check(!report.ok, "rebuild fails entirely when the completion line precedes its own request line");
    Check(StringFind(report.first_error, "orphan") >= 0 || StringFind(report.first_error, "ordering") >= 0,
-         "first_error attributes the failure to the orphan/ordering-violation case");
+         "first_error attributes the failure to the orphan/ordering-violation case, not the (now-bypassed) validator seq gate");
 }
 
 void Test_TamperedOutcomeInvariant_Rejected()
