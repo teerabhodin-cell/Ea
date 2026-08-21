@@ -120,4 +120,9 @@
 #define MLQUANTAI_EXECUTION_POLICY_SCHEMA_C1_V1   "EXECUTION_POLICY_C1_V1"
 #define MLQUANTAI_DRY_RUN_RESULT_SCHEMA_C1_V1     "DRY_RUN_RESULT_C1_V1"
 
+// C2.2: ExecutionSubmissionResult's own record-shape stamp - distinct
+// from MLQUANTAI_DRY_RUN_RESULT_SCHEMA_C1_V1 (a dry-run verdict, never
+// a broker fact). See Docs/PhaseC_C2_1_BrokerSubmissionContract.md.
+#define MLQUANTAI_EXECUTION_SUBMISSION_RESULT_SCHEMA_C2_V1 "EXECUTION_SUBMISSION_RESULT_C2_V1"
+
 #endif // __MLQUANTAI_CONTRACTVERSIONS_MQH__
