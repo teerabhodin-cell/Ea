@@ -135,16 +135,13 @@ health=..." line.
       production code — see the status line above).
 - [x] `Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5` re-run —
       147/147 ALL PASS (was 145/145; +2 from the setup-only amendment).
-- [ ] Full regression including C1.2/C1.3/C2.3 re-run in the same
-      session — none of those three files, or the `.mqh` files they
-      test, were touched by this commit (only
-      `MLQuantAI_BrokerSubmissionGate.mqh`,
-      `MLQuantAI_BrokerSubmissionAuditReadiness.mqh` (new),
-      `MLQuantAI_ReasonCodes.mqh` (append-only), and `MLQuantAI.mq5`
-      changed) — regression risk is minimal, but the user's own
-      "Required proof" list explicitly asked for this broader
-      re-confirmation; offered, pending the user's call on whether it's
-      still wanted before merge.
+- [x] Full regression including C1.2/C1.3/C2.3 re-run in the same
+      MetaEditor session — 2026-08-22: `MLQuantAI_Test_C1_2_
+      ExecutionRequestSafetyGate.mq5` 128/128, `MLQuantAI_Test_C1_3_
+      ExecutionAuditReconciliation.mq5` 87/87, `MLQuantAI_Test_C2_3_
+      BrokerSubmissionAuditProjection.mq5` 104/104 — ALL PASS, no
+      regression (none of those files or the `.mqh` files they test
+      were touched by this commit).
 - [x] Item 6, inspection proof that the startup path stays read-only —
       covered by this doc's own file-by-file description above and by
       each amended file's own structural-proof test.

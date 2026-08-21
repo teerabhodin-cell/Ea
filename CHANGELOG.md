@@ -36,7 +36,11 @@ suite: found 2 real `[FAIL]`s on first run (39/41), both in this
 commit's own new test assertions (a missing DEMO/non-DEMO branch, same
 pattern the file's other tests already use), not production code;
 fixed, re-confirmed 41/41 ALL PASS. `Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5`
-re-confirmed 147/147 ALL PASS (was 145/145).
+re-confirmed 147/147 ALL PASS (was 145/145). Full regression re-run in
+the same session, per the user's explicit ask: `MLQuantAI_Test_C1_2_
+ExecutionRequestSafetyGate.mq5` 128/128, `MLQuantAI_Test_C1_3_
+ExecutionAuditReconciliation.mq5` 87/87, `MLQuantAI_Test_C2_3_
+BrokerSubmissionAuditProjection.mq5` 104/104 - ALL PASS, no regression.
 
 ## [Unreleased] - C2.2/C2.3 durable idempotency integration patch (PASSED 22/22, real MetaEditor run, 2026-08-22)
 
