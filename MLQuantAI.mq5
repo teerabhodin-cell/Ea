@@ -21,6 +21,7 @@
 #include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_ReplayEngine.mqh>
 #include <MLQuantAI/Infrastructure/MLQuantAI_BrokerReconciliation.mqh>
 #include <MLQuantAI/Market/MLQuantAI_FeatureEngine.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_BrokerSubmissionAuditReadiness.mqh>
 
 input group "=== System ==="
 input bool   DebugMode                   = false;
@@ -177,6 +178,24 @@ int OnInit()
    // wasn't true yet (store opens right after) - log it explicitly now.
    if(fileExists && !preCheck.ok)
       EventStore_LogSystem(EventTypeToString(EVENT_TYPE_SYSTEM_EVENT_STORE_CORRUPTED), preCheck.first_error);
+
+   // C2.2/C2.3 startup-rebuild integration patch: rebuilds the durable
+   // submission-attempt audit registry from the same event store,
+   // exactly once, right after the health/validation above and before
+   // anything downstream could ever consult it. Stages C1.3's own
+   // ExecutionAuditProjection_RebuildFromFile (unmodified) as its own
+   // first internal step - no separate call needed here. Publishes
+   // readiness ONLY on a clean rebuild; BrokerSubmissionGate_Evaluate
+   // rejects every request with REASON_EXECUTION_AUDIT_NOT_READY until
+   // this succeeds. Strictly read-only over the event store - no
+   // OrderSend/CTrade/broker query/candidate mutation/event append/
+   // OnTradeTransaction anywhere in this call chain. No strategy in
+   // this codebase calls BrokerSubmissionGate_Evaluate yet (Phase B/C
+   // execution wiring into OnTick is a separate, later concern), but
+   // this ensures the registry is trustworthy before one safely could.
+   BrokerSubmissionAuditProjectionReport auditReport = BrokerSubmissionAudit_StartupRebuild(g_EventStoreFileName);
+   if(!auditReport.ok)
+      LogWarn("C2 broker submission stays disabled this session - startup audit rebuild failed: " + auditReport.first_error);
 
    EventStore_LogSystem(EventTypeToString(EVENT_TYPE_SYSTEM_STARTED),
                          StringFormat("%s v%s", MLQUANTAI_EA_NAME, MLQUANTAI_EA_VERSION),

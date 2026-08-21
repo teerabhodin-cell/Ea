@@ -14,26 +14,35 @@
 //|                                                                     |
 //| C2.2/C2.3 integration patch (per Docs/PhaseC_C2_1_                 |
 //| BrokerSubmissionContract.md's "Durable idempotency - C2.3's first   |
-//| deliverable" section): a third check added after the in-session     |
-//| guard, consulting C2.3's already-frozen                             |
-//| SubmissionAttemptRegistry_HasAttempt() interface - no parsing/      |
-//| replay logic duplicated here, just a call into that interface. Per  |
-//| the frozen "simplest policy" this checks HasAttempt (not            |
-//| IsUnresolved) - ANY durable historical attempt for this exact       |
-//| execution_request_id, resolved or not, blocks resubmission. NOTE:   |
-//| this check only reflects reality once the registry has actually     |
-//| been rebuilt from the event store (BrokerSubmissionAuditProjection_ |
-//| RebuildFromFile) - wiring that rebuild into the live EA's own       |
-//| startup path is a separate integration concern, not yet done for    |
-//| ANY projection in this codebase (MLQuantAI.mq5's OnInit calls no    |
-//| *_RebuildFromFile function today), so this comment flags it rather  |
-//| than silently assuming it.                                          |
+//| deliverable" section): a check added after the in-session guard,    |
+//| consulting C2.3's already-frozen SubmissionAttemptRegistry_         |
+//| HasAttempt() interface - no parsing/replay logic duplicated here,   |
+//| just a call into that interface. Per the frozen "simplest policy"   |
+//| this checks HasAttempt (not IsUnresolved) - ANY durable historical  |
+//| attempt for this exact execution_request_id, resolved or not,       |
+//| blocks resubmission.                                                |
+//|                                                                     |
+//| C2.2/C2.3 startup-rebuild integration patch: the check above only   |
+//| reflects reality once the registry has actually been rebuilt from   |
+//| the event store this session - a NEW readiness check, evaluated     |
+//| FIRST among the C2.3-related checks (before both the in-session and |
+//| durable idempotency checks), rejects EVERY request with             |
+//| REASON_EXECUTION_AUDIT_NOT_READY whenever                           |
+//| BrokerSubmissionAuditReadiness_IsReady() is false - not merely a    |
+//| "no prior attempt found" false negative, a genuine "cannot be       |
+//| trusted yet" refusal. OnInit calls BrokerSubmissionAudit_           |
+//| StartupRebuild() exactly once, after the existing EventStore        |
+//| health/validation, before anything downstream could ever reach this |
+//| gate - see MLQuantAI.mq5. Fail-closed by construction: the          |
+//| readiness flag's own default is false, so even a startup-wiring bug |
+//| that skipped calling it would still leave this gate rejecting       |
+//| every request, never silently permitting one.                       |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_BROKERSUBMISSIONGATE_MQH__
 #define __MLQUANTAI_BROKERSUBMISSIONGATE_MQH__
 
 #include "MLQuantAI_SafetyGate.mqh"
-#include "MLQuantAI_BrokerSubmissionAuditProjection.mqh"
+#include "MLQuantAI_BrokerSubmissionAuditReadiness.mqh"
 
 // In-session idempotency registry: execution_request_ids that have
 // already crossed this gate and been handed to a real submission
@@ -105,6 +114,18 @@ bool BrokerSubmissionGate_Evaluate(const ExecutionRequest &request, const Execut
    {
       outResult.decision    = SAFETY_GATE_REJECTED;
       outResult.reason_code = REASON_EXECUTION_ENVIRONMENT_NOT_PERMITTED;
+      return true;
+   }
+
+   // C2.2/C2.3 startup-rebuild integration patch: evaluated BEFORE both
+   // idempotency checks below - if the durable audit registry has not
+   // been successfully rebuilt this session, NOTHING may pass, not even
+   // a request that looks brand new (the registry might be hiding a
+   // real prior attempt this process just can't see yet).
+   if(!BrokerSubmissionAuditReadiness_IsReady())
+   {
+      outResult.decision    = SAFETY_GATE_REJECTED;
+      outResult.reason_code = REASON_EXECUTION_AUDIT_NOT_READY;
       return true;
    }
 

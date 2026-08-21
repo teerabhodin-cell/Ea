@@ -828,6 +828,25 @@ void OnStart()
 {
    Print("=== MLQuantAI Test: Phase C2.2 - Broker Submission Gate + Construction + Classification (no real OrderSend) ===");
 
+   // C2.2/C2.3 startup-rebuild integration patch (third amendment):
+   // BrokerSubmissionGate_Evaluate now rejects EVERY request with
+   // REASON_EXECUTION_AUDIT_NOT_READY until the durable audit registry
+   // has been rebuilt this session - none of this suite's own tests
+   // exercise that NOT_READY behavior (that's covered by
+   // Tests/MLQuantAI_Test_C2_BrokerSubmissionGate_DurableIdempotency.mq5),
+   // so mark the registry ready ONCE, via the real production entry
+   // point (BrokerSubmissionAudit_StartupRebuild), before any Test_*
+   // call below. An empty store (nothing written) has nothing to fail
+   // on, so this succeeds trivially - not a backdoor, the same real
+   // OnInit path, just fed a blank file.
+   string readinessFile = "MLQuantAI_Test_C2_2_ReadinessSetup.jsonl";
+   FileDelete(readinessFile, FILE_COMMON);
+   EventStore_Open(readinessFile);
+   EventStore_Close();
+   BrokerSubmissionAuditProjectionReport readinessReport = BrokerSubmissionAudit_StartupRebuild(readinessFile);
+   Check(readinessReport.ok, "setup: startup rebuild succeeds on an empty store (nothing to fail on)");
+   Check(BrokerSubmissionAuditReadiness_IsReady(), "setup: audit registry is ready for the rest of this suite");
+
    Test_Gate_InheritsC1_2RejectionUnchanged();
    Test_Gate_StructuralFailureOnEmptyId();
    Test_Gate_PolicyLiveIsAlwaysRejected();
