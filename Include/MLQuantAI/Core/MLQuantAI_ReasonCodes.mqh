@@ -105,6 +105,15 @@ enum ENUM_REASON_CODE
    REASON_EXECUTION_EXPERT_TRADE_DISABLED,
    REASON_EXECUTION_VOLUME_BELOW_MINIMUM,
 
+   // C2 manual-approval contract, gate integration round (per
+   // Docs/PhaseC_C2_ManualApprovalContract.md's "C2 gate integration"
+   // section): the manual-approval registry was consulted (it IS
+   // ready) but no matching, unexpired approval was found for this
+   // exact request. Distinct from REASON_EXECUTION_AUDIT_NOT_READY,
+   // which this same gate reuses for "registry not ready to consult at
+   // all" - never conflated with this one.
+   REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED,
+
    REASON_COUNT
 };
 
@@ -159,6 +168,7 @@ string ReasonCodeToString(ENUM_REASON_CODE r)
       case REASON_EXECUTION_ACCOUNT_TRADE_DISABLED:     return "EXECUTION_ACCOUNT_TRADE_DISABLED";
       case REASON_EXECUTION_EXPERT_TRADE_DISABLED:      return "EXECUTION_EXPERT_TRADE_DISABLED";
       case REASON_EXECUTION_VOLUME_BELOW_MINIMUM:       return "EXECUTION_VOLUME_BELOW_MINIMUM";
+      case REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED: return "EXECUTION_MANUAL_APPROVAL_NOT_GRANTED";
    }
    return "UNKNOWN";
 }
@@ -211,6 +221,18 @@ ENUM_REASON_CODE ReasonCodeFromString(string s)
    if(s == "EXECUTION_LINEAGE_INVALID")           return REASON_EXECUTION_LINEAGE_INVALID;
    if(s == "EXECUTION_SUBMISSION_AMBIGUOUS")      return REASON_EXECUTION_SUBMISSION_AMBIGUOUS;
    if(s == "EXECUTION_AUDIT_NOT_READY")           return REASON_EXECUTION_AUDIT_NOT_READY;
+   // The five environment-lock reason codes below were present in
+   // ReasonCodeToString since the environment-lock round but missing
+   // here - a real, pre-existing FromString gap (a stored line
+   // carrying one of these would have silently round-tripped to
+   // REASON_NONE) found and fixed while extending this function for
+   // the manual-approval gate integration round.
+   if(s == "EXECUTION_SERVER_NOT_ALLOWED")        return REASON_EXECUTION_SERVER_NOT_ALLOWED;
+   if(s == "EXECUTION_TERMINAL_TRADE_DISABLED")   return REASON_EXECUTION_TERMINAL_TRADE_DISABLED;
+   if(s == "EXECUTION_ACCOUNT_TRADE_DISABLED")    return REASON_EXECUTION_ACCOUNT_TRADE_DISABLED;
+   if(s == "EXECUTION_EXPERT_TRADE_DISABLED")     return REASON_EXECUTION_EXPERT_TRADE_DISABLED;
+   if(s == "EXECUTION_VOLUME_BELOW_MINIMUM")      return REASON_EXECUTION_VOLUME_BELOW_MINIMUM;
+   if(s == "EXECUTION_MANUAL_APPROVAL_NOT_GRANTED") return REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED;
    return REASON_NONE;
 }
 

@@ -5,13 +5,18 @@
 //| OrderSend - this suite never even reaches                            |
 //| MLQuantAI_BrokerSubmissionAdapter.mqh's real-submit function.        |
 //| EnvironmentLock_EvaluateNewChecks is tested directly (bypassing      |
-//| BrokerSubmissionGate_Evaluate) so the five new checks are            |
-//| exercisable regardless of which account mode the compiling           |
-//| terminal happens to be on - tests that depend on real, un-           |
-//| forceable terminal/account state (TERMINAL_TRADE_ALLOWED/            |
+//| BrokerSubmissionGate_Evaluate) so the six new checks (five from the   |
+//| environment-lock round, plus the manual-approval check added by the  |
+//| gate integration round) are exercisable regardless of which account  |
+//| mode the compiling terminal happens to be on - tests that depend on  |
+//| real, un-forceable terminal/account state (TERMINAL_TRADE_ALLOWED/   |
 //| ACCOUNT_TRADE_ALLOWED/ACCOUNT_TRADE_EXPERT) predict the expected     |
 //| outcome from that SAME real state read independently, rather than    |
-//| assuming a specific value - never a guess.                           |
+//| assuming a specific value - never a guess. The manual-approval        |
+//| registry's own state (unlike terminal/account permissions) IS        |
+//| forceable by the test itself (ManualApprovalReadiness_Reset()/       |
+//| ManualApproval_StartupRebuild()), so it is set up explicitly per     |
+//| test rather than predicted.                                          |
 //+------------------------------------------------------------------+
 #property copyright "MLQuantAI"
 #property script_show_inputs
@@ -23,7 +28,9 @@
 #include <MLQuantAI/AI/MLQuantAI_AIDecisionBuilder.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_EligibilityBuilder.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_ExecutionRequestBuilder.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_ExecutionRequestEventEmission.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_EnvironmentLockGate.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_ManualApprovalEmission.mqh>
 
 int g_TestsRun    = 0;
 int g_TestsPassed = 0;
@@ -235,6 +242,25 @@ bool BuildAcceptedRequest(ExecutionRequest &req, ExecutionPolicy &policy, string
    return ExecutionRequest_Build(c, eligDecision, decision, plan, policy, req, rd);
 }
 
+// Same as BuildAcceptedRequest, but ALSO durably emits EXECUTION_REQUEST_
+// CREATED/EXECUTION_DRY_RUN_COMPLETED to the caller's own already-open
+// event store - needed only by the manual-approval tests below, since
+// ManualApprovalRegistry_HasValidApproval() requires a real, staged
+// ExecutionRequestProjection/DryRunResultProjection record to match
+// against (per ManualApprovalProjection's own orphan/mismatch/accepted-
+// dry-run checks). Every other test in this file stays non-durable.
+bool BuildAndEmitAcceptedRequest(ExecutionRequest &req, ExecutionPolicy &policy, string suffix, int dayOffset)
+{
+   TradeCandidate c; RiskPlan plan; AIDecision decision; EligibilityDecision eligDecision;
+   if(!BuildEligibleChain(c, plan, decision, eligDecision, suffix, dayOffset)) return false;
+   BuildC2AcceptingExecutionPolicy(policy);
+   string rd;
+   if(!ExecutionRequest_Build(c, eligDecision, decision, plan, policy, req, rd)) return false;
+   DryRunExecutionResult dryRunResult;
+   if(!ExecutionRequest_EmitAndEvaluate(req, policy, dryRunResult)) return false;
+   return dryRunResult.decision == SAFETY_GATE_ACCEPTED;
+}
+
 void BuildAllowingLockPolicy(EnvironmentLockPolicy &lockPolicy)
 {
    EnvironmentLockPolicy_Init(lockPolicy);
@@ -424,6 +450,142 @@ void Test_AlreadyRejected_NeverOverridden()
 }
 
 //=====================================================================
+// Manual-approval check (sixth, third amendment) - registry readiness,
+// then HasValidApproval. Predicts against the same real terminal/
+// account baseline as every check above: if that baseline already
+// rejects, the manual-approval check is never reached.
+//=====================================================================
+void Test_ManualApprovalRegistryNotReady_Rejects()
+{
+   Print("--- manual-approval: registry not ready rejects with REASON_EXECUTION_AUDIT_NOT_READY (or an earlier real-state check fires first) ---");
+   ExecutionRequest req; ExecutionPolicy policy;
+   Check(BuildAcceptedRequest(req, policy, "APPRNOTREADY", 9), "sanity: request built");
+   double minVolume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   if(minVolume > 0.0) req.lot_size = minVolume * 10.0;
+
+   EnvironmentLockPolicy lockPolicy;
+   BuildAllowingLockPolicy(lockPolicy);
+
+   ManualApprovalReadiness_Reset();
+
+   DryRunExecutionResult result;
+   DryRunExecutionResult_Init(result);
+   result.decision = SAFETY_GATE_ACCEPTED;
+   Check(EnvironmentLock_EvaluateNewChecks(req, lockPolicy, result), "evaluation completes");
+
+   ENUM_REASON_CODE baseline = PredictBaselineOutcome();
+   if(baseline == REASON_NONE)
+      Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == REASON_EXECUTION_AUDIT_NOT_READY,
+            "real terminal/account/expert trade permission all allow - rejects with REASON_EXECUTION_AUDIT_NOT_READY (manual-approval registry not ready)");
+   else
+      Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == baseline,
+            "real terminal/account state rejects for the predicted (earlier-in-order) reason first - manual-approval check never reached");
+}
+
+void Test_ManualApprovalReady_NoValidApproval_Rejects()
+{
+   Print("--- manual-approval: registry ready but no matching approval rejects with REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED (or an earlier real-state check fires first) ---");
+   ExecutionRequest req; ExecutionPolicy policy;
+   Check(BuildAcceptedRequest(req, policy, "APPRNOTGRANTED", 10), "sanity: request built");
+   double minVolume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   if(minVolume > 0.0) req.lot_size = minVolume * 10.0;
+
+   EnvironmentLockPolicy lockPolicy;
+   BuildAllowingLockPolicy(lockPolicy);
+
+   string file = "MLQuantAI_Test_C2EnvLock_ApprNotGranted.jsonl";
+   FileDelete(file, FILE_COMMON);
+   EventStore_Open(file);
+   EventStore_Close();
+   ManualApprovalProjectionReport rebuild = ManualApproval_StartupRebuild(file);
+   Check(rebuild.ok, "sanity: manual-approval registry rebuilds OK on an empty store");
+   Check(ManualApprovalReadiness_IsReady(), "sanity: registry is ready");
+
+   DryRunExecutionResult result;
+   DryRunExecutionResult_Init(result);
+   result.decision = SAFETY_GATE_ACCEPTED;
+   Check(EnvironmentLock_EvaluateNewChecks(req, lockPolicy, result), "evaluation completes");
+
+   ENUM_REASON_CODE baseline = PredictBaselineOutcome();
+   if(baseline == REASON_NONE)
+      Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED,
+            "registry ready, no matching approval for this request - REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED");
+   else
+      Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == baseline,
+            "real terminal/account state rejects for the predicted (earlier-in-order) reason first - manual-approval check never reached");
+}
+
+void Test_ManualApprovalReady_ValidApproval_StaysAccepted()
+{
+   Print("--- manual-approval: registry ready + a real, valid, matching approval - stays ACCEPTED after all six checks (or an earlier real-state check fires first) ---");
+
+   string file = "MLQuantAI_Test_C2EnvLock_ApprGranted.jsonl";
+   FileDelete(file, FILE_COMMON);
+   EventStore_Open(file);
+
+   ExecutionRequest req; ExecutionPolicy policy;
+   Check(BuildAndEmitAcceptedRequest(req, policy, "APPRGRANTED", 11), "sanity: request built and durably emitted, ACCEPTED dry-run");
+   double minVolume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   if(minVolume > 0.0) req.lot_size = minVolume * 10.0;
+
+   ManualApprovalGrant g;
+   ManualApprovalGrant_Init(g);
+   g.execution_request_id     = req.execution_request_id;
+   g.execution_request_hash   = req.execution_request_hash;
+   g.execution_policy_version = req.execution_policy_version;
+   g.candidate_id              = req.candidate_id;
+   g.correlation_id             = req.correlation_id;
+   g.approver_identity           = "reviewer_test";
+   g.approval_timestamp           = TimeCurrent() - 60;
+   g.approval_expiry              = TimeCurrent() + 3600;
+   g.approval_nonce               = ManualApproval_NewNonce();
+   Check(ManualApproval_Grant(g), "sanity: approval granted durably");
+
+   EventStore_Close();
+
+   ManualApprovalProjectionReport rebuild = ManualApproval_StartupRebuild(file);
+   Check(rebuild.ok, "sanity: manual-approval registry rebuilds OK");
+   Check(ManualApprovalReadiness_IsReady(), "sanity: registry is ready");
+   Check(rebuild.approval_lines_applied == 1, "sanity: exactly one approval applied");
+
+   EnvironmentLockPolicy lockPolicy;
+   BuildAllowingLockPolicy(lockPolicy);
+
+   DryRunExecutionResult result;
+   DryRunExecutionResult_Init(result);
+   result.decision = SAFETY_GATE_ACCEPTED;
+   Check(EnvironmentLock_EvaluateNewChecks(req, lockPolicy, result), "evaluation completes");
+
+   ENUM_REASON_CODE baseline = PredictBaselineOutcome();
+   if(baseline == REASON_NONE)
+      Check(result.decision == SAFETY_GATE_ACCEPTED,
+            "real terminal/account/expert trade permission all allow, server/volume pass, registry ready with a valid matching approval - stays ACCEPTED");
+   else
+      Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == baseline,
+            "real terminal/account state rejects for the predicted (earlier-in-order) reason first - manual-approval check never overrides an earlier real rejection");
+}
+
+void Test_Precedence_ServerAllowlistCheckedBeforeManualApproval()
+{
+   Print("--- precedence: a not-allowlisted server rejects even when the manual-approval registry is ALSO not ready - server is checked first ---");
+   ExecutionRequest req; ExecutionPolicy policy;
+   Check(BuildAcceptedRequest(req, policy, "PRECAPPR", 12), "sanity: request built");
+
+   ManualApprovalReadiness_Reset(); // registry deliberately not ready
+
+   EnvironmentLockPolicy lockPolicy;
+   EnvironmentLockPolicy_Init(lockPolicy);
+   lockPolicy.trade_server_allowlist = "SomeOtherBroker-Demo01"; // not the real server
+
+   DryRunExecutionResult result;
+   DryRunExecutionResult_Init(result);
+   result.decision = SAFETY_GATE_ACCEPTED;
+   Check(EnvironmentLock_EvaluateNewChecks(req, lockPolicy, result), "evaluation completes");
+   Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == REASON_EXECUTION_SERVER_NOT_ALLOWED,
+         "REASON_EXECUTION_SERVER_NOT_ALLOWED fires, not a manual-approval reason - server is checked first");
+}
+
+//=====================================================================
 // Full wrapper: BrokerSubmissionEnvironmentLock_Evaluate correctly
 // chains BrokerSubmissionGate_Evaluate first.
 //=====================================================================
@@ -455,10 +617,14 @@ void Test_NoBrokerMutation_StructuralProof()
    Check(true, "verified by inspection: MLQuantAI_EnvironmentLockGate.mqh contains no OrderSend/CTrade/PositionOpen/PositionClose/OrderModify/"
                "OnTradeTransaction/HistorySelect/PositionSelect/OrderSelect call anywhere - EnvironmentLock_EvaluateNewChecks only reads "
                "AccountInfoString(ACCOUNT_SERVER)/TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)/AccountInfoInteger(ACCOUNT_TRADE_ALLOWED)/"
-               "AccountInfoInteger(ACCOUNT_TRADE_EXPERT)/SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN) - all read-only terminal/account/market "
+               "AccountInfoInteger(ACCOUNT_TRADE_EXPERT)/SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN)/TimeCurrent()/"
+               "ManualApprovalReadiness_IsReady()/ManualApprovalRegistry_HasValidApproval() - all read-only terminal/account/market/registry "
                "queries - and BrokerSubmissionEnvironmentLock_Evaluate only additionally calls the already-sealed, unmodified "
-               "BrokerSubmissionGate_Evaluate. No candidate-lifecycle transition, no event append, no manual-approval mechanism invented - "
-               "see this file's own header comment and Docs/PhaseC_C2_EnvironmentLockChecklist.md's explicit deferral of that item.");
+               "BrokerSubmissionGate_Evaluate. No candidate-lifecycle transition, no event append from this file itself.");
+   Check(true, "verified by inspection (not reproducible in a live terminal): the asOf <= 0 fail-closed branch - MQL5 does not document "
+               "TimeCurrent()'s return value for a terminal that has never connected/received a quote, and a connected test terminal always "
+               "reports a real, positive time, same 'documented but not independently reproducible' category as "
+               "BrokerSubmission_BuildTradeRequest's own bid <= 0.0 || ask <= 0.0 branch (C2.2's own precedent).");
 }
 
 void OnStart()
@@ -474,6 +640,11 @@ void OnStart()
 
    Test_Precedence_ServerAllowlistCheckedFirst();
    Test_AlreadyRejected_NeverOverridden();
+
+   Test_ManualApprovalRegistryNotReady_Rejects();
+   Test_ManualApprovalReady_NoValidApproval_Rejects();
+   Test_ManualApprovalReady_ValidApproval_StaysAccepted();
+   Test_Precedence_ServerAllowlistCheckedBeforeManualApproval();
 
    Test_FullWrapper_ChainsBrokerSubmissionGateFirst();
 

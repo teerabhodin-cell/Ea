@@ -27,6 +27,21 @@
 //| the broker DOES accept it (TRADE_RETCODE_DONE/_DONE_PARTIAL), a REAL |
 //| POSITION WILL BE OPEN - C2 has no scope to close it. The user must   |
 //| close it manually in the terminal.                                   |
+//|                                                                       |
+//| C2 manual-approval contract, gate integration round (per               |
+//| Docs/PhaseC_C2_ManualApprovalContract.md's "A real wiring gap found    |
+//| while implementing this round"): BrokerSubmission_Submit() now calls  |
+//| BrokerSubmissionEnvironmentLock_Evaluate(), which includes the new     |
+//| manual-approval check. This script's fabricated, freshly-generated     |
+//| execution_request_id can never have a real, human-granted approval     |
+//| for it (that would require a human running                             |
+//| MLQuantAI_ManualScript_GrantApproval.mq5 with this exact run's own      |
+//| identity fields BEFORE this script executes, which no automated or      |
+//| interactive single-script run can do) - so this script is now EXPECTED |
+//| to reject at the audit/manual-approval gate (REASON_EXECUTION_AUDIT_    |
+//| NOT_READY or REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED) before ever  |
+//| reaching OrderSend, same "safe, expected, still informative" category   |
+//| as a broker-side rejection.                                             |
 //+------------------------------------------------------------------+
 #property copyright "MLQuantAI"
 #property script_show_inputs
@@ -245,13 +260,30 @@ void OnStart()
    string file = "MLQuantAI_SmokeTest_C2_2.jsonl";
    EventStore_Open(file);
 
+   // Realistic startup sequence, same calls MLQuantAI.mq5's own OnInit
+   // makes - both registries default fail-closed, so without these
+   // calls the gate would always reject on readiness alone, never
+   // reaching the checks below.
+   BrokerSubmissionAuditProjectionReport auditReport = BrokerSubmissionAudit_StartupRebuild(file);
+   ManualApprovalProjectionReport approvalReport = ManualApproval_StartupRebuild(file);
+   Print("Startup rebuild: submission-audit ready=", BrokerSubmissionAuditReadiness_IsReady(),
+         " (", auditReport.first_error, "); manual-approval ready=", ManualApprovalReadiness_IsReady(),
+         " (", approvalReport.first_error, ")");
+
+   EnvironmentLockPolicy lockPolicy;
+   EnvironmentLockPolicy_Init(lockPolicy);
+   lockPolicy.environment_lock_policy_version = "ENVLOCK_C2_SMOKE_V1";
+   lockPolicy.trade_server_allowlist = AccountInfoString(ACCOUNT_SERVER);
+
    Print("Submitting real order: symbol=", _Symbol, " side=", (req.side == ORDER_TYPE_BUY ? "BUY" : "SELL"),
          " lot=", DoubleToString(req.lot_size, 2), " correlation_id=", req.correlation_id);
    Print("NOTE: planned_sl/planned_tp come from a synthetic ~100-104 price-scale fixture, NOT real ", _Symbol,
-         " price levels - a broker rejection (e.g. TRADE_RETCODE_INVALID_STOPS) is the expected, safe outcome.");
+         " price levels - a broker rejection (e.g. TRADE_RETCODE_INVALID_STOPS) is the expected, safe outcome. "
+         "A gate rejection at REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED is ALSO an expected, safe outcome - "
+         "see this file's own header.");
 
    ExecutionSubmissionResult result;
-   bool ran = BrokerSubmission_Submit(candidate, req, policy, result);
+   bool ran = BrokerSubmission_Submit(candidate, req, policy, lockPolicy, result);
 
    EventStore_Close();
 

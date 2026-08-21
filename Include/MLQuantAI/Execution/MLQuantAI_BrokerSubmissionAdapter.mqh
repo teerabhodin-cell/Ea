@@ -45,6 +45,18 @@
 //| call was ever made in that case). Same non-rollback discipline as  |
 //| every prior emitter: once an event write succeeds it is never      |
 //| rolled back, even if a later write in the same call fails.         |
+//|                                                                     |
+//| THIRD amendment (C2 manual-approval contract, gate integration      |
+//| round): a real wiring gap found while implementing that round -     |
+//| this function called BrokerSubmissionGate_Evaluate() directly,       |
+//| never BrokerSubmissionEnvironmentLock_Evaluate(), so neither the     |
+//| environment-lock round's five checks nor the new manual-approval     |
+//| check ever actually gated a real submission. Fixed, per the user's   |
+//| explicit authorization: BrokerSubmission_Submit() now takes an       |
+//| EnvironmentLockPolicy parameter and calls                            |
+//| BrokerSubmissionEnvironmentLock_Evaluate() instead - see              |
+//| Docs/PhaseC_C2_ManualApprovalContract.md's "A real wiring gap found  |
+//| while implementing this round" section.                              |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_BROKERSUBMISSIONADAPTER_MQH__
 #define __MLQUANTAI_BROKERSUBMISSIONADAPTER_MQH__
@@ -53,6 +65,7 @@
 #include "MLQuantAI_BrokerSubmissionGate.mqh"
 #include "MLQuantAI_BrokerSubmissionBuilder.mqh"
 #include "MLQuantAI_ExecutionSubmissionContract.mqh"
+#include "MLQuantAI_EnvironmentLockGate.mqh"
 
 // MqlTradeResult also contains a string member (comment) - same
 // ZeroMemory pitfall as MqlTradeRequest_ZeroInit above, same fix.
@@ -232,8 +245,15 @@ bool BrokerSubmission_ProcessSendResult(TradeCandidate &candidate, const Executi
 // is: final gate re-validation -> build -> RecordAttempt (durable write,
 // MUST succeed) -> OrderSend -> ProcessSendResult. If RecordAttempt
 // fails, OrderSend is never called.
+//
+// lockPolicy is new as of the third amendment above - the final gate
+// re-validation now runs the FULL BrokerSubmissionEnvironmentLock_Evaluate
+// chain (C1/C2 structural checks -> audit readiness -> no-prior-attempt
+// -> server/terminal/account/expert/volume checks -> manual-approval
+// readiness -> HasValidApproval), not just the earlier BrokerSubmissionGate_Evaluate
+// subset.
 bool BrokerSubmission_Submit(TradeCandidate &candidate, const ExecutionRequest &request, const ExecutionPolicy &policy,
-                               ExecutionSubmissionResult &outResult)
+                               const EnvironmentLockPolicy &lockPolicy, ExecutionSubmissionResult &outResult)
 {
    ExecutionSubmissionResult_Init(outResult);
    outResult.execution_request_id   = request.execution_request_id;
@@ -247,7 +267,7 @@ bool BrokerSubmission_Submit(TradeCandidate &candidate, const ExecutionRequest &
       return false;
 
    DryRunExecutionResult gateResult;
-   if(!BrokerSubmissionGate_Evaluate(request, policy, gateResult))
+   if(!BrokerSubmissionEnvironmentLock_Evaluate(request, policy, lockPolicy, gateResult))
       return false; // structural failure inside the gate itself
 
    if(gateResult.decision != SAFETY_GATE_ACCEPTED)

@@ -22,6 +22,7 @@
 #include <MLQuantAI/Infrastructure/MLQuantAI_BrokerReconciliation.mqh>
 #include <MLQuantAI/Market/MLQuantAI_FeatureEngine.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_BrokerSubmissionAuditReadiness.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_ManualApprovalReadiness.mqh>
 
 input group "=== System ==="
 input bool   DebugMode                   = false;
@@ -196,6 +197,20 @@ int OnInit()
    BrokerSubmissionAuditProjectionReport auditReport = BrokerSubmissionAudit_StartupRebuild(g_EventStoreFileName);
    if(!auditReport.ok)
       LogWarn("C2 broker submission stays disabled this session - startup audit rebuild failed: " + auditReport.first_error);
+
+   // C2 manual-approval contract, gate integration round: the second,
+   // independent startup-rebuild call this OnInit makes, same pattern
+   // as the one directly above - rebuilds the manual-approval registry
+   // from the same event store, publishes readiness ONLY on a clean
+   // rebuild. BrokerSubmissionEnvironmentLock_Evaluate's own manual-
+   // approval check rejects every request with
+   // REASON_EXECUTION_AUDIT_NOT_READY until this succeeds. Strictly
+   // read-only - no OrderSend/CTrade/broker query/candidate mutation/
+   // event append/OnTradeTransaction anywhere in this call chain. See
+   // Docs/PhaseC_C2_ManualApprovalContract.md.
+   ManualApprovalProjectionReport approvalReport = ManualApproval_StartupRebuild(g_EventStoreFileName);
+   if(!approvalReport.ok)
+      LogWarn("C2 manual-approval gate stays disabled this session - startup approval rebuild failed: " + approvalReport.first_error);
 
    EventStore_LogSystem(EventTypeToString(EVENT_TYPE_SYSTEM_STARTED),
                          StringFormat("%s v%s", MLQUANTAI_EA_NAME, MLQUANTAI_EA_VERSION),

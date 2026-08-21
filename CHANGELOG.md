@@ -4,6 +4,94 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C2 manual-approval gate integration (awaiting real MetaEditor run)
+
+The read side of the manual-approval contract, plus a real wiring gap
+found and fixed while implementing it. Per
+`Docs/PhaseC_C2_ManualApprovalContract.md`'s round-2 sections, frozen
+with two user-added rules before any code was written: an **approval
+timing boundary** (a single `asOf = TimeCurrent()` captured once per
+gate evaluation, fail-closed on `asOf <= 0`, `HasValidApproval()`
+placed as the LAST check before `ACCEPTED` so there is no window for
+an approval to expire between the gate and `RecordAttempt()`), and an
+**approval scope** rule (the gate order is now fully documented -
+`HasValidApproval()` never re-checks `SubmissionAttemptRegistry_HasAttempt()`,
+since that check already runs earlier in the same evaluation, inherited
+from `BrokerSubmissionGate_Evaluate`).
+
+New `Execution/MLQuantAI_ManualApprovalProjection.mqh`: the projection
+(0..N records per `execution_request_id`, never deduped), staging
+C1.3's `ExecutionAuditProjection_RebuildFromFile` first, then its own
+pass validating every rule the round-1 contract froze - orphan/mismatch
+against the full five identity fields, no `SAFETY_GATE_ACCEPTED`
+dry-run record, `log_event_id` collision, and `approval_nonce`
+collision across DIFFERENT `log_event_id`s (fails the whole rebuild
+closed even when every other field differs - the rule unique to this
+contract). Plus the pure `ManualApprovalRegistry_HasValidApproval()`
+query (caller-supplied `asOf`, never `TimeCurrent()` internally) - it
+never consults `SubmissionAttemptRegistry`, proven empirically in the
+test suite, not just by inspection.
+
+New `Execution/MLQuantAI_ManualApprovalReadiness.mqh`: mirrors
+`MLQuantAI_BrokerSubmissionAuditReadiness.mqh` exactly -
+`ManualApprovalReadiness_IsReady()`/`ManualApproval_StartupRebuild()`,
+fail-closed default, re-entrant. Wired into `MLQuantAI.mq5`'s `OnInit`
+alongside the existing `BrokerSubmissionAudit_StartupRebuild` call.
+
+`Execution/MLQuantAI_EnvironmentLockGate.mqh`'s third amendment: a
+sixth check inside `EnvironmentLock_EvaluateNewChecks`, after the
+existing five - manual-approval registry readiness, then the single
+captured `asOf`, then `HasValidApproval()` against all five identity
+fields. New append-only `REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED`
+(the wording bug in the earlier draft - "two new reason codes" - is
+now corrected: only this one is genuinely new).
+
+**A real wiring gap, found while implementing this round**:
+`BrokerSubmission_Submit()` (`MLQuantAI_BrokerSubmissionAdapter.mqh` -
+the only function anywhere in this codebase that calls the real
+`OrderSend()`) called `BrokerSubmissionGate_Evaluate()` directly, never
+`BrokerSubmissionEnvironmentLock_Evaluate()` - meaning neither the
+environment-lock round's five checks nor this round's manual-approval
+check had ever actually gated a real submission. This predates this
+round (a gap from the environment-lock round itself, only surfaced
+now). Fixed, per the user's explicit authorization: `BrokerSubmission_Submit()`
+now takes an `EnvironmentLockPolicy` parameter and calls
+`BrokerSubmissionEnvironmentLock_Evaluate()` instead - its third
+amendment. Both existing call sites updated
+(`Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5` never called
+`Submit()` directly, so needed no change;
+`Tests/MLQuantAI_SmokeTest_C2_2_RealOrderSend.mq5` now builds a real
+`EnvironmentLockPolicy` and calls both startup-rebuild functions before
+submitting - it was ALSO found, while making this fix, to have never
+called `BrokerSubmissionAudit_StartupRebuild()` either, so it has
+always fail-closed on `REASON_EXECUTION_AUDIT_NOT_READY` since the
+C2.2/C2.3 integration round shipped; also fixed here).
+
+Incidental fix while extending `Core/MLQuantAI_ReasonCodes.mqh`: the
+five environment-lock reason codes were present in `ReasonCodeToString`
+but missing from `ReasonCodeFromString` - a real, pre-existing gap (a
+stored line carrying one of these would have silently round-tripped to
+`REASON_NONE`), found and fixed alongside the new reason code.
+
+New test suites: `Tests/MLQuantAI_Test_C2_ManualApprovalProjection.mq5`
+(rebuild validation - valid grant/expiry boundary, never-deduped,
+replay/conflict, orphan, four-field mismatch, no-accepted-dry-run,
+nonce collision, consumption-boundary proof) and four new cases added
+to `Tests/MLQuantAI_Test_C2_EnvironmentLockGate.mq5` (registry not
+ready, ready-but-not-granted, ready-with-valid-approval stays ACCEPTED,
+precedence). Full regression (C2.2 147/147, C2.3 104/104, integration
+41/41, environment-lock, write-side manual-approval 38/38) still
+pending a real MetaEditor run to confirm no regression from the
+`BrokerSubmission_Submit()` signature change.
+
+No sealed file touched (`MLQuantAI_SafetyGate.mqh`,
+`MLQuantAI_BrokerSubmissionGate.mqh`,
+`MLQuantAI_BrokerSubmissionAuditProjection.mqh`,
+`MLQuantAI_BrokerSubmissionAuditReadiness.mqh` all untouched). Still
+out of scope: `OrderSend`/`CTrade`/smoke-test opt-in enablement,
+`OnTradeTransaction`, any `History*`/`Position*`/`Order*` broker query,
+any candidate-lifecycle transition driven by broker facts.
+
 ## [Unreleased] - C2 manual-approval contract + dry code (PASSED 38/38, real MetaEditor run, 2026-08-22)
 
 Frozen design doc, `Docs/PhaseC_C2_ManualApprovalContract.md`, resolving
