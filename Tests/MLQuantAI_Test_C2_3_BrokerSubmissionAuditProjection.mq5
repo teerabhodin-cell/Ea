@@ -409,7 +409,7 @@ void Test_Outcome_Error_IsConclusive_ResolvesUnresolved()
    Check(row.latest_status == SUBMISSION_STATUS_ERROR, "reconciliation row's latest_status is ERROR");
 }
 
-void Test_Outcome_Unknown_IsConclusive_ButHasAttemptStillBlocksResend()
+void Test_Outcome_Unknown_ConclusiveButHasAttemptBlocksResend()
 {
    Print("--- UNKNOWN outcome (ambiguous retcode) is conclusive for IsUnresolved, but HasAttempt alone still says 'do not auto-resubmit this id' ---");
    ResetAllProjections(); BrokerSubmissionGate_Reset();
@@ -842,7 +842,7 @@ void OnStart()
    Test_FullChain_AttemptAndSubmitted_RebuildsAndReconciles();
    Test_AttemptOnly_NoOutcome_UnresolvedBlocksResendAcrossRestart();
    Test_Outcome_Error_IsConclusive_ResolvesUnresolved();
-   Test_Outcome_Unknown_IsConclusive_ButHasAttemptStillBlocksResend();
+   Test_Outcome_Unknown_ConclusiveButHasAttemptBlocksResend();
    Test_Outcome_Rejected_ResolvesUnresolved();
 
    Test_MultipleAttempts_SameRequestId_NeverDeduped();
