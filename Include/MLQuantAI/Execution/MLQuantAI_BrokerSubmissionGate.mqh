@@ -11,11 +11,29 @@
 //| additive layer on top. Pure evaluation only: no OrderSend/CTrade/  |
 //| position-mutating call anywhere, no candidate.state transition, no |
 //| mutation of ExecutionRequest/ExecutionPolicy/TradeCandidate.       |
+//|                                                                     |
+//| C2.2/C2.3 integration patch (per Docs/PhaseC_C2_1_                 |
+//| BrokerSubmissionContract.md's "Durable idempotency - C2.3's first   |
+//| deliverable" section): a third check added after the in-session     |
+//| guard, consulting C2.3's already-frozen                             |
+//| SubmissionAttemptRegistry_HasAttempt() interface - no parsing/      |
+//| replay logic duplicated here, just a call into that interface. Per  |
+//| the frozen "simplest policy" this checks HasAttempt (not            |
+//| IsUnresolved) - ANY durable historical attempt for this exact       |
+//| execution_request_id, resolved or not, blocks resubmission. NOTE:   |
+//| this check only reflects reality once the registry has actually     |
+//| been rebuilt from the event store (BrokerSubmissionAuditProjection_ |
+//| RebuildFromFile) - wiring that rebuild into the live EA's own       |
+//| startup path is a separate integration concern, not yet done for    |
+//| ANY projection in this codebase (MLQuantAI.mq5's OnInit calls no    |
+//| *_RebuildFromFile function today), so this comment flags it rather  |
+//| than silently assuming it.                                          |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_BROKERSUBMISSIONGATE_MQH__
 #define __MLQUANTAI_BROKERSUBMISSIONGATE_MQH__
 
 #include "MLQuantAI_SafetyGate.mqh"
+#include "MLQuantAI_BrokerSubmissionAuditProjection.mqh"
 
 // In-session idempotency registry: execution_request_ids that have
 // already crossed this gate and been handed to a real submission
@@ -91,6 +109,21 @@ bool BrokerSubmissionGate_Evaluate(const ExecutionRequest &request, const Execut
    }
 
    if(BrokerSubmissionGate_HasAlreadyAttempted(request.execution_request_id))
+   {
+      outResult.decision    = SAFETY_GATE_REJECTED;
+      outResult.reason_code = REASON_DUPLICATE_EVENT;
+      return true;
+   }
+
+   // C2.2/C2.3 integration patch: the durable counterpart of the
+   // in-session check above. Reuses REASON_DUPLICATE_EVENT - the same
+   // underlying condition (already attempted), just proven from the
+   // event store instead of an in-session array. HasAttempt (not
+   // IsUnresolved) per the frozen "simplest policy" - a RESOLVED prior
+   // attempt (SUBMITTED/REJECTED/ERROR/UNKNOWN) still blocks automatic
+   // resubmission; only a brand-new execution_request_id, never a
+   // reused one, may ever pass this check.
+   if(SubmissionAttemptRegistry_HasAttempt(request.execution_request_id))
    {
       outResult.decision    = SAFETY_GATE_REJECTED;
       outResult.reason_code = REASON_DUPLICATE_EVENT;

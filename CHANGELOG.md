@@ -4,6 +4,32 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C2.2/C2.3 durable idempotency integration patch (PASSED 22/22, real MetaEditor run, 2026-08-22)
+
+The previously-deferred follow-up: `BrokerSubmissionGate_Evaluate`
+(`Execution/MLQuantAI_BrokerSubmissionGate.mqh`) now consults C2.3's
+frozen `SubmissionAttemptRegistry_HasAttempt()` interface as a third
+check, after the in-session guard - no parsing/replay logic duplicated,
+just a call into the interface. Per the frozen "simplest policy" this
+checks `HasAttempt`, not `IsUnresolved`, so a fully **resolved** prior
+attempt (e.g. `SUBMITTED`) still blocks resubmission of that exact
+`execution_request_id`. New test suite
+(`Tests/MLQuantAI_Test_C2_BrokerSubmissionGate_DurableIdempotency.mq5`,
+real B5-C1/C2.2/C2.3 pipeline): proves the durable check works purely
+from EventStore replay with a fresh in-session guard, proves a resolved
+attempt still blocks resubmission, and proves isolation between
+distinct `execution_request_id`s. Confirmed 22/22 ALL PASS. The
+original, sealed C2.2 gate suite (145/145) was re-run in full and
+confirmed unchanged - no regression. Real-submit capability is still
+NOT considered safe to exercise: the registry must actually be rebuilt
+from the event store at EA startup for this check to be restart-safe in
+practice, and that rebuild wiring is a separate, not-yet-done
+integration concern (no projection in this codebase is wired into
+`MLQuantAI.mq5`'s `OnInit` yet) - flagged explicitly in the amended
+file's own header comment. See
+`Docs/PhaseC_C2_2_BrokerSubmissionAdapterStatus.md`'s "C2.2/C2.3
+durable idempotency integration patch" section.
+
 ## [Unreleased] - Phase C2.3: Broker Submission Audit Projection + durable idempotency registry (PASSED 104/104, real MetaEditor run, 2026-08-22)
 
 C2.3's first deliverable, per the sequencing agreed with the user in

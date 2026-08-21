@@ -115,10 +115,17 @@ change.
       compiles with zero errors/warnings after the identifier-length
       fix (real MetaEditor).
 - [x] Real MetaEditor run — 104/104 ALL PASS (2026-08-22).
-- [ ] C2.2 integration follow-up patch (wiring `BrokerSubmissionGate`
-      to `SubmissionAttemptRegistry_HasAttempt`/`_IsUnresolved`) — not
-      yet started; required before real-submit capability is
-      considered safe to exercise via the opt-in smoke test.
+- [x] C2.2 integration follow-up patch (wiring `BrokerSubmissionGate`
+      to `SubmissionAttemptRegistry_HasAttempt`) — real MetaEditor run,
+      22/22 ALL PASS (2026-08-22); see
+      `Docs/PhaseC_C2_2_BrokerSubmissionAdapterStatus.md`'s "C2.2/C2.3
+      durable idempotency integration patch" section. Real-submit
+      capability is still not considered safe to exercise via the
+      opt-in smoke test — the registry must actually be rebuilt from
+      the event store at EA startup for this check to be restart-safe
+      in practice, which remains a separate, not-yet-done integration
+      concern (no projection in this codebase is wired into
+      `MLQuantAI.mq5`'s `OnInit` yet).
 - [ ] Full B9 + C1 + C2 regression re-run — deferred to the "C2 FULLY
       SEALED" checkpoint, matching the precedent C1 itself set.
 - [ ] `OnTradeTransaction`-based reconciliation (matching real broker
