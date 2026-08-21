@@ -4,6 +4,52 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3 transaction-reconciliation contract (documentation only, collision check)
+
+`Docs/PhaseC_C3_TransactionReconciliationContract.md` - a
+documentation-only collision check for the future `OnTradeTransaction`
+reconciliation work, per the user's explicit "C3.1" scope: no handler,
+no `History*`/`PositionSelect` call, no code change of any kind. Every
+platform-behavior claim was verified directly against the real MQL5
+reference this round (`WebFetch`, not recalled from memory): the
+`MqlTradeTransaction` field set and the ten `ENUM_TRADE_TRANSACTION_TYPE`
+values; `OnTradeTransaction`'s own documented lack of ordering/
+one-request-one-event guarantees; `ACCOUNT_MARGIN_MODE`'s netting
+(one position per symbol) vs. hedging (multiple positions per symbol)
+semantics; and the absence of any documented length/round-trip
+guarantee on `MqlTradeRequest.comment`/`POSITION_COMMENT`.
+
+Freezes: a five-priority matching hierarchy (magic number ->
+comment-substring-match on `correlation_id` -> symbol ->
+order/deal-ticket grouping -> account/server as audit evidence only);
+why comment matching must stay a substring match, never exact equality
+(no documented round-trip guarantee); why the matching rule must be
+netting-safe (a position ticket is not a reliable 1:1 key under
+`ACCOUNT_MARGIN_MODE_RETAIL_NETTING`); partial-fill aggregation and its
+terminal criterion; why a durable, replay-from-file read model is
+required (restart-replay of missed `OnTradeTransaction` callbacks is
+NOT documented as guaranteed) and why the existing, separate
+`Infrastructure/MLQuantAI_BrokerReconciliation.mqh` mechanism remains
+necessary rather than superseded; the fail-closed "no transition on an
+unmatched/ambiguous fact" rule; and the required testing approach
+(fixture-fed `MqlTradeTransaction` structs against the future pure
+matching function - no real callback can be synthesized under a test
+harness).
+
+**A genuine collision was found and left explicitly unresolved, for a
+future, separately-approved round to decide**: `EVENT_TYPE_ORDER_REJECTED`
+is already claimed by C2.2 for a synchronous, `OrderSend()`-return-time
+rejection - a LATE rejection/cancellation observed only via
+`OnTradeTransaction` (which can only happen strictly after C2.2's own
+`ORDER_SUBMITTED`) is a different fact and cannot reuse that name
+without breaking C2.3's own outcome-invariant checks. `EVENT_TYPE_ORDER_FILLED`
+and `EVENT_TYPE_CANDIDATE_EXECUTED` (Phase A, dormant) remain cleanly
+reserved for the real fill-confirmation case - no collision there.
+
+Implementation (the real handler + `History*` calls) is explicitly
+separate approval, not authorized by this document. No sealed file
+touched, no code changed anywhere.
+
 ## [Unreleased] - C2 environment-lock checklist (PASSED 26/26, real MetaEditor run, 2026-08-22)
 
 The final, read-only, consolidated re-verification pass before a real
