@@ -4,7 +4,28 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Phase C1.3: Audit Projections + Integrity Checks + Reconciliation Read Model (Implemented, awaiting real run)
+## [Unreleased] - Phase C1: FULLY SEALED (2026-08-21)
+
+**C1.2 (128/128) + C1.3 (87/87) = 215/215, all real MetaEditor runs**,
+plus a full manual regression re-run of the entire B9 chain in the
+same session confirming no regression anywhere in B9:
+`Test_B9_ExecutionEligibility.mq5` 120/120,
+`Test_B9_Commit2_EligibilityEvent.mq5` 84/84,
+`Test_B9_Commit3_IntegrationRegression.mq5` 79/79. Combined with
+C1.1's frozen contract (no code), C1 (ExecutionRequest + Safety Gate +
+Dry-Run, contract through audit/reconciliation) is fully sealed - zero
+broker mutation anywhere across all of C1. Two real issues surfaced by
+the user's actual MetaEditor runs and fixed: a compile error
+(`ExecutionRequestProjectionRecord` passed where the real
+`ExecutionRequest` type was required) and a test-construction bug (a
+line-swap test also tripped `EventStoreValidator`'s own separate
+strict-monotonic-`seq` gate before this file's own ordering check
+could run - fixed by renumbering `seq` after the swap). See
+`Docs/PhaseC_C1_3_ExecutionAuditReconciliationStatus.md`. C2 (real
+broker submit) stays explicitly held pending separate, explicit user
+authorization.
+
+## [Unreleased] - Phase C1.3: Audit Projections + Integrity Checks + Reconciliation Read Model (PASSED 2026-08-21)
 
 Opens after C1.2 PASSED (128/128, real MetaEditor run, 2026-08-21).
 Implements `Docs/PhaseC_C1_1_ExecutionRequestContract.md`'s C1.3
@@ -36,11 +57,14 @@ appearing before its own request in file order.
 - `Tests/MLQuantAI_Test_C1_3_ExecutionAuditReconciliation.mq5` (new,
   10 test functions).
 
-Not yet PASSED - awaiting a real MetaEditor compile/run, plus the
-manual regression re-run of `Test_B9_ExecutionEligibility.mq5`,
-`Test_B9_Commit2_EligibilityEvent.mq5`,
-`Test_B9_Commit3_IntegrationRegression.mq5`, and
-`Test_C1_2_ExecutionRequestSafetyGate.mq5` in the same session.
+Real MetaEditor run: **87/87 checks passed, ALL PASS**, plus the
+manual regression re-run in the same session:
+`Test_B9_ExecutionEligibility.mq5` 120/120,
+`Test_B9_Commit2_EligibilityEvent.mq5` 84/84,
+`Test_B9_Commit3_IntegrationRegression.mq5` 79/79, and
+`Test_C1_2_ExecutionRequestSafetyGate.mq5` 128/128, all real, all ALL
+PASS. C1.3 is PASSED and merged to `mlquantai` - **C1 is FULLY SEALED
+at 215/215** (C1.2 + C1.3).
 
 ## [Unreleased] - Phase C1.2: ExecutionRequest Build + SafetyGate + Dry-Run Emission (PASSED 2026-08-21)
 

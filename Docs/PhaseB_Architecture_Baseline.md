@@ -112,9 +112,10 @@ B9    Execution Eligibility Policy         SEALED (283/283)
       Commit 1 - pure eligibility mapping                           PASSED (120/120)
       Commit 2 - EXECUTION_ELIGIBILITY_DECIDED + lifecycle wiring    PASSED (84/84)
       Commit 3 - full-chain integration + regression proof           PASSED (79/79)
-C1.1  ExecutionRequest + Safety Gate + Dry-Run  FROZEN (contract only, no code yet)
-C1.2  Immutable ExecutionRequest, safety gate, dry-run adapter  NEXT
-C1.3  Audit event/read model, reconciliation, regression, seal  (after C1.2)
+C1    ExecutionRequest + Safety Gate + Dry-Run  SEALED (215/215, C1.1 contract-only)
+      C1.1 - collision-check + frozen contract (no code)
+      C1.2 - ExecutionRequest build + SafetyGate + dry-run emission    PASSED (128/128)
+      C1.3 - audit projections + integrity checks + reconciliation    PASSED (87/87)
 C2    Broker Submit Adapter                     HELD (pending explicit authorization)
 ```
 
@@ -126,6 +127,19 @@ same MetaEditor session, per Commit 3's own Definition of Done - no
 regression anywhere in the B8.1/B8.3/B8.5 chain. See
 `Docs/PhaseB_B8_5_Commit3_IntegrationRegressionStatus.md` for full
 evidence.
+
+C1 is SEALED: 215/215 across C1.2+C1.3, all real MetaEditor runs (C1.1
+is contract-only, no code), plus a manual re-run of the entire B9
+chain - `Test_B9_ExecutionEligibility.mq5` (120/120),
+`Test_B9_Commit2_EligibilityEvent.mq5` (84/84), and
+`Test_B9_Commit3_IntegrationRegression.mq5` (79/79) - in the same
+MetaEditor session, confirming no regression anywhere in B9. C1 is the
+first phase in this project to touch execution intent (`ExecutionRequest`)
+and a safety gate, but still zero broker mutation anywhere - `OrderSend`/
+`CTrade`/any pending-order API remain untouched across all of C1. See
+`Docs/PhaseC_C1_3_ExecutionAuditReconciliationStatus.md` for full
+evidence. C2 (real broker submit) is the next phase, held pending
+separate, explicit user authorization.
 
 B9 is SEALED: 283/283 across all three commits, all real MetaEditor
 runs, plus a manual re-run of `Test_B9_ExecutionEligibility.mq5`

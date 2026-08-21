@@ -1,6 +1,6 @@
 # Phase C1.3 — Audit Projections + Integrity Checks + Reconciliation Read Model
 
-**Status: Implemented, awaiting real MetaEditor compile/test confirmation.**
+**Status: PASSED (87/87, real MetaEditor run, 2026-08-21). C1 FULLY SEALED.**
 Implements `Docs/PhaseC_C1_1_ExecutionRequestContract.md`'s C1.3
 addendum (frozen before code). Opens after C1.2 PASSED (128/128, real
 MetaEditor run, 2026-08-21). Strictly read-only over the event data
@@ -106,15 +106,47 @@ No retry mechanism
 No C2 event type
 ```
 
-## Next step
+## Result
 
-Awaiting a real MetaEditor compile + run of
-`MLQuantAI_Test_C1_3_ExecutionAuditReconciliation.mq5`, plus the manual
-regression re-run of `Test_B9_ExecutionEligibility.mq5`,
-`Test_B9_Commit2_EligibilityEvent.mq5`,
-`Test_B9_Commit3_IntegrationRegression.mq5`, and
-`Test_C1_2_ExecutionRequestSafetyGate.mq5` in the same session. Only a
-genuine, clean real log for all five moves this to PASSED and seals
-C1: contract (C1.1) + build/gate/emission (C1.2) + audit
-projection/reconciliation (C1.3). C2 (real broker submit) stays
-explicitly held pending separate, explicit user authorization.
+Real MetaEditor run: **87/87 checks passed, ALL PASS** for
+`MLQuantAI_Test_C1_3_ExecutionAuditReconciliation.mq5` (one real bug
+found and fixed along the way - see below). Manual regression re-run
+in the same MetaEditor session, all real, all ALL PASS:
+`Test_B9_ExecutionEligibility.mq5` 120/120,
+`Test_B9_Commit2_EligibilityEvent.mq5` 84/84,
+`Test_B9_Commit3_IntegrationRegression.mq5` 79/79,
+`Test_C1_2_ExecutionRequestSafetyGate.mq5` 128/128.
+
+C1.3 is PASSED and merged to `mlquantai`.
+
+### Real issues found via the user's actual MetaEditor runs (not self-review)
+
+1. **Compile error**: `ExecutionRequestProjection_ApplyLine` passed its
+   own `ExecutionRequestProjectionRecord` (a different struct, despite
+   sharing field names) to `ExecutionRequest_ComputeHash`, which
+   requires the real `ExecutionRequest` type. Fixed by reconstructing
+   a real `ExecutionRequest` from the same persisted fields purely for
+   the hash recompute.
+2. **Test-construction bug** (not a production-code bug): the
+   ordering-violation test's simple line swap also broke
+   `EventStoreValidator`'s own separate, more general strict-monotonic-
+   `seq` gate ("backwards seq" corruption), which fires before this
+   file's own per-line orphan/ordering check ever runs - so
+   `first_error` came from the wrong layer and the assertion checking
+   for "orphan"/"ordering" in the message failed. Fixed by renumbering
+   every line's own `seq` field to match its new physical position
+   after the swap, so the file passes the validator cleanly and the
+   project's own single-interleaved-pass ordering logic is what
+   actually catches and rejects it - the invariant this test was
+   always meant to isolate.
+
+## C1 FULLY SEALED
+
+**C1.2 (128/128) + C1.3 (87/87) = 215/215, all real MetaEditor runs**,
+plus a full manual regression re-run of the entire B9 chain
+(120/120 + 84/84 + 79/79 = 283/283) in the same session confirming no
+regression anywhere in B9. Combined with C1.1's frozen contract (no
+code), C1 (ExecutionRequest + Safety Gate + Dry-Run, contract through
+audit/reconciliation) is fully sealed - zero broker mutation anywhere
+across all of C1. C2 (real broker submit) stays explicitly held
+pending separate, explicit user authorization.
