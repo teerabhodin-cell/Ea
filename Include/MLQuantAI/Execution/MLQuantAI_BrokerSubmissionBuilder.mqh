@@ -19,6 +19,33 @@
 #include "../Core/MLQuantAI_VersionRegistry.mqh"
 #include "../Core/MLQuantAI_ReasonCodes.mqh"
 
+// MqlTradeRequest contains string members (symbol/comment) - MQL5's
+// string type is a reference-counted handle, not raw bytes, so
+// ZeroMemory() on a struct containing one does not reliably leave it as
+// "" (confirmed by a real MetaEditor run: a rejected build left
+// outTradeRequest.symbol non-empty even though it was never assigned).
+// Manual field-by-field zero-init avoids that platform pitfall entirely.
+void MqlTradeRequest_ZeroInit(MqlTradeRequest &r)
+{
+   r.action        = (ENUM_TRADE_REQUEST_ACTIONS)0;
+   r.magic         = 0;
+   r.order         = 0;
+   r.symbol        = "";
+   r.volume        = 0;
+   r.price         = 0;
+   r.stoplimit     = 0;
+   r.sl            = 0;
+   r.tp            = 0;
+   r.deviation     = 0;
+   r.type          = ORDER_TYPE_BUY;
+   r.type_filling  = ORDER_FILLING_FOK;
+   r.type_time     = ORDER_TIME_GTC;
+   r.expiration    = 0;
+   r.comment       = "";
+   r.position      = 0;
+   r.position_by   = 0;
+}
+
 // Builds the MqlTradeRequest for a market TRADE_ACTION_DEAL order from an
 // already-ACCEPTED request/policy pair. observedSymbolAtGate is the
 // _Symbol value the pre-submit gate (BrokerSubmissionGate_Evaluate)
@@ -36,7 +63,7 @@ bool BrokerSubmission_BuildTradeRequest(const ExecutionRequest &req, const Execu
                                           string observedSymbolAtGate,
                                           MqlTradeRequest &outTradeRequest, ENUM_REASON_CODE &outRejectReason)
 {
-   ZeroMemory(outTradeRequest);
+   MqlTradeRequest_ZeroInit(outTradeRequest);
    outRejectReason = REASON_NONE;
 
    if(req.side != ORDER_TYPE_BUY && req.side != ORDER_TYPE_SELL)

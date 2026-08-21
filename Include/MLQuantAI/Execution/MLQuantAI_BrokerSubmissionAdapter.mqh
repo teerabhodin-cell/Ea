@@ -31,6 +31,22 @@
 #include "MLQuantAI_BrokerSubmissionBuilder.mqh"
 #include "MLQuantAI_ExecutionSubmissionContract.mqh"
 
+// MqlTradeResult also contains a string member (comment) - same
+// ZeroMemory pitfall as MqlTradeRequest_ZeroInit above, same fix.
+void MqlTradeResult_ZeroInit(MqlTradeResult &r)
+{
+   r.retcode           = 0;
+   r.deal              = 0;
+   r.order             = 0;
+   r.volume            = 0;
+   r.price             = 0;
+   r.bid               = 0;
+   r.ask               = 0;
+   r.comment           = "";
+   r.request_id        = 0;
+   r.retcode_external  = 0;
+}
+
 string ExecutionSubmissionAttempt_ToExtraJson(string executionRequestId, string executionRequestHash,
                                                 string correlationId, int submitAttempt)
 {
@@ -108,7 +124,7 @@ bool BrokerSubmission_Submit(TradeCandidate &candidate, const ExecutionRequest &
    BrokerSubmissionGate_MarkAttempted(request.execution_request_id);
 
    MqlTradeResult tradeResult;
-   ZeroMemory(tradeResult);
+   MqlTradeResult_ZeroInit(tradeResult);
    bool sendReturned = OrderSend(tradeRequest, tradeResult);
 
    outResult.order_send_returned  = sendReturned;

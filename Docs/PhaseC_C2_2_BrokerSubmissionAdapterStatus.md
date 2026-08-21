@@ -108,6 +108,21 @@ No `OnTradeTransaction` handler. No `CANDIDATE_EXECUTED`/
 No `OrderModify`/position close/pending orders. No `CTrade`/Standard
 Library include anywhere in this commit.
 
+## Fixed (found via the user's real MetaEditor run, not self-review)
+
+`Test_Build_SymbolMismatchRejects` failed 1/73 on the first real run:
+`outTradeRequest.symbol` was not `""` after a rejected build, even
+though the function returns before ever assigning `.symbol`. Root
+cause: `ZeroMemory()` on `MqlTradeRequest`/`MqlTradeResult` is unsafe —
+both structs contain `string` members (`symbol`/`comment`), and MQL5's
+`string` type is a reference-counted handle, not raw bytes, so
+raw-zeroing its memory does not reliably leave it as `""`. Fixed by
+replacing both `ZeroMemory` calls with manual field-by-field zero-init
+helpers (`MqlTradeRequest_ZeroInit` in
+`MLQuantAI_BrokerSubmissionBuilder.mqh`, `MqlTradeResult_ZeroInit` in
+`MLQuantAI_BrokerSubmissionAdapter.mqh`) that explicitly set every
+numeric field to `0` and every string field to `""`.
+
 ## Definition of Done
 
 - [x] Every file above compiles with zero errors/warnings (pending
