@@ -1,6 +1,6 @@
 # Phase C2.2 — Broker Submission Adapter
 
-**Status: PASSED (145/145, real MetaEditor run, 2026-08-21) - amended twice.**
+**Status: PASSED (145/145, real MetaEditor run, 2026-08-21) - amended twice, plus the durable-idempotency integration patch (2026-08-22).**
 73/73 PASSED (2026-08-21) covered gate/build/classification only. First
 amendment (121/121, same day) fixed a classification bug and closed a
 test-coverage gap. Second amendment (145/145, same day, confirmed by a
@@ -12,15 +12,52 @@ candidate to `CANDIDATE_SUBMITTED`) - see "C2.2 second amendment"
 below. `OrderSend()==false`'s `ERROR` classification was challenged a
 third time and re-verified directly against the real MQL5 `OrderSend()`
 reference page (fetched, not recalled) - confirmed correct, see that
-section's closing note. **Real-submit smoke test stays disabled
-regardless of this PASSED status** (input defaults `false`) - per the
-durable-idempotency sequencing agreed with the user: real-submit
-capability isn't considered safe until C2.3's `SubmissionAttemptRegistry`
-interface exists and a follow-up C2.2 integration patch wires the gate
-to it, on top of the full operational gate (named allowlisted demo
-account/server, one-time manual approval, hard-capped minimal volume,
-post-send reconciliation-first, separate explicit authorization every
-time) the user has since laid out for that eventual smoke run.
+section's closing note. After C2.3 shipped its `SubmissionAttemptRegistry`
+interface, the previously-deferred **C2.2/C2.3 integration patch**
+landed (real MetaEditor run, 2026-08-22): `BrokerSubmissionGate_Evaluate`
+now consults `SubmissionAttemptRegistry_HasAttempt()` as a third check,
+after the in-session guard - see "C2.2/C2.3 durable idempotency
+integration patch" below. **Real-submit smoke test still stays disabled**
+(input defaults `false`) regardless - the durable check is only
+effective once the registry has actually been rebuilt from the event
+store, and wiring that rebuild into the live EA's own startup path
+remains a separate, not-yet-done integration concern, on top of the
+full operational gate (named allowlisted demo account/server, one-time
+manual approval, hard-capped minimal volume, post-send
+reconciliation-first, separate explicit authorization every time) the
+user has laid out for that eventual smoke run.
+
+## C2.2/C2.3 durable idempotency integration patch (real MetaEditor run, 2026-08-22)
+
+`Include/MLQuantAI/Execution/MLQuantAI_BrokerSubmissionGate.mqh` now
+includes `MLQuantAI_BrokerSubmissionAuditProjection.mqh` and adds one
+new check to `BrokerSubmissionGate_Evaluate`, after the existing
+in-session `BrokerSubmissionGate_HasAlreadyAttempted` check: if
+`SubmissionAttemptRegistry_HasAttempt(request.execution_request_id)` is
+true, reject with `REASON_DUPLICATE_EVENT` (the same reason code the
+in-session check already uses - same underlying condition, just
+durable). Per the frozen "simplest policy"
+(`Docs/PhaseC_C2_1_BrokerSubmissionContract.md`), this checks
+`HasAttempt`, not `IsUnresolved` - a fully **resolved** prior attempt
+(e.g. `SUBMITTED`) still blocks resubmission of that exact
+`execution_request_id`; only a brand-new id, never a reused one, can
+pass. No parsing/replay logic duplicated in this file - just a call
+into C2.3's already-frozen interface.
+
+New test suite,
+`Tests/MLQuantAI_Test_C2_BrokerSubmissionGate_DurableIdempotency.mq5`
+(real B5-C1/C2.2/C2.3 pipeline for every fixture): proves the durable
+check rejects purely from EventStore replay with a *fresh* in-session
+guard (isolating the new check from the old one), proves a fully
+resolved attempt still blocks resubmission, and proves isolation (a
+different `execution_request_id` with no attempt of its own is
+unaffected by another request's durable attempt in the same store).
+Real MetaEditor run: 22/22 ALL PASS. The original, sealed
+`Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5` suite was also
+re-run in full to confirm no regression from the new include/check -
+its own tests never durably write any event to a file the registry
+would see, so the new check never fires there: confirmed
+**145/145 ALL PASS, unchanged.**
 
 Implements `Docs/PhaseC_C2_1_BrokerSubmissionContract.md` (frozen
 before code). Opens after C2.1 frozen and the user's explicit,
@@ -269,6 +306,11 @@ this round's test suite proves.
       set (the B9 regression re-run happened once, at the "C1 FULLY
       SEALED" declaration after C1.3 - not separately at each of
       C1.2/C1.3's own PASSED declarations).
-- [ ] Durable idempotency integration patch (C2.2 consuming C2.3's
-      `SubmissionAttemptRegistry` interface) — not yet started; required
-      before real-submit capability is considered safe to exercise.
+- [x] Durable idempotency integration patch (C2.2 consuming C2.3's
+      `SubmissionAttemptRegistry` interface) — real MetaEditor run,
+      22/22 ALL PASS (2026-08-22); original C2.2 suite re-confirmed
+      145/145, no regression. Real-submit capability is still not
+      considered safe to exercise — the registry must actually be
+      rebuilt from the event store at EA startup for this check to be
+      restart-safe in practice, which remains a separate, not-yet-done
+      integration concern.
