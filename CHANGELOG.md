@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - C2.2/C2.3 startup audit-rebuild wiring (NOT YET real-MetaEditor-confirmed)
+## [Unreleased] - C2.2/C2.3 startup audit-rebuild wiring (PASSED, real MetaEditor run, 2026-08-22)
 
 Wires `BrokerSubmissionAudit_StartupRebuild()` into `MLQuantAI.mq5`'s
 `OnInit`, right after the existing EventStore health/validation, and
@@ -23,11 +23,20 @@ mutation/event append/`OnTradeTransaction` anywhere. Both
 rebuild blanket-disables an unrelated request too, re-entrancy revokes
 readiness) and `Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5`
 (minimal setup-only amendment) updated accordingly. See
-`Docs/PhaseC_C2_StartupAuditRebuildWiring.md`. **Not yet PASSED** -
-this is the first commit this session to touch `MLQuantAI.mq5` itself,
-and needs a real MetaEditor compile of the main EA (not just a
-`Tests/*.mq5` script) plus a full C1.2/C1.3/C2.2/C2.3/integration-patch
-regression re-run before it can be merged.
+`Docs/PhaseC_C2_StartupAuditRebuildWiring.md`.
+
+Real MetaEditor confirmation: `MLQuantAI.mq5` itself (the main EA, not
+just a `Tests/*.mq5` script) compiled and ran cleanly - its own real
+event store had pre-existing legacy data with an orphan lineage
+reference, so the startup rebuild correctly failed closed and logged a
+warning, disabling C2 broker submission for that session while every
+other B-phase subsystem kept running normally - the fail-closed design
+working exactly as intended on real, imperfect data. Integration test
+suite: found 2 real `[FAIL]`s on first run (39/41), both in this
+commit's own new test assertions (a missing DEMO/non-DEMO branch, same
+pattern the file's other tests already use), not production code;
+fixed, re-confirmed 41/41 ALL PASS. `Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5`
+re-confirmed 147/147 ALL PASS (was 145/145).
 
 ## [Unreleased] - C2.2/C2.3 durable idempotency integration patch (PASSED 22/22, real MetaEditor run, 2026-08-22)
 

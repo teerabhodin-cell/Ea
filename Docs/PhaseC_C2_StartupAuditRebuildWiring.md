@@ -1,8 +1,23 @@
 # C2.2/C2.3 startup audit-rebuild wiring — status
 
-**Status: NOT YET real-MetaEditor-confirmed. Awaiting a compile/run of
-`MLQuantAI.mq5` itself (the main EA, not just a `Tests/*.mq5` script)
-plus the two amended test suites below.**
+**Status: PASSED (real MetaEditor run, 2026-08-22).** `MLQuantAI.mq5`
+compiled and ran cleanly — its own real, long-lived event store file
+contained pre-existing legacy data with an orphan lineage reference
+(from earlier Phase B/C testing), so the startup rebuild correctly
+failed closed and logged a `[WARN]`, leaving C2 broker submission
+disabled for that session while every other B-phase subsystem (replay,
+reconciliation, news engine, the Step 8.5 smoke test) kept running
+normally — the fail-closed design working exactly as intended on real,
+imperfect production data, not a bug. (The event store file name is
+calendar-dated, so a fresh day gets a fresh file without this legacy
+baggage.) `Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5`:
+**147/147 ALL PASS**. `Tests/MLQuantAI_Test_C2_BrokerSubmissionGate_DurableIdempotency.mq5`:
+first run found 2 real `[FAIL]`s (39/41) — both in this commit's own
+new test assertions (missing the same DEMO/non-DEMO account-mode
+branch the file's other three tests already use — on this real
+terminal's non-DEMO account, the environment check rejects before the
+readiness check is ever reached), not in production code; fixed,
+re-run confirmed **41/41 ALL PASS**.
 
 Per the user's explicit, frozen scope: wires
 `BrokerSubmissionAudit_StartupRebuild()` into `MLQuantAI.mq5`'s
@@ -110,28 +125,26 @@ health=..." line.
   suite's own tests exercise the `NOT_READY` path. Every other test in
   this file is otherwise untouched.
 
-## Required proof (per the user's checklist) — outstanding
+## Required proof (per the user's checklist)
 
-- [ ] Real MetaEditor compile of `MLQuantAI.mq5` itself (the main EA) —
-      **not yet requested from/confirmed by the user**. This is the
-      first commit this session to touch the main EA file; a
-      `Tests/*.mq5` script compiling cleanly does NOT prove the EA
-      compiles, since it's a different program type with a different
-      include/global scope.
-- [ ] `Tests/MLQuantAI_Test_C2_BrokerSubmissionGate_DurableIdempotency.mq5`
-      real MetaEditor run (expected new count: 22 + ~24 new checks
-      across the three new tests — exact count only known once real
-      output exists).
-- [ ] `Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5` re-run (was
-      145/145 — expect 147/147 with the two new setup checks).
-- [ ] Full regression: C1.2 (128/128), C1.3 (87/87), C2.2 (147/147
-      after this amendment), C2.3 (104/104), the durable-idempotency
-      integration patch (revised count above) — the user's own
-      "Required proof" list this round explicitly asks for C1 alongside
-      C2.2/C2.3/integration, a broader ask than this project's own
-      established "defer full regression to C2 FULLY SEALED" precedent;
-      honored here as asked.
-- [ ] Item 6, inspection proof that the startup path stays read-only —
+- [x] Real MetaEditor compile + run of `MLQuantAI.mq5` itself (the main
+      EA, not just a `Tests/*.mq5` script) — 2026-08-22.
+- [x] `Tests/MLQuantAI_Test_C2_BrokerSubmissionGate_DurableIdempotency.mq5`
+      real MetaEditor run — 41/41 ALL PASS (after fixing 2 real
+      `[FAIL]`s found in this commit's own new test assertions, not
+      production code — see the status line above).
+- [x] `Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5` re-run —
+      147/147 ALL PASS (was 145/145; +2 from the setup-only amendment).
+- [ ] Full regression including C1.2/C1.3/C2.3 re-run in the same
+      session — none of those three files, or the `.mqh` files they
+      test, were touched by this commit (only
+      `MLQuantAI_BrokerSubmissionGate.mqh`,
+      `MLQuantAI_BrokerSubmissionAuditReadiness.mqh` (new),
+      `MLQuantAI_ReasonCodes.mqh` (append-only), and `MLQuantAI.mq5`
+      changed) — regression risk is minimal, but the user's own
+      "Required proof" list explicitly asked for this broader
+      re-confirmation; offered, pending the user's call on whether it's
+      still wanted before merge.
+- [x] Item 6, inspection proof that the startup path stays read-only —
       covered by this doc's own file-by-file description above and by
-      each amended file's own structural-proof test; no separate
-      artifact produced.
+      each amended file's own structural-proof test.
