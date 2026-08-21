@@ -4,6 +4,34 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C2 environment-lock checklist (NOT YET real-MetaEditor-confirmed)
+
+The final, read-only, consolidated re-verification pass before a real
+`OrderSend()` would ever be authorized, per the user's explicit 18-item
+checklist. New `Execution/MLQuantAI_EnvironmentLockContract.mqh`
+(`EnvironmentLockPolicy` - `trade_server_allowlist`, a new struct rather
+than editing the frozen `ExecutionPolicy`) and
+`Execution/MLQuantAI_EnvironmentLockGate.mqh`
+(`BrokerSubmissionEnvironmentLock_Evaluate`, chaining the already-sealed
+`BrokerSubmissionGate_Evaluate` first, then five genuinely new checks:
+trade-server allowlist, `TERMINAL_TRADE_ALLOWED`, `ACCOUNT_TRADE_ALLOWED`,
+`ACCOUNT_TRADE_EXPERT`, and a fresh `SYMBOL_VOLUME_MIN` floor re-check -
+all four new platform facts verified directly against the real MQL5
+reference, not recalled from memory). Five new append-only reason
+codes. The five new checks live in their own directly-testable
+function, `EnvironmentLock_EvaluateNewChecks`, split out for the same
+reason `BrokerSubmission_ProcessSendResult` was split in C2.2's own
+first amendment - a non-DEMO test terminal would otherwise always
+reject on environment before ever reaching these checks through the
+full chained entry point. Every other checklist item was either already
+covered by an earlier sealed gate (cited, not duplicated) or explicitly
+deferred: "manual approval bound to request ID+hash, single-use"
+describes a real, not-yet-designed approval mechanism, not a runtime
+assertion this gate can check from existing data - stays out of scope
+pending its own separate freeze. See
+`Docs/PhaseC_C2_EnvironmentLockChecklist.md` for the full item-by-item
+mapping. Not yet real-MetaEditor-confirmed.
+
 ## [Unreleased] - Phase C2: FULLY SEALED (2026-08-22)
 
 **C2.2 147/147 + C2.3 104/104 + C2.2/C2.3 integration + startup-rebuild

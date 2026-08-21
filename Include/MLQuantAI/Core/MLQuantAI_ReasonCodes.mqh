@@ -95,6 +95,16 @@ enum ENUM_REASON_CODE
    // this means the registry could not be consulted at all.
    REASON_EXECUTION_AUDIT_NOT_READY,
 
+   // C2 environment-lock checklist (frozen, per
+   // Docs/PhaseC_C2_EnvironmentLockChecklist.md): five new, genuinely
+   // new runtime assertions not covered by any earlier gate - appended
+   // at the tail, per this enum's append-only discipline.
+   REASON_EXECUTION_SERVER_NOT_ALLOWED,
+   REASON_EXECUTION_TERMINAL_TRADE_DISABLED,
+   REASON_EXECUTION_ACCOUNT_TRADE_DISABLED,
+   REASON_EXECUTION_EXPERT_TRADE_DISABLED,
+   REASON_EXECUTION_VOLUME_BELOW_MINIMUM,
+
    REASON_COUNT
 };
 
@@ -144,6 +154,11 @@ string ReasonCodeToString(ENUM_REASON_CODE r)
       case REASON_EXECUTION_LINEAGE_INVALID:            return "EXECUTION_LINEAGE_INVALID";
       case REASON_EXECUTION_SUBMISSION_AMBIGUOUS:       return "EXECUTION_SUBMISSION_AMBIGUOUS";
       case REASON_EXECUTION_AUDIT_NOT_READY:            return "EXECUTION_AUDIT_NOT_READY";
+      case REASON_EXECUTION_SERVER_NOT_ALLOWED:         return "EXECUTION_SERVER_NOT_ALLOWED";
+      case REASON_EXECUTION_TERMINAL_TRADE_DISABLED:    return "EXECUTION_TERMINAL_TRADE_DISABLED";
+      case REASON_EXECUTION_ACCOUNT_TRADE_DISABLED:     return "EXECUTION_ACCOUNT_TRADE_DISABLED";
+      case REASON_EXECUTION_EXPERT_TRADE_DISABLED:      return "EXECUTION_EXPERT_TRADE_DISABLED";
+      case REASON_EXECUTION_VOLUME_BELOW_MINIMUM:       return "EXECUTION_VOLUME_BELOW_MINIMUM";
    }
    return "UNKNOWN";
 }
