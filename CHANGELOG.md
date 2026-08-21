@@ -4,6 +4,36 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase C2.2: Broker Submission Adapter (Implemented, awaiting real MetaEditor run)
+
+Implements `Docs/PhaseC_C2_1_BrokerSubmissionContract.md`. Adds
+`MLQUANTAI_MAGIC_NUMBER` (`Core/MLQuantAI_VersionRegistry.mqh`),
+`ExecutionSubmissionResult` (`Execution/MLQuantAI_ExecutionSubmissionContract.mqh`),
+`BrokerSubmissionGate_Evaluate` (`Execution/MLQuantAI_BrokerSubmissionGate.mqh`
+- every C1.2 gate re-run fresh via the sealed, unmodified
+`SafetyGate_Evaluate`, plus a real `ACCOUNT_TRADE_MODE_DEMO` cross-check
+paired with `ExecutionPolicy.environment_mode == EXECUTION_ENV_DEMO`,
+plus an in-session idempotency registry - zero new reason codes,
+reuses `REASON_EXECUTION_ENVIRONMENT_NOT_PERMITTED`/`REASON_DUPLICATE_EVENT`),
+`BrokerSubmission_BuildTradeRequest`/`BrokerSubmission_ClassifyRetcode`
+(`Execution/MLQuantAI_BrokerSubmissionBuilder.mqh` - pure, no `OrderSend`
+call anywhere), and `BrokerSubmission_Submit`
+(`Execution/MLQuantAI_BrokerSubmissionAdapter.mqh` - the only place in
+this codebase that calls the real `OrderSend`, implementing the frozen
+lifecycle exactly: pre-submit gate → `EXECUTION_SUBMISSION_ATTEMPTED`
+→ `OrderSend` → branch on its return value per the sealed state
+machine).
+
+Per the user's explicit instruction ("แยก unit test (gate/construction
+logic) ออกจาก real-submit smoke test"), the automated regression suite
+(`Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5`) never calls
+`BrokerSubmission_Submit`/`OrderSend` - a separate, explicitly opt-in,
+manual-only script (`Tests/MLQuantAI_SmokeTest_C2_2_RealOrderSend.mq5`,
+gated behind an unchecked-by-default confirmation input plus its own
+independent `ACCOUNT_TRADE_MODE_DEMO` check) is the only place a real
+order may actually be sent. See
+`Docs/PhaseC_C2_2_BrokerSubmissionAdapterStatus.md`.
+
 ## [Unreleased] - Phase C2.1: Broker Submission Contract (frozen, no code)
 
 Opens after C1 FULLY SEALED (215/215, all real MetaEditor runs). First

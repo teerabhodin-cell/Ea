@@ -264,7 +264,22 @@ enum ENUM_EVENT_TYPE
    // The dormant EVENT_TYPE_ORDER_SUBMITTED/_FILLED/_REJECTED/
    // _POSITION_CLOSED above stay reserved for C2's real broker facts.
    EVENT_TYPE_EXECUTION_REQUEST_CREATED,
-   EVENT_TYPE_EXECUTION_DRY_RUN_COMPLETED
+   EVENT_TYPE_EXECUTION_DRY_RUN_COMPLETED,
+
+   // Phase C2.2: same append-at-end rule. EXECUTION_SUBMISSION_ATTEMPTED
+   // is a SystemEvent audit artifact - crossed the final pre-submit gate,
+   // no broker claim yet, NOT a candidate-lifecycle transition (that is
+   // CANDIDATE_SUBMITTED above, logged separately once OrderSend
+   // actually returns true). ORDER_SUBMISSION_ERROR covers OrderSend()
+   // returning false or an unclassifiable local/API failure - the
+   // request never reached the trade server, candidate.state stays
+   // CANDIDATE_CREATED. See
+   // Docs/PhaseC_C2_1_BrokerSubmissionContract.md's event vocabulary.
+   // The dormant EVENT_TYPE_ORDER_SUBMITTED/_ORDER_REJECTED declared
+   // above (in the execution/position block) are reused as-is for the
+   // post-OrderSend accepted/ambiguous and explicit-rejection cases.
+   EVENT_TYPE_EXECUTION_SUBMISSION_ATTEMPTED,
+   EVENT_TYPE_ORDER_SUBMISSION_ERROR
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -301,6 +316,8 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_EXECUTION_ELIGIBILITY_DECIDED:      return "EXECUTION_ELIGIBILITY_DECIDED";
       case EVENT_TYPE_EXECUTION_REQUEST_CREATED:          return "EXECUTION_REQUEST_CREATED";
       case EVENT_TYPE_EXECUTION_DRY_RUN_COMPLETED:        return "EXECUTION_DRY_RUN_COMPLETED";
+      case EVENT_TYPE_EXECUTION_SUBMISSION_ATTEMPTED:     return "EXECUTION_SUBMISSION_ATTEMPTED";
+      case EVENT_TYPE_ORDER_SUBMISSION_ERROR:             return "ORDER_SUBMISSION_ERROR";
    }
    return "UNKNOWN";
 }
@@ -337,6 +354,8 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "EXECUTION_ELIGIBILITY_DECIDED")     return EVENT_TYPE_EXECUTION_ELIGIBILITY_DECIDED;
    if(s == "EXECUTION_REQUEST_CREATED")         return EVENT_TYPE_EXECUTION_REQUEST_CREATED;
    if(s == "EXECUTION_DRY_RUN_COMPLETED")       return EVENT_TYPE_EXECUTION_DRY_RUN_COMPLETED;
+   if(s == "EXECUTION_SUBMISSION_ATTEMPTED")    return EVENT_TYPE_EXECUTION_SUBMISSION_ATTEMPTED;
+   if(s == "ORDER_SUBMISSION_ERROR")            return EVENT_TYPE_ORDER_SUBMISSION_ERROR;
    return EVENT_TYPE_UNKNOWN;
 }
 
@@ -422,6 +441,44 @@ ENUM_SAFETY_GATE_DECISION SafetyGateDecisionFromString(string s)
    if(s == "ACCEPTED") return SAFETY_GATE_ACCEPTED;
    if(s == "REJECTED") return SAFETY_GATE_REJECTED;
    return SAFETY_GATE_NONE;
+}
+
+// Phase C2.2: ExecutionSubmissionResult.submission_status - a real
+// broker-facing outcome, deliberately distinct from
+// ENUM_SAFETY_GATE_DECISION (C1.2's own dry-run-only ACCEPTED/REJECTED
+// axis, which never claims anything about a broker). NONE = never
+// attempted (Init()/unfilled, or the pre-submit gate rejected before
+// OrderSend was ever called). ERROR = OrderSend() itself returned
+// false. REJECTED = OrderSend() returned true but result.retcode was an
+// explicit server rejection. SUBMITTED = accepted or ambiguous -
+// awaiting a later, separately-authorized OnTradeTransaction
+// reconciliation. See Docs/PhaseC_C2_1_BrokerSubmissionContract.md.
+enum ENUM_SUBMISSION_STATUS
+{
+   SUBMISSION_STATUS_NONE,
+   SUBMISSION_STATUS_ERROR,
+   SUBMISSION_STATUS_REJECTED,
+   SUBMISSION_STATUS_SUBMITTED
+};
+
+string SubmissionStatusToString(ENUM_SUBMISSION_STATUS s)
+{
+   switch(s)
+   {
+      case SUBMISSION_STATUS_NONE:      return "NONE";
+      case SUBMISSION_STATUS_ERROR:     return "ERROR";
+      case SUBMISSION_STATUS_REJECTED:  return "REJECTED";
+      case SUBMISSION_STATUS_SUBMITTED: return "SUBMITTED";
+   }
+   return "NONE";
+}
+
+ENUM_SUBMISSION_STATUS SubmissionStatusFromString(string s)
+{
+   if(s == "ERROR")     return SUBMISSION_STATUS_ERROR;
+   if(s == "REJECTED")  return SUBMISSION_STATUS_REJECTED;
+   if(s == "SUBMITTED") return SUBMISSION_STATUS_SUBMITTED;
+   return SUBMISSION_STATUS_NONE;
 }
 
 #endif // __MLQUANTAI_ENUMS_MQH__
