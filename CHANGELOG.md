@@ -4,6 +4,44 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase C1.3: Audit Projections + Integrity Checks + Reconciliation Read Model (Implemented, awaiting real run)
+
+Opens after C1.2 PASSED (128/128, real MetaEditor run, 2026-08-21).
+Implements `Docs/PhaseC_C1_1_ExecutionRequestContract.md`'s C1.3
+addendum. Strictly read-only over the event data C1.2 already durably
+writes - no broker query, no broker mutation, no candidate-lifecycle
+transition, no retry mechanism, no C2 event type.
+
+Two corrections to this project's own established projection
+precedent, made before any code existed: (1) an orphan
+`EXECUTION_DRY_RUN_COMPLETED` (referencing a request not yet seen)
+fails the whole rebuild closed - it can never surface as a soft
+reconciliation status alongside `PAIRED`/`UNPAIRED`; (2)
+`ExecutionRequestProjection`/`DryRunResultProjection` are built
+together in ONE single, sequential, interleaved pass over the file -
+unlike every prior `*Projection.mqh`'s two-pass design - since a naive
+two-pass rebuild would silently fail to catch a completion event
+appearing before its own request in file order.
+
+### Added
+- `Execution/MLQuantAI_ExecutionAuditProjection.mqh` (new):
+  `ExecutionRequestProjection` (1 per `execution_request_id`, same
+  duplicate-vs-collision rule every prior projection uses),
+  `DryRunResultProjection` (0..N per request, keyed by the event's own
+  `source_sequence_number`, never deduped by `execution_request_id`
+  alone - a legitimate re-evaluation after runtime context changes is
+  real audit history, not a duplicate), `ExecutionReconciliation_BuildReport`
+  (`PAIRED`/`UNPAIRED`, computed only after both projections rebuild
+  cleanly).
+- `Tests/MLQuantAI_Test_C1_3_ExecutionAuditReconciliation.mq5` (new,
+  10 test functions).
+
+Not yet PASSED - awaiting a real MetaEditor compile/run, plus the
+manual regression re-run of `Test_B9_ExecutionEligibility.mq5`,
+`Test_B9_Commit2_EligibilityEvent.mq5`,
+`Test_B9_Commit3_IntegrationRegression.mq5`, and
+`Test_C1_2_ExecutionRequestSafetyGate.mq5` in the same session.
+
 ## [Unreleased] - Phase C1.2: ExecutionRequest Build + SafetyGate + Dry-Run Emission (PASSED 2026-08-21)
 
 Opens after C1.1's contract freeze was confirmed. Implements
