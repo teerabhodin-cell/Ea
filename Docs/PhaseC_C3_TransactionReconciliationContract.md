@@ -14,6 +14,17 @@ Implementation (`C3.2`, the actual handler + `History*` calls) is
 **separate approval**, per the user's frozen sequence - this doc is the
 prerequisite freeze, not a green light to build it.
 
+**Update**: sections 10-14 below freeze the `C3.2` sub-contract itself
+(defensive rules, callback shape, trust boundary, event schema, deferred-
+processor split, and required test-design additions), per the user's
+explicit follow-up authorization after reviewing a read-only "C3
+implementation collision-check." That authorization covers **contract
+amendment and test design only** - the actual `OnTradeTransaction`
+handler, any `History*`/`PositionSelect` call, any new `ENUM_EVENT_TYPE`
+value actually added to a `.mqh` file, any candidate-lifecycle
+transition, and any broker mutation remain separate, not-yet-approved
+steps. See the updated scope guard at the bottom of this document.
+
 ## 0. What already exists today (the surface C3 must integrate with)
 
 - `outTradeRequest.comment = req.correlation_id` and
@@ -341,6 +352,186 @@ demo smoke protocol," itself gated on items 3-5 first) is what would
 ever validate this against a REAL, live `OnTradeTransaction` callback -
 never this contract's own test suite.
 
+## 10. C3.2 defensive rule: `HistorySelect` visibility is never assumed
+
+The collision-check left one open, unverified platform question: whether
+a deal/order that just fired inside `OnTradeTransaction` is guaranteed
+immediately queryable via `HistorySelect`/`HistoryDealGetTicket`/
+`HistoryOrderGetTicket` in that same callback. `HistorySelect`'s own
+reference page documents that it populates a program-local history list
+that `HistoryDealGetTicket`/`HistoryOrderGetTicket` then read
+(`mql5.com/en/docs/trading/historyselect`,
+`mql5.com/en/docs/trading/historydealgetticket`) - selection is
+documented as a precondition for ticket-by-index access, but same-
+callback visibility timing for a just-arrived fact is not documented
+either way.
+
+**Frozen, per the user's explicit instruction: this is resolved as a
+design constraint, not an empirical prerequisite.** C3.2's future
+handler must be written to never depend on the answer:
+
+```
+OnTradeTransaction must never assume a just-arrived DEAL_ADD /
+ORDER_* transaction is immediately queryable through HistorySelect.
+
+If HistorySelect or a ticket lookup fails:
+  -> persist only the transaction envelope available in `trans`
+  -> do not infer missing broker facts
+  -> do not transition candidate
+  -> mark/publish deferred reconciliation need
+```
+
+This turns the open timing question into a test/operational
+observation for later, never a precondition for implementing a safe
+handler - a `HistorySelect`/ticket-lookup failure is simply one more
+case section 7's "no transition on unmatched/ambiguous facts" rule
+already covers, applied to a lookup failure rather than a matching
+failure.
+
+## 11. C3.2 callback durability: the handler must stay small and non-blocking
+
+Per section 5's already-frozen queue-overwrite risk (MQL5 documents a
+1,024-item transaction queue whose old items may be overwritten when the
+handler is slow -
+`mql5.com/en/docs/basis/function/events`), `OnTradeTransaction` itself
+must do the minimum possible work before returning:
+
+```
+callback
+-> validate minimal trans envelope
+-> append immutable transaction-observed event
+-> return
+```
+
+No history scan, no projection rebuild, no aggregation loop (section 4's
+running-fill-volume logic), no broker mutation, and no candidate-
+lifecycle transition may run inside the callback itself. All of that is
+explicitly deferred to section 14's separate processor, which runs
+outside the callback's own execution context.
+
+## 12. C3.2 trust boundary: `trans` is the only primary evidence
+
+Freezes, from the collision-check's own findings:
+
+- For every transaction type, `trans` (the `MqlTradeTransaction`
+  parameter) is the primary and only reliably-populated callback
+  evidence.
+- `request` and `result` (`MqlTradeRequest`/`MqlTradeResult`) must be
+  read only when `trans.type == TRADE_TRANSACTION_REQUEST` - both
+  reference pages document these two parameters as populated "for
+  `TRADE_TRANSACTION_REQUEST` type transaction only"
+  (`mql5.com/en/docs/constants/structures/mqltradetransaction`,
+  `mql5.com/en/docs/constants/structures/mqltraderesult`). For every
+  other transaction type they must not be read or trusted at all.
+- `MqlTradeResult` does not carry a position ticket at submit time -
+  position linkage is only ever transaction/history-derived, later, via
+  `trans.position` on a subsequent transaction
+  (`mql5.com/en/docs/constants/structures/mqltraderesult`). This is why
+  `ExecutionSubmissionResult` (`order_ticket`/`deal_ticket` only, no
+  `position` field) stays unchanged - it cannot correctly carry a
+  position ticket at the point it is populated, so C3.2 must not add one
+  there; position tracking belongs in the new envelope event (section 13)
+  or the deferred processor's own state (section 14), never retrofitted
+  onto `ExecutionSubmissionResult`.
+
+## 13. C3.2 event schema: a raw transaction-envelope fact, not an execution claim
+
+Freezes the shape (name and field list only - adding the value to
+`ENUM_EVENT_TYPE` and actually emitting it remains implementation, not
+authorized by this document):
+
+```
+EVENT_TYPE_BROKER_TRANSACTION_OBSERVED
+```
+
+It is a durable envelope of what `trans` itself said, nothing inferred
+and nothing claimed about execution outcome. Fields:
+
+```
+source sequence / event identity
+transaction type
+deal ticket
+order ticket
+position ticket
+position_by ticket
+symbol
+order/deal type
+order state
+price
+volume
+SL / TP
+transaction timestamp
+request_id only if TRADE_TRANSACTION_REQUEST
+```
+
+Per section 12's trust boundary, `request`/`result`-derived detail
+(including `request_id`) must be **absent or explicitly `not_applicable`**
+for every transaction type other than `TRADE_TRANSACTION_REQUEST` - never
+a zero/default value that a later reader could misread as an observed
+fact. This event is intentionally NOT `EVENT_TYPE_ORDER_FILLED`,
+`EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED`, or
+`EVENT_TYPE_CANDIDATE_EXECUTED` - it carries no matching-hierarchy
+verdict and drives no lifecycle transition by itself; section 6's
+already-frozen event names remain owned exclusively by section 14's
+deferred processor, once it has produced a deterministic match.
+
+## 14. C3.2 deferred processor: matching stays out of the callback
+
+A later read-model/worker (implementation detail, not frozen here)
+consumes durable `EVENT_TYPE_BROKER_TRANSACTION_OBSERVED` envelopes plus
+existing event-store evidence and, when needed, a `History*` lookup,
+under a separate, explicitly-approved policy, to:
+
+```
+match -> transaction-derived event -> lifecycle transition
+unmatched / delayed / insufficient -> diagnostic + reconciliation queue
+```
+
+This is the same split already frozen in sections 6-8 (matching
+hierarchy, fail-closed-on-ambiguity, the reconciliation read model) -
+sections 10-13 add only the callback-side envelope-capture rules that
+feed it. **No raw `OnTradeTransaction` callback may ever directly emit
+`EVENT_TYPE_ORDER_FILLED`, `EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED`,
+or drive `CANDIDATE_EXECUTED`/any other `EventStore_LogTransition` call**
+- those remain exclusively the deferred processor's own output, per
+section 11's callback-durability rule.
+
+## 15. C3.2 test-design additions (design only, no test file written by this document)
+
+Extends section 9's already-frozen "fixture-fed `MqlTradeTransaction`
+struct, no real callback" approach with the specific scenarios sections
+10-14 introduce. C3.2's future test suite must additionally prove, via
+fixtures, never a real broker call:
+
+- A `HistorySelect`/ticket-lookup failure (simulated by the fixture,
+  since no test harness can force a real lookup to fail) results in the
+  envelope-only persist path of section 10, never an inferred fact and
+  never a candidate transition.
+- The envelope-building function used by section 13 leaves
+  `request`/`result`-derived fields absent/`not_applicable` for every
+  fixture transaction type other than `TRADE_TRANSACTION_REQUEST`, and
+  populates them only for that one type - a direct test of section 12's
+  trust boundary.
+- The deferred processor (section 14) never calls
+  `EventStore_LogTransition` from an unmatched or ambiguous fixture
+  envelope - reusing section 7's already-frozen fail-closed assertion
+  style, applied to the new envelope shape.
+- No test may assert anything about `OnTradeTransaction`'s own queue-
+  overwrite behavior (section 11) - that is a platform-level guarantee
+  outside what a test harness can observe, not something this project's
+  suite can verify directly.
+
+## 16. Minor documentation correction
+
+The collision-check found the `ENUM_TRADE_TRANSACTION_TYPE` reference
+page documents **eleven** values (`ORDER_ADD`, `ORDER_UPDATE`,
+`ORDER_DELETE`, `DEAL_ADD`, `DEAL_UPDATE`, `DEAL_DELETE`, `HISTORY_ADD`,
+`HISTORY_UPDATE`, `HISTORY_DELETE`, `POSITION`, `REQUEST`), not ten as
+the earlier CHANGELOG summary entry for this contract stated. Corrected
+in `CHANGELOG.md` alongside this update. Documentation-only - does not
+alter section 1's frozen matching semantics, which never depended on the
+exact count.
+
 ## Scope guard (frozen, matches the user's explicit prohibition for this document)
 
 ```
@@ -351,6 +542,14 @@ No OrderSend/CTrade/modify/close/pending-order API anywhere.
 No candidate-lifecycle transition, no event append, no new struct/enum
     value actually added to any .mqh file by this document.
 No sealed file touched.
-Implementation (C3.2: the real handler + History* calls) is separate
-    approval, not authorized by this document.
+Sections 10-16 freeze the C3.2 sub-contract's defensive rules, callback
+    shape, trust boundary, event-envelope schema, deferred-processor
+    split, and test-design additions - contract amendment and test
+    design only, per the user's explicit follow-up authorization.
+Still NOT authorized by this document: implementing OnTradeTransaction,
+    calling HistorySelect/HistoryDealGet*/HistoryOrderGet*, adding
+    EVENT_TYPE_BROKER_TRANSACTION_OBSERVED or any other new value to
+    ENUM_EVENT_TYPE, any candidate-lifecycle transition or broker-side
+    query/mutation, and the controlled demo smoke protocol. Each remains
+    its own, separate, explicitly-approved future step.
 ```
