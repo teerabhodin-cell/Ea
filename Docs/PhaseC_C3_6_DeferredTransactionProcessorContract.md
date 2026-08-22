@@ -213,12 +213,19 @@ maps each to the exact code-level check against the sealed read models.
    within this scan", NOT a lifecycle action)
 
 +  upstream projections all report readiness .ok with zero failed lines
-   → TransactionMatchingReadiness_IsReady()
-     && TransactionMatchingReadiness_LastReport().base.ok && deals_failed==0
-     && CandidateProjectionReport.ok && lines_failed==0
-     && ExecutionAudit/BrokerSubmissionAudit readiness .ok (staged as
-        TransactionMatching's own upstream gate)
-     && ReplayReport.ok (replay must have succeeded — §5)
+   → C3.6's DIRECT gate is TransactionMatchingReadiness_IsReady()
+     && TransactionMatchingReadiness_LastReport().base.ok
+     && TransactionMatchingReadiness_LastReport().base.deals_failed == 0.
+     That readiness snapshot transitively proves the staged upstream
+     rebuild chain (BrokerSubmissionAuditProjection_RebuildFromFile,
+     which itself stages C1.3 ExecutionAuditProjection_RebuildFromFile)
+     already succeeded with zero failed lines — C3.6 does NOT re-verify
+     those reports individually.
+   → plus ReplayReport.ok (replay must have succeeded — §5) and SafeMode
+     clear (no upstream inconsistency) for candidate-state readiness.
+   → C3.6 must NOT call *_RebuildFromFile() to recover individual upstream
+     reports at runtime; it consumes the already-built readiness snapshots
+     only.
 ```
 
 **Frozen**: `candidate.state` (StateProjector) and `match_status`
@@ -243,7 +250,8 @@ MATCHED_ORDER_TERMINAL     → reserved; never acted on (C3.5 §4) → RECOMMEND
 candidate.state != SUBMITTED (CREATED/terminal) → RECOMMEND_NONE
 candidate.state == EXECUTED/REJECTED_BY_BROKER/ERROR → already terminal → RECOMMEND_NONE
 missing or failed upstream projection readiness → RECOMMEND_BLOCKED (fail closed)
-replay not ok / SafeMode engaged → RECOMMEND_NONE (§5: upstream_replay_not_ready)
+replay not ok / SafeMode engaged → scan-level failure (§5): zero output
+                          rows emitted, report/log upstream_replay_not_ready; NOT modeled as a RECOMMEND_NONE row
 duplicate or conflicting execution_request_id mapping → RECOMMEND_BLOCKED
 candidate → execution_request_id index: 0 or >1 mappings → RECOMMEND_BLOCKED (§6)
 same action_id + different payload (collision) → RECOMMEND_BLOCKED (fail closed, §11)
@@ -291,9 +299,15 @@ struct DeferredRecommendationRecord
    double intended_lot_size;                 // from ExecutionRequestProjection
    ENUM_RECOMMENDATION recommended_action;     // NONE | RECOMMEND_EXECUTED | RECOMMEND_BLOCKED
    string reason_code;                        // stable reason for NONE/BLOCKED
-   // provenance (where the read-model API exposes them):
-   long   source_sequence_number;             // from ExecutionRequestProjection record
-   string source_log_event_id;                // from ExecutionRequestProjection record
+   // provenance — execution-request source (where the read-model API exposes them):
+   long   execution_request_source_sequence_number; // from ExecutionRequestProjection record
+   string execution_request_source_log_event_id;    // from ExecutionRequestProjection record
+   // provenance — per-deal source, aligned 1:1 with sorted deal_tickets[]:
+   long   deal_source_sequence_numbers[];            // from TransactionDealRecord, per deal_ticket
+   string deal_source_log_event_ids[];               // from TransactionDealRecord, per deal_ticket
+   // candidate lineage (provenance promise, from CandidateProjection):
+   string candidate_root_event_id;                  // CandidateProjectionRecord.root_event_id
+   string context_event_id;                         // CandidateProjectionRecord.context_event_id
    // session-scope diagnostic (stale-after-OnInit marker, NOT an action_id input):
    datetime evaluated_at;                     // TimeCurrent() at scan — diagnostic only
    bool   stale_after_startup;                // always true under Option A (C3.5 §10)
@@ -414,15 +428,19 @@ separate authorization.
 The C3.6 implementation round (Commit 2) is authorized only to:
 
 ```
-Add Execution/MLQuantAI_DeferredTransactionProcessor.mqh (new file).
+Add Include/MLQuantAI/Execution/MLQuantAI_DeferredTransactionProcessor.mqh (new file).
 Add Tests/MLQuantAI_Test_C3_6_DeferredTransactionProcessor.mq5 (new file).
 Edit MLQuantAI.mq5 OnInit wiring ONLY:
   insert one DeferredTransactionProcessor_StartupScan(g_EventStoreFileName)
   call between ReplayEngine_Run and BrokerReconciliation_CheckAll.
 Read only from sealed projections (no struct/API edit):
-  CandidateProjection, ExecutionAuditProjection,
-  BrokerSubmissionAuditProjection, TransactionMatchingProjection,
-  StateProjector (via ReplayEngine), TransactionMatchingReadiness.
+  Include/MLQuantAI/Infrastructure/EventStore/MLQuantAI_CandidateProjection.mqh,
+  Include/MLQuantAI/Execution/MLQuantAI_ExecutionAuditProjection.mqh,
+  Include/MLQuantAI/Execution/MLQuantAI_BrokerSubmissionAuditProjection.mqh,
+  Include/MLQuantAI/Execution/MLQuantAI_TransactionMatchingProjection.mqh,
+  Include/MLQuantAI/Infrastructure/EventStore/MLQuantAI_StateProjector.mqh
+  (via Include/MLQuantAI/Infrastructure/EventStore/MLQuantAI_ReplayEngine.mqh),
+  Include/MLQuantAI/Execution/MLQuantAI_TransactionMatchingReadiness.mqh.
 Build the internal candidate_id → execution_request_id index inside the
   new processor file only (per C3.5 §11 and §6 of this contract).
 Produce a read-only DeferredRecommendationRecord / report only.
