@@ -16,12 +16,27 @@
 //| OnTradeTransaction, no broker history/position/order query. Every     |
 //| new check here reads only TerminalInfoInteger/AccountInfoInteger/     |
 //| AccountInfoString/SymbolInfoDouble - all read-only.                   |
+//|                                                                       |
+//| THIRD AMENDMENT (C2 manual-approval contract, gate integration        |
+//| round): adds a sixth check, after the original five, per               |
+//| Docs/PhaseC_C2_ManualApprovalContract.md's "C2 gate integration" and   |
+//| "Approval timing boundary" sections - manual-approval registry         |
+//| readiness, then a single captured asOf, then                          |
+//| ManualApprovalRegistry_HasValidApproval() against all five identity    |
+//| fields. Mandatory and unconditional, independent of                    |
+//| ExecutionPolicy.manual_approval_required's own value (that field       |
+//| stays a sealed C1 concern, untouched). Does NOT re-check                |
+//| SubmissionAttemptRegistry_HasAttempt() here - that is already           |
+//| mandatory and already ran earlier in this same evaluation, inherited   |
+//| from BrokerSubmissionGate_Evaluate below - see the contract doc's      |
+//| "Approval scope and gate order" section.                                |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_ENVIRONMENTLOCKGATE_MQH__
 #define __MLQUANTAI_ENVIRONMENTLOCKGATE_MQH__
 
 #include "MLQuantAI_BrokerSubmissionGate.mqh"
 #include "MLQuantAI_EnvironmentLockContract.mqh"
+#include "MLQuantAI_ManualApprovalReadiness.mqh"
 
 // Pure(ish): assumes outResult already carries an ACCEPTED verdict from
 // every earlier gate (the caller's responsibility, exactly as
@@ -79,6 +94,39 @@ bool EnvironmentLock_EvaluateNewChecks(const ExecutionRequest &request, const En
    {
       outResult.decision    = SAFETY_GATE_REJECTED;
       outResult.reason_code = REASON_EXECUTION_VOLUME_BELOW_MINIMUM;
+      return true;
+   }
+
+   // Sixth check, third amendment: manual-approval registry readiness,
+   // then a single captured asOf, then HasValidApproval() against all
+   // five identity fields - see this file's own header for the frozen
+   // ordering/timing rules this implements.
+   if(!ManualApprovalReadiness_IsReady())
+   {
+      outResult.decision    = SAFETY_GATE_REJECTED;
+      outResult.reason_code = REASON_EXECUTION_AUDIT_NOT_READY;
+      return true;
+   }
+
+   datetime asOf = TimeCurrent();
+   if(asOf <= 0)
+   {
+      // MQL5 does not document TimeCurrent()'s return value for a
+      // terminal that has never connected/received a quote - treated
+      // as the same "cannot be trusted" condition as an unready
+      // registry, same defensive pattern BrokerSubmission_
+      // BuildTradeRequest already uses for bid <= 0.0 || ask <= 0.0.
+      outResult.decision    = SAFETY_GATE_REJECTED;
+      outResult.reason_code = REASON_EXECUTION_AUDIT_NOT_READY;
+      return true;
+   }
+
+   if(!ManualApprovalRegistry_HasValidApproval(request.execution_request_id, request.execution_request_hash,
+                                                 request.execution_policy_version, request.candidate_id,
+                                                 request.correlation_id, asOf))
+   {
+      outResult.decision    = SAFETY_GATE_REJECTED;
+      outResult.reason_code = REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED;
       return true;
    }
 
