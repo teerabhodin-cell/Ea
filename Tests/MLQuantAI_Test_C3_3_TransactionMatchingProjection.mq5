@@ -380,7 +380,7 @@ void Test_ExactOrderTicketMatch()
    Check(EventStore_Open(TEST_FILE), "EventStore opens for this test");
 
    string execReqId; double lotSize;
-   Check(BuildDurableSubmittedRequest("ORDMATCH", 0, 5002, 6002, execReqId, lotSize), "sanity: durable SUBMITTED outcome built (order=5002, deal=6002)");
+   Check(BuildDurableSubmittedRequest("ORDMATCH", 1, 5002, 6002, execReqId, lotSize), "sanity: durable SUBMITTED outcome built (order=5002, deal=6002)");
    // Observed deal_ticket (9999) does NOT match the outcome's own deal_ticket (6002) -
    // only order_ticket (5002) can resolve this, exercising priority B.
    Check(EmitDealAddObservation(9999, 5002, lotSize, 1900.00), "sanity: DEAL_ADD observation emitted (deal_ticket=9999, order_ticket=5002 matches)");
@@ -405,7 +405,7 @@ void Test_DuplicateDealReplay_NoOp()
    Check(EventStore_Open(TEST_FILE), "EventStore opens for this test");
 
    string execReqId; double lotSize;
-   Check(BuildDurableSubmittedRequest("DUPREPLAY", 0, 5003, 6003, execReqId, lotSize), "sanity: durable SUBMITTED outcome built");
+   Check(BuildDurableSubmittedRequest("DUPREPLAY", 2, 5003, 6003, execReqId, lotSize), "sanity: durable SUBMITTED outcome built");
    Check(EmitDealAddObservation(6003, 5003, 0.01, 1900.00), "sanity: first DEAL_ADD observation emitted");
    Check(EmitDealAddObservation(6003, 5003, 0.01, 1900.00), "sanity: SAME deal_ticket observed a second time, identical payload");
    EventStore_Close();
@@ -424,7 +424,7 @@ void Test_ConflictingDealPayload_CollisionFailsClosed()
    Check(EventStore_Open(TEST_FILE), "EventStore opens for this test");
 
    string execReqId; double lotSize;
-   Check(BuildDurableSubmittedRequest("COLLISION", 0, 5004, 6004, execReqId, lotSize), "sanity: durable SUBMITTED outcome built");
+   Check(BuildDurableSubmittedRequest("COLLISION", 3, 5004, 6004, execReqId, lotSize), "sanity: durable SUBMITTED outcome built");
    Check(EmitDealAddObservation(6004, 5004, 0.01, 1900.00), "sanity: first DEAL_ADD observation emitted (volume=0.01)");
    Check(EmitDealAddObservation(6004, 5004, 0.02, 1900.00), "sanity: SAME deal_ticket observed again with a DIFFERENT volume - a genuine collision");
    EventStore_Close();
@@ -445,7 +445,7 @@ void Test_MultiDealPartialFillAggregation()
    Check(EventStore_Open(TEST_FILE), "EventStore opens for this test");
 
    string execReqId; double lotSize;
-   Check(BuildDurableSubmittedRequest("PARTIALFILL", 0, 5005, 6005, execReqId, lotSize), "sanity: durable SUBMITTED outcome built");
+   Check(BuildDurableSubmittedRequest("PARTIALFILL", 4, 5005, 6005, execReqId, lotSize), "sanity: durable SUBMITTED outcome built");
    Check(lotSize > 0.02, "sanity: this fixture's lot_size is large enough to test a genuine partial fill");
 
    double firstDealVolume = lotSize / 2.0;
@@ -502,8 +502,8 @@ void Test_AmbiguousOrderTicket_NoMatch()
 
    string execReqIdA; double lotSizeA;
    string execReqIdB; double lotSizeB;
-   Check(BuildDurableSubmittedRequest("AMBIGA", 1, 5008, 6008, execReqIdA, lotSizeA), "sanity: first durable SUBMITTED outcome built (order=5008, deal=6008)");
-   Check(BuildDurableSubmittedRequest("AMBIGB", 2, 5009, 6009, execReqIdB, lotSizeB), "sanity: second, unrelated durable SUBMITTED outcome built (order=5009, deal=6009)");
+   Check(BuildDurableSubmittedRequest("AMBIGA", 5, 5008, 6008, execReqIdA, lotSizeA), "sanity: first durable SUBMITTED outcome built (order=5008, deal=6008)");
+   Check(BuildDurableSubmittedRequest("AMBIGB", 6, 5009, 6009, execReqIdB, lotSizeB), "sanity: second, unrelated durable SUBMITTED outcome built (order=5009, deal=6009)");
    Check(execReqIdA != execReqIdB, "sanity: the two execution_request_id values are genuinely distinct");
 
    // Two deals, BOTH tagged with the SAME order_ticket (5008), but one
@@ -558,7 +558,7 @@ void Test_RejectedOutcome_NeverAMatchTarget()
    // MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5's own REJECTED-path test.
    MarketContext ctx;
    BuildBaseContext(ctx, "REJOUT");
-   datetime t0 = D'2026.06.01 00:00:00' + 3 * 86400;
+   datetime t0 = D'2026.06.01 00:00:00' + 7 * 86400;
    datetime anchor;
    Fixture_Bullish_Valid(ctx.trigger_tf_recent, anchor, t0);
    ctx.anchor_bar_time = anchor;
@@ -643,7 +643,7 @@ void Test_ColdRebuildDeterminism()
    Check(EventStore_Open(TEST_FILE), "EventStore opens for this test");
 
    string execReqId; double lotSize;
-   Check(BuildDurableSubmittedRequest("DETERMIN", 0, 5011, 6011, execReqId, lotSize), "sanity: durable SUBMITTED outcome built");
+   Check(BuildDurableSubmittedRequest("DETERMIN", 8, 5011, 6011, execReqId, lotSize), "sanity: durable SUBMITTED outcome built");
    Check(EmitDealAddObservation(6011, 5011, lotSize, 1900.00), "sanity: DEAL_ADD observation emitted");
    EventStore_Close();
 
@@ -676,7 +676,7 @@ void Test_NoBrokerMutation_StructuralProof()
    ResetTestFile();
    Check(EventStore_Open(TEST_FILE), "EventStore opens for this test");
    string execReqId; double lotSize;
-   Check(BuildDurableSubmittedRequest("STRUCTPROOF", 0, 5012, 6012, execReqId, lotSize), "sanity: durable SUBMITTED outcome built");
+   Check(BuildDurableSubmittedRequest("STRUCTPROOF", 9, 5012, 6012, execReqId, lotSize), "sanity: durable SUBMITTED outcome built");
    Check(EmitDealAddObservation(6012, 5012, lotSize, 1900.00), "sanity: DEAL_ADD observation emitted");
    EventStore_Close();
 

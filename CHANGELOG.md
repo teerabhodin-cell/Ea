@@ -59,6 +59,23 @@ projection file.
 Awaiting a real MetaEditor compile + test run before this entry is
 marked PASSED.
 
+**Test-fixture bug found and fixed via the user's real first run (98/109,
+11 failures)**: every test past the first that reused `dayOffset=0`
+failed at its own `BuildDurableSubmittedRequest` sanity check.
+`CRT_ToTradeCandidate`'s `candidate_id` is derived from the real
+detector inputs (`instrument_id`/`trigger_timeframe`/`anchor_bar_time`/
+detector output) - none of which vary with the test's own `suffix`
+string, since the shared `BuildBaseContext` hardcodes `instrument_id`/
+`broker_symbol` to `"XAUUSD"` regardless of suffix (`suffix` only feeds
+the cosmetic `context_event_id`/`context_hash` fields). Because
+`StateProjector`'s in-memory state accumulates across the whole
+`OnStart()` run (never reset between test functions), every later test
+reusing `dayOffset=0` produced the SAME `candidate_id` as the first
+test, so `CRT_EmitCandidateCreated`'s duplicate-genesis guard correctly
+(if confusingly) rejected it. Fixed by giving every test function its
+own unique `dayOffset` (0-9, no reuse) - a test-fixture bug only, no
+change to `MLQuantAI_TransactionMatchingProjection.mqh` itself.
+
 ## [Unreleased] - C3.3 deferred-matching/transaction-projection contract (documentation only)
 
 `Docs/PhaseC_C3_TransactionReconciliationContract.md` sections 20-24 -
