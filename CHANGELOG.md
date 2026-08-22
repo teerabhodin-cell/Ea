@@ -4,6 +4,47 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.2 transaction-reconciliation sub-contract (documentation only, contract amendment)
+
+`Docs/PhaseC_C3_TransactionReconciliationContract.md` sections 10-16 -
+freezes the `C3.2` sub-contract after a read-only "C3 implementation
+collision-check" against real MQL5 platform docs (no code, no
+`OnTradeTransaction` handler, no `History*`/`PositionSelect` call).
+Adds: a defensive rule resolving the open `HistorySelect` same-callback
+visibility question as a design constraint rather than an empirical
+prerequisite (envelope-only persist, no inferred fact, no candidate
+transition, on any lookup failure); a callback-durability rule keeping
+`OnTradeTransaction` itself small and non-blocking (validate envelope,
+append immutable event, return - no history scan/aggregation/mutation/
+lifecycle transition inside the callback, given the platform's
+documented 1,024-item transaction-queue overwrite risk); a trust
+boundary treating `trans` as the only reliable evidence for every
+transaction type, with `request`/`result` read only when
+`trans.type == TRADE_TRANSACTION_REQUEST` (both documented as populated
+for that type only), and confirming `MqlTradeResult` never carries a
+position ticket at submit time (`ExecutionSubmissionResult` stays
+unchanged); a new raw envelope event name,
+`EVENT_TYPE_BROKER_TRANSACTION_OBSERVED` (name/field-list only, not
+added to `ENUM_EVENT_TYPE` by this document), that records what `trans`
+said with no matching-hierarchy verdict and no lifecycle transition;
+confirmation that matching/lifecycle-transition logic stays entirely in
+the already-frozen deferred processor (sections 6-8), never the raw
+callback; and test-design additions extending section 9's fixture-only
+approach to cover the lookup-failure path, the trust-boundary field
+population, and the deferred processor's fail-closed behavior on
+unmatched envelopes.
+
+Also corrects a minor miscount from the original C3.1 entry below: the
+real MQL5 reference documents **eleven** `ENUM_TRADE_TRANSACTION_TYPE`
+values, not ten. Documentation-only - does not alter any previously
+frozen matching semantics.
+
+Still not authorized: implementing `OnTradeTransaction`, calling
+`HistorySelect`/`HistoryDealGet*`/`HistoryOrderGet*`, adding
+`EVENT_TYPE_BROKER_TRANSACTION_OBSERVED` or any other value to
+`ENUM_EVENT_TYPE`, any candidate-lifecycle transition or broker-side
+query/mutation, and the controlled demo smoke protocol.
+
 ## [Unreleased] - C3 transaction-reconciliation contract (documentation only, collision check)
 
 `Docs/PhaseC_C3_TransactionReconciliationContract.md` - a
@@ -12,8 +53,9 @@ reconciliation work, per the user's explicit "C3.1" scope: no handler,
 no `History*`/`PositionSelect` call, no code change of any kind. Every
 platform-behavior claim was verified directly against the real MQL5
 reference this round (`WebFetch`, not recalled from memory): the
-`MqlTradeTransaction` field set and the ten `ENUM_TRADE_TRANSACTION_TYPE`
-values; `OnTradeTransaction`'s own documented lack of ordering/
+`MqlTradeTransaction` field set and the eleven `ENUM_TRADE_TRANSACTION_TYPE`
+values (corrected from an earlier "ten" miscount - see the C3.2
+sub-contract entry below); `OnTradeTransaction`'s own documented lack of ordering/
 one-request-one-event guarantees; `ACCOUNT_MARGIN_MODE`'s netting
 (one position per symbol) vs. hedging (multiple positions per symbol)
 semantics; and the absence of any documented length/round-trip
