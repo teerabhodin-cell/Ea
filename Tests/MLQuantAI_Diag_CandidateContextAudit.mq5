@@ -34,9 +34,30 @@ void OnStart()
       return;
    }
 
+   // Open directly here (rather than only via EventStore_ReadAllLines,
+   // whose own 0-lines return is ambiguous between "genuinely empty"
+   // and "open failed") so a locked/in-use file reports its REAL
+   // GetLastError() instead of silently looking like an empty file -
+   // relevant since the live EA may still be attached to a chart with
+   // this same file open in its own write session right now.
+   int probeHandle = FileOpen(I_EventStoreFileName, FILE_READ|FILE_TXT|FILE_ANSI|FILE_COMMON);
+   if(probeHandle == INVALID_HANDLE)
+   {
+      Print("ABORTED: FileOpen failed for '", I_EventStoreFileName, "' - GetLastError()=", GetLastError(),
+            ". If the live EA is still attached to a chart, this file may be locked by that session's own open write "
+            "handle - try detaching/removing the EA from its chart first, then re-run this script.");
+      return;
+   }
+   FileClose(probeHandle);
+
    string lines[];
    int n = EventStore_ReadAllLines(I_EventStoreFileName, lines);
    Print("Read ", n, " line(s) from '", I_EventStoreFileName, "'.");
+   if(n == 0)
+      Print("NOTE: 0 lines read but the file DOES exist and opened successfully for this probe - "
+            "either the file is genuinely empty right now, or EventStore_ReadAllLines's own FileOpen call "
+            "(a SEPARATE open, immediately after this probe closed) hit a transient lock. If the live EA "
+            "reports a non-zero line count for this same file, that is the more trustworthy number.");
 
    string contextType   = EventTypeToString(EVENT_TYPE_MARKET_CONTEXT_READY);
    string candidateType = EventTypeToString(EVENT_TYPE_CANDIDATE_CREATED);
