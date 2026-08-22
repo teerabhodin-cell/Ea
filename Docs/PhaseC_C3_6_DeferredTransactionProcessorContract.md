@@ -249,7 +249,14 @@ MATCHED_PARTIAL            → volume not yet reached → RECOMMEND_NONE (stays 
 MATCHED_ORDER_TERMINAL     → reserved; never acted on (C3.5 §4) → RECOMMEND_NONE
 candidate.state != SUBMITTED (CREATED/terminal) → RECOMMEND_NONE
 candidate.state == EXECUTED/REJECTED_BY_BROKER/ERROR → already terminal → RECOMMEND_NONE
-missing or failed upstream projection readiness → RECOMMEND_BLOCKED (fail closed)
+missing or failed upstream projection readiness
+                          → scan-level failure (§5/§7): zero output rows emitted,
+                          report/log upstream_readiness_not_ready; NOT modeled as a
+                          RECOMMEND_BLOCKED row (the row universe is untrustworthy
+                          without a clean upstream scan). RECOMMEND_BLOCKED is reserved
+                          for ROW-level evidence problems that arise AFTER the upstream
+                          scan is ready: ambiguous mapping, reverse-index conflict,
+                          inconsistent volume evidence, or action_id collision.
 replay not ok / SafeMode engaged → scan-level failure (§5): zero output
                           rows emitted, report/log upstream_replay_not_ready; NOT modeled as a RECOMMEND_NONE row
 duplicate or conflicting execution_request_id mapping → RECOMMEND_BLOCKED
