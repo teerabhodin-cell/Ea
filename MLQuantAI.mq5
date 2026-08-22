@@ -24,6 +24,7 @@
 #include <MLQuantAI/Execution/MLQuantAI_BrokerSubmissionAuditReadiness.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_ManualApprovalReadiness.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_BrokerTransactionObservation.mqh>
+#include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_Contract.mqh>
 
 input group "=== System ==="
 input bool   DebugMode                   = false;
@@ -55,6 +56,83 @@ string BuildSmokeTestCandidateId(string &outRootEventId)
    return Ids_CandidateId(outRootEventId, "SMOKE", "V1");
 }
 
+// Synthetic MarketContext for the Step 8.5 smoke-test candidate below -
+// namespaced instrument_id/trigger_timeframe "SMOKE" so its identity
+// space can never collide with (or be mistaken for) a real MarketContext
+// built by FeatureEngine_BuildContext. Durably logged as its own
+// MARKET_CONTEXT_READY line BEFORE the candidate is created, so
+// CandidateProjection's own orphan check (context_event_id must match a
+// real MARKET_CONTEXT_READY line in the SAME store) is satisfied - this
+// candidate is written by the live EA itself into the same event store
+// file every real candidate uses, so it must satisfy the exact same
+// projection contract, not a relaxed one.
+void BuildSmokeTestContext(MarketContext &ctx, datetime approxDayStart)
+{
+   MarketContext_Init(ctx);
+   ctx.instrument_id     = "SMOKE";
+   ctx.broker_symbol     = _Symbol;
+   ctx.trigger_timeframe = "SMOKE";
+   ctx.anchor_bar_time   = approxDayStart;
+   ctx.context_event_id  = Ids_ContextEventId(ctx.instrument_id, ctx.trigger_timeframe, ctx.anchor_bar_time);
+   ctx.context_hash      = MarketContext_ComputeHash(ctx);
+}
+
+// A deterministic, synthetic reason mask satisfying CandidateProjection_
+// ValidateReasonConsistency's own internal-consistency rules (Infrastructure/
+// EventStore/MLQuantAI_CandidateProjection.mqh) - required for ANY
+// CANDIDATE_CREATED line to validate at all, regardless of which
+// strategy produced it, since that check runs against the same shared
+// CRT_V1 reason-bit vocabulary unconditionally. This candidate is NOT a
+// real CRT_V1 detection - strategy_id=-1/strategy_name=
+// "RuntimeLifecycleSmokeTest" below already mark it synthetic to every
+// other consumer (dataset export, training data, etc.) - this mask is
+// chosen only because it's the minimal bit combination the vocabulary's
+// own XOR/required-bit rules accept as internally consistent, not to
+// imitate any specific real setup.
+#define SMOKE_TEST_REASON_MASK (CRT_REASON_BIT_SWEEP_LOW | CRT_REASON_BIT_CLOSE_BACK_INSIDE | CRT_REASON_BIT_MSS_CONFIRMED | CRT_REASON_BIT_FVG_FOUND)
+
+string SmokeTestStringArrayToJson(const string &arr[])
+{
+   string s = "[";
+   for(int i = 0; i < ArraySize(arr); i++)
+   {
+      if(i > 0) s += ",";
+      s += "\"" + EventSerializer_Escape(arr[i]) + "\"";
+   }
+   s += "]";
+   return s;
+}
+
+// The extra_json fragment CandidateProjection_ApplyLine actually requires
+// for ANY CANDIDATE_CREATED line to be accepted (schema version, context
+// lineage, side, time/numerical integrity, and reason-mask consistency) -
+// none of these are native LifecycleEvent fields, same "extra_json is
+// the only place these live" convention CRT_CandidateCreatedExtraJson
+// already uses (Strategies/MLQuantAI_CRT_V1_EventEmission.mqh) for real
+// candidates.
+string SmokeTestCandidateCreatedExtraJson(const TradeCandidate &c)
+{
+   string reasons[];
+   CRT_ReasonLabelsFromMask(c.trigger_reason_mask, reasons);
+
+   string s = "";
+   s += "\"candidate_schema_version\":\"" + EventSerializer_Escape(c.candidate_schema_version) + "\",";
+   s += "\"context_event_id\":\""          + EventSerializer_Escape(c.context_event_id) + "\",";
+   s += "\"context_hash\":\""              + EventSerializer_Escape(c.context_hash) + "\",";
+   s += "\"candidate_hash\":\""            + EventSerializer_Escape(c.candidate_hash) + "\",";
+   s += "\"detector_hash\":\""             + EventSerializer_Escape(c.detector_hash) + "\",";
+   s += "\"side\":\""                      + (c.side == ORDER_TYPE_BUY ? "BUY" : "SELL") + "\",";
+   s += "\"setup_anchor_bar_time\":\""     + TimeToString(c.setup_anchor_bar_time, TIME_DATE|TIME_SECONDS) + "\",";
+   s += "\"expiry_after_bars\":"           + IntegerToString(c.expiry_after_bars) + ",";
+   s += "\"expiry_time\":\""               + TimeToString(c.expiry_time, TIME_DATE|TIME_SECONDS) + "\",";
+   s += "\"entry_hint\":"                  + DoubleToString(c.entry_hint, 5) + ",";
+   s += "\"sl_hint\":"                     + DoubleToString(c.sl_hint, 5) + ",";
+   s += "\"tp_hint\":"                     + DoubleToString(c.tp_hint, 5) + ",";
+   s += "\"trigger_reason_mask\":"         + IntegerToString((long)c.trigger_reason_mask) + ",";
+   s += "\"trigger_reasons\":"             + SmokeTestStringArrayToJson(reasons);
+   return s;
+}
+
 // Step 8.5 Runtime Lifecycle Smoke Test - proves a candidate created by
 // THIS ACTUAL EA (not a standalone test script) gets correctly replayed
 // on the next restart. No order is ever opened; the candidate always ends
@@ -72,6 +150,21 @@ string BuildSmokeTestCandidateId(string &outRootEventId)
 // of creating a duplicate - StateProjector would correctly flag a second
 // CREATED genesis for the same candidate_id as corruption, so this guard
 // is required, not just tidy.
+//
+// TEST-ONLY FIX: this candidate now emits its own synthetic
+// MARKET_CONTEXT_READY line first, and supplies every field
+// CandidateProjection_ApplyLine requires (schema version, context
+// lineage, side/time/numerical integrity, reason-mask consistency) -
+// previously this called EventStore_LogCandidateCreated(smoke) with NO
+// extra_json at all, so this candidate was never actually schema-
+// conformant with CandidateProjection since B6.1 introduced these
+// checks. This fix only changes what THIS smoke test itself writes -
+// no production candidate-creation path, no CandidateProjection
+// validation rule, is touched. It does NOT retroactively repair any
+// already-orphaned/invalid line already sitting in a pre-existing event
+// store file written before this fix existed - only file rotation
+// (a fresh date-stamped file, the default naming convention) or explicit
+// manual cleanup addresses that.
 void RunRuntimeLifecycleSmokeTest()
 {
    string rootEventId;
@@ -85,6 +178,17 @@ void RunRuntimeLifecycleSmokeTest()
       return;
    }
 
+   datetime approxDayStart = TimeCurrent() - (TimeCurrent() % 86400);
+   MarketContext smokeCtx;
+   BuildSmokeTestContext(smokeCtx, approxDayStart);
+   if(!EventStore_LogSystem(EventTypeToString(EVENT_TYPE_MARKET_CONTEXT_READY),
+                              "synthetic market context for the Step 8.5 lifecycle smoke test - not a real MarketContext",
+                              MarketContext_ToJsonFragment(smokeCtx)))
+   {
+      LogWarn("Step 8.5 smoke test: failed to log MARKET_CONTEXT_READY");
+      return;
+   }
+
    TradeCandidate smoke;
    TradeCandidate_Init(smoke);
    smoke.candidate_id  = smokeId;
@@ -93,7 +197,22 @@ void RunRuntimeLifecycleSmokeTest()
    smoke.strategy_name = "RuntimeLifecycleSmokeTest";
    smoke.signal_time   = TimeCurrent();
 
-   if(!EventStore_LogCandidateCreated(smoke)) { LogWarn("Step 8.5 smoke test: failed to log CREATED"); return; }
+   smoke.context_event_id = smokeCtx.context_event_id;
+   smoke.context_hash      = smokeCtx.context_hash;
+   smoke.candidate_hash    = "SMOKE_CANDIDATE_HASH_" + smokeId; // synthetic - no real detector output to fingerprint
+   smoke.detector_hash     = "SMOKE_DETECTOR_HASH_V1";           // synthetic - no real detector ever ran
+
+   smoke.side                  = ORDER_TYPE_BUY;
+   smoke.setup_anchor_bar_time = approxDayStart;
+   smoke.expiry_after_bars     = 1;
+   smoke.expiry_time           = TradeCandidate_ComputeExpiryTime(smoke.setup_anchor_bar_time, smoke.expiry_after_bars, PERIOD_M1);
+   smoke.entry_hint            = 1.5; // arbitrary but deterministic synthetic price hints - never a real quote
+   smoke.sl_hint                = 1.0;
+   smoke.tp_hint                = 2.0;
+   smoke.trigger_reason_mask   = SMOKE_TEST_REASON_MASK;
+
+   string createdExtraJson = SmokeTestCandidateCreatedExtraJson(smoke);
+   if(!EventStore_LogCandidateCreated(smoke, createdExtraJson)) { LogWarn("Step 8.5 smoke test: failed to log CREATED"); return; }
    if(!EventStore_LogTransition(smoke, CANDIDATE_SUBMITTED, REASON_SUBMITTED_OK)) { LogWarn("Step 8.5 smoke test: failed to log SUBMITTED"); return; }
    smoke.correlation_id = Ids_CorrelationId(smoke.candidate_id);
    if(!EventStore_LogTransition(smoke, CANDIDATE_REJECTED_BY_BROKER, REASON_BROKER_REJECT)) { LogWarn("Step 8.5 smoke test: failed to log REJECTED_BY_BROKER"); return; }
