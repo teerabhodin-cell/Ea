@@ -4,6 +4,59 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.3 deferred-matching/transaction-projection contract (documentation only)
+
+`Docs/PhaseC_C3_TransactionReconciliationContract.md` sections 20-24 -
+freezes the C3.3 contract after a read-only research pass across 8 areas
+(payload shape, replay integration point, existing execution-request/
+submission projections, candidate-projection/state-machine
+prerequisites, ticket-idempotency precedent, partial-fill aggregation
+model, C2.2 ticket/correlation fields, `BrokerReconciliation` extension
+seam). No code, no projection file, no raw-callback change, no
+`BrokerReconciliation.mqh` edit.
+
+Freezes, per the user's explicit decisions on three semantic points:
+
+**Matching authority, strict this round**: positive ticket evidence
+only - `deal_ticket` match, then `order_ticket` match. The
+`correlation_id`/`comment`+`magic`+`symbol` fallback (section 1,
+priority 2/5) is explicitly NOT implemented in C3.3, since the sealed
+C3.2 envelope schema carries no `magic` number and no broker `comment`
+field to support it - inferring identity from fields the envelope
+doesn't carry would be worse than not matching. No matching ticket ->
+`UNMATCHED`; conflicting ticket mappings -> `AMBIGUOUS`; neither ever
+transitions a candidate.
+
+**Partial-fill lifecycle, projection/aggregation only**: a deal-ticket
+registry (idempotent by `deal_ticket` itself - a deliberate, explicit
+departure from every other projection's `log_event_id`-keyed dedup,
+required because `OnTradeTransaction` has no documented 1:1 request-to-
+event guarantee) feeding an order-ticket aggregate exposing
+`UNMATCHED`/`AMBIGUOUS`/`MATCHED_PARTIAL`/`MATCHED_VOLUME_REACHED`/
+`MATCHED_ORDER_TERMINAL` read-model status - the last one named but
+never populated this round, since the `ORDER_STATE` terminal criterion
+isn't frozen yet and C3.3 only actively ingests `TRADE_TRANSACTION_
+DEAL_ADD` lines. No status drives `EventStore_LogTransition`; no
+`ORDER_FILLED`/`TRANSACTION_REJECTION_CONFIRMED` emission.
+
+**`BrokerReconciliation.mqh` untouched**: C3.3's durable projection stays
+complementary to, and read-only with respect to, the existing live
+`PositionsTotal()`/comment-scan reconciliation pass. Integrating the two
+is explicitly deferred to a later, separately-approved C3.4/C4 recovery
+contract.
+
+Also freezes required integrity rules (zero-ticket malformed observation
+fails the whole rebuild closed; same-deal-ticket replay-vs-collision;
+ambiguous order-to-multiple-request mapping; no buffering across a
+temporal gap; `position_ticket` never identity; only `SUBMITTED`
+outcomes are match targets) and an 11-case required test matrix (design
+only, no test file written by this entry).
+
+Still not authorized: any projection code, any change to the raw
+`OnTradeTransaction`/envelope path, any `ENUM_EVENT_TYPE` addition, any
+candidate-lifecycle transition, any `BrokerReconciliation.mqh` edit, and
+the controlled demo smoke protocol.
+
 ## [Unreleased] - C3.2 implementation: raw broker-transaction observation (PASSED 471/471, real MetaEditor run, 2026-08-22)
 
 Implements the C3.2 micro-contract frozen below (sections 10-19 of

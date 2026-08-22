@@ -14,6 +14,16 @@ Implementation (`C3.2`, the actual handler + `History*` calls) is
 **separate approval**, per the user's frozen sequence - this doc is the
 prerequisite freeze, not a green light to build it.
 
+**Update**: sections 20-24 below freeze the `C3.3` deferred-matching/
+transaction-projection contract - a durable, read-only PROJECTION over
+already-sealed `BROKER_TRANSACTION_OBSERVED` lines (C3.2), strictly
+scoped to ticket-only matching and read-model status. **No candidate
+transition, no `ORDER_FILLED`/`TRANSACTION_REJECTION_CONFIRMED`
+emission, and no `BrokerReconciliation.mqh` change are authorized by
+this round** - deferred to a later, separately-approved C3.4/C4 step
+once matching semantics and broker-history-read boundaries are frozen.
+See the updated scope guard at the bottom of this document.
+
 **Update**: sections 10-14 below freeze the `C3.2` sub-contract itself
 (defensive rules, callback shape, trust boundary, event schema, deferred-
 processor split, and required test-design additions), per the user's
@@ -670,6 +680,240 @@ never a real broker call:
   most one `SafeMode_Trip` call per invocation - no loop, no repeated
   append, no repeated trip.
 
+## 20. C3.3 scope and matching authority (frozen, strict this round)
+
+C3.3 is a durable, read-only PROJECTION over the already-sealed
+`BROKER_TRANSACTION_OBSERVED` lines (C3.2) plus the already-sealed
+`SubmissionOutcomeProjection`/`SubmissionAttemptProjection` (C2.3,
+staged first as an unmodified black-box gate, same precedent every
+layer since C1.3 has followed). It answers "does this observed
+transaction fact correspond to a known submission?" - nothing more.
+
+**Matching authority, frozen strict for this round**: match by **positive
+ticket evidence only**.
+
+```
+A. deal_ticket matches a durable SubmissionOutcome.deal_ticket
+B. order_ticket matches a durable SubmissionOutcome.order_ticket
+```
+
+**Fallback C (`correlation_id`/`comment` + `magic` + `symbol`) is
+explicitly NOT implemented in C3.3.** The collision-check (section 18)
+already found the C3.2 raw envelope carries no `magic` number and no
+broker `comment` field at all - `EVENT_TYPE_BROKER_TRANSACTION_OBSERVED`'s
+frozen schema (section 13) has no field to support it. Implementing a
+comment/magic fallback here would mean silently inferring identity from
+fields the envelope doesn't even carry, which is worse than not matching
+at all. If a future round wants fallback C, it requires its own envelope-
+schema amendment (a new C3.2-adjacent change) BEFORE this fallback can
+exist - not something C3.3's projection logic can paper over.
+
+Consequently, this round is strict:
+
+```
+No matching ticket             -> UNMATCHED
+Conflicting ticket mappings    -> AMBIGUOUS
+Neither status ever transitions a candidate.
+```
+
+`symbol`/`volume`/`time` remain **diagnostic constraints only** (as
+already frozen in section 1, priority 6) - never identity substitutes.
+A ticket match with a symbol mismatch, for example, is not "probably
+right anyway" - it is treated the same as section 7's existing "no
+transition on unmatched/ambiguous facts" rule, extended here to the
+ticket-matching case specifically.
+
+## 21. C3.3 read model: deal-ticket registry, order-ticket aggregation, match status
+
+Frozen shape (mirrors the record-per-natural-key pattern every prior
+projection since C1.3 already uses):
+
+**`TransactionDealRecord`** - one durable record per unique `deal_ticket`
+observed via a `TRADE_TRANSACTION_DEAL_ADD`-typed
+`BROKER_TRANSACTION_OBSERVED` line (see section 22 for why only this
+transaction type is actively consumed this round):
+
+```
+deal_ticket           (ulong, natural key)
+order_ticket           (ulong - the grouping key, section 1 priority 4)
+symbol
+order_type / deal_type / order_state  (diagnostic only)
+price / volume / price_sl / price_tp
+source_sequence_number / source_log_event_id  (this line's own identity -
+    NOT the replay-idempotency key here; see section 22's deal_ticket-
+    keyed idempotency departure from precedent)
+```
+
+**`OrderAggregateRecord`** - one derived record per unique `order_ticket`
+seen across the deal registry above:
+
+```
+order_ticket             (ulong, natural key)
+running_filled_volume     (double - sum of every TransactionDealRecord's
+                            volume grouped under this order_ticket)
+deal_count                (int)
+matched_execution_request_id  (string, "" if UNMATCHED/AMBIGUOUS)
+match_status               (see below)
+```
+
+**`match_status`, frozen enum of possible values** (per the user's own
+list):
+
+```
+UNMATCHED               - no SubmissionOutcome carries this order_ticket
+                           or any of its deals' deal_ticket values
+AMBIGUOUS                - this order_ticket's deals resolve to more than
+                            one distinct execution_request_id (section 22)
+MATCHED_PARTIAL           - matched; running_filled_volume < the matched
+                             ExecutionRequest's lot_size
+MATCHED_VOLUME_REACHED    - matched; running_filled_volume >=
+                             the matched ExecutionRequest's lot_size
+MATCHED_ORDER_TERMINAL    - matched; the order itself reached a terminal
+                             ORDER_STATE
+```
+
+**`MATCHED_ORDER_TERMINAL` is named but not populated by C3.3.** Per the
+user's own reasoning (and already-frozen section 4): the exact
+`ORDER_STATE`/transaction-type combination that signals "terminal" is
+NOT frozen yet. C3.3 actively consumes only `TRADE_TRANSACTION_DEAL_ADD`
+lines (section 22) - it does not yet read `ORDER_STATE` transitions from
+`ORDER_UPDATE`/`ORDER_DELETE` lines at all, so it has no basis to ever
+assign this status. The slot is frozen now so a future round (which DOES
+freeze the terminal criterion) can populate it without another schema
+negotiation - this round's implementation may only ever produce
+`UNMATCHED`/`AMBIGUOUS`/`MATCHED_PARTIAL`/`MATCHED_VOLUME_REACHED`.
+
+Both records are pure read-model state - **never durably written, never
+an event, never consulted by any gate** - same role
+`BrokerSubmissionReconciliationRow` (C2.3) already plays: a query
+convenience derived entirely from already-durable facts, rebuilt fresh
+on every replay, holding zero authority of its own.
+
+## 22. C3.3 required integrity rules (frozen)
+
+- **Active scope, this round**: C3.3 actively ingests only
+  `BROKER_TRANSACTION_OBSERVED` lines whose own `transaction_type` field
+  (section 13) equals `"TRADE_TRANSACTION_DEAL_ADD"` - the only
+  transaction type that represents a new fill fact (section 1). Every
+  other transaction type already durably recorded by C3.2
+  (`ORDER_ADD`/`ORDER_UPDATE`/`ORDER_DELETE`/`DEAL_UPDATE`/`DEAL_DELETE`/
+  `HISTORY_*`/`POSITION`/`REQUEST`) remains in the event store as raw
+  fact (C3.2's own job, already sealed) but is NOT read or aggregated by
+  C3.3's projection this round. This is what "malformed" and "matched"
+  below are scoped against - not every observed line, only DEAL_ADD ones.
+- A `TRADE_TRANSACTION_DEAL_ADD` observation with `deal_ticket == 0` is
+  malformed. Per this project's standing "never write a garbage record"/
+  "fail closed on structural violation" discipline (same precedent as
+  every orphan/mismatch check since C1.3), this fails the WHOLE C3.3
+  rebuild closed - not a per-record skip.
+- **Deal-ticket-keyed idempotency, a deliberate departure from the
+  `log_event_id`-keyed precedent every other projection uses**: because
+  section 5 already froze "no 1:1 request-to-event guarantee" and "no
+  ordering guarantee" for `OnTradeTransaction` itself, the SAME real
+  fill could in principle be observed via more than one distinct
+  `BROKER_TRANSACTION_OBSERVED` line (each with its own unique
+  `log_event_id`/`source_sequence_number`). The natural idempotency key
+  for THIS registry must therefore be `deal_ticket` itself, not
+  `log_event_id`:
+  - Same `deal_ticket`, identical canonical payload (every envelope
+    content field EXCEPT the base envelope's own
+    `sequence_number`/`log_event_id`/`ts`, and except `request_id`,
+    which is irrelevant to deal identity) -> replay no-op, not a second
+    record.
+  - Same `deal_ticket`, a DIFFERENT canonical payload -> collision -
+    the whole rebuild fails closed, same "corruption, not duplicate"
+    treatment section 18's own precedent (and every `log_event_id`-
+    collision check since C2.3) already uses for a comparable class of
+    problem.
+- **Ambiguous order-ticket mapping**: if an `order_ticket`'s deals
+  (individually matched via priority A/B in section 20) resolve to MORE
+  THAN ONE distinct `execution_request_id`, the whole order_ticket's
+  `OrderAggregateRecord` is `AMBIGUOUS` - never guessed toward either
+  candidate, never partially matched.
+- **No buffering across a temporal/ordering gap**: an observation whose
+  `order_ticket`/`deal_ticket` has no matching `SubmissionOutcome`
+  record is never buffered or retried - it is classified `UNMATCHED`
+  immediately, with the raw fact still retained (in the deal/order
+  registries) for read-model diagnostics. Because C3.3's rebuild stages
+  the ENTIRE `BrokerSubmissionAuditProjection_RebuildFromFile` first
+  (section 21), every `SubmissionOutcome` in the file is already fully
+  known before C3.3 begins matching within a single batch rebuild - this
+  rule mainly covers the genuine "never submitted/never recorded" case
+  today, and is frozen now as a forward-looking constraint for any
+  future live/incremental (non-rebuild) consumer, which must not behave
+  differently.
+- **`position_ticket` is never business identity** - already frozen in
+  section 3 (netting-unsafe); C3.3's matching never reads
+  `position_ticket` for identity purposes, only ever `deal_ticket`/
+  `order_ticket`.
+- **Only a `SUBMITTED` outcome is a match target**: a `SubmissionOutcome`
+  whose `submission_status` is anything other than
+  `SUBMISSION_STATUS_SUBMITTED` (i.e. `REJECTED`/`ERROR`/`UNKNOWN`, C2.2's
+  own frozen vocabulary) is never a valid match target for fill
+  aggregation - a rejected/errored/ambiguous submission was never
+  acknowledged by the trade server, so no real deal could legitimately
+  reference it.
+- **EventStore evidence only** - no `HistorySelect`/`HistoryDealGet*`/
+  `HistoryOrderGet*`/`Position*`/`Order*` call anywhere in C3.3, no
+  `OnTradeTransaction` change, no broker mutation. C3.3 is a pure
+  function of what is already durably recorded.
+
+## 23. C3.3 scope boundary: no lifecycle authority, no BrokerReconciliation change
+
+- **No candidate-lifecycle transition of any kind.** `MATCHED_VOLUME_
+  REACHED` does NOT drive `CANDIDATE_SUBMITTED -> CANDIDATE_EXECUTED`;
+  no status here ever calls `EventStore_LogTransition`. Reasons, per the
+  user's own framing: the raw envelope still lacks the broker evidence
+  needed to safely validate identity where tickets are absent (fallback
+  C, section 20); the `ORDER_STATE` terminal criterion is not frozen
+  (section 21); and netting/hedging aggregation plus delayed/out-of-
+  order sequences need dedicated replay/restart tests first (the test
+  matrix below is necessary but not sufficient for that).
+- **No `EVENT_TYPE_ORDER_FILLED` or `EVENT_TYPE_TRANSACTION_REJECTION_
+  CONFIRMED` emission.** C3.3 produces an in-memory read model only -
+  zero new durable events, zero `ENUM_EVENT_TYPE` additions.
+- **`Infrastructure/MLQuantAI_BrokerReconciliation.mqh` is NOT modified
+  by C3.3.** C3.3's durable projection is complementary to, and remains
+  read-only with respect to, the existing live `PositionsTotal()`/
+  comment-scan reconciliation pass (section 5, section 8's already-
+  frozen "C3.2 should extend that reconciliation pass" language is
+  explicitly deferred, not acted on, by this round). Integrating the two
+  - e.g. giving reconciliation visibility into `CANDIDATE_SUBMITTED`
+  candidates awaiting a delayed/partial fill via C3.3's read model -
+  belongs to a later, separately-approved C3.4/C4 recovery contract,
+  after matching semantics and broker-history-read boundaries are
+  frozen. This document authorizes none of that.
+
+## 24. C3.3 required test matrix (design only - no test file authorized by this document)
+
+Per section 18's already-frozen finding (no real `OnTradeTransaction`
+callback can be synthesized under a test harness), every case below must
+be fixture-fed: a durable store built from real, non-mocked helper calls
+(mirroring every prior projection's own test-suite convention), never a
+live broker call. C3.3's future test suite must prove, at minimum:
+
+```
+1. Exact deal_ticket match -> MATCHED_* status, correct execution_request_id
+2. Exact order_ticket match (no deal_ticket overlap otherwise) -> matched
+3. Duplicate deal_ticket replay (identical payload) -> no-op, one record
+4. Duplicate deal_ticket with conflicting payload -> whole rebuild fails closed
+5. Multi-deal partial-fill aggregation under one order_ticket ->
+   running_filled_volume sums correctly, MATCHED_PARTIAL vs
+   MATCHED_VOLUME_REACHED transitions correctly at the lot_size boundary
+6. Zero-ticket (deal_ticket == 0) DEAL_ADD observation -> whole rebuild fails closed
+7. One order_ticket's deals resolving to two distinct execution_request_id
+   values -> AMBIGUOUS, no match
+8. An observation whose ticket(s) match no SubmissionOutcome at all -> UNMATCHED
+9. An observation whose ticket(s) match a REJECTED/ERROR/UNKNOWN
+   SubmissionOutcome (never SUBMITTED) -> not a valid match target
+10. Cold rebuild determinism - the same store, rebuilt from scratch twice,
+    produces byte-identical read-model state both times
+11. No candidate-lifecycle transition and no broker API call anywhere in
+    the C3.3 code path - same behavioral-proof-via-inspection pattern
+    section 18 already established (no static-analysis tool exists to
+    prove this syntactically)
+```
+
 ## Scope guard (frozen, matches the user's explicit prohibition for this document)
 
 ```
@@ -689,10 +933,24 @@ Sections 17-19 freeze the C3.2 implementation micro-contract: the
     consolidated collision-check findings as implementation constraints,
     and the additional test-case list - still contract/test-design only,
     per the user's explicit follow-up authorization.
-Still NOT authorized by this document: implementing OnTradeTransaction,
-    calling HistorySelect/HistoryDealGet*/HistoryOrderGet*, adding
-    EVENT_TYPE_BROKER_TRANSACTION_OBSERVED or any other new value to
+Sections 20-24 freeze the C3.3 deferred-matching/transaction-projection
+    contract: strict ticket-only matching authority (no correlation_id/
+    magic/symbol fallback this round), the deal-ticket-registry/order-
+    ticket-aggregation/match-status read-model shape, required integrity
+    rules (deal-ticket-keyed idempotency, ambiguous-ticket handling, no
+    buffering, SUBMITTED-only match targets), an explicit no-lifecycle-
+    authority/no-BrokerReconciliation-change boundary, and the required
+    test matrix - contract and test design only, per the user's explicit
+    follow-up authorization. No projection code, no raw-callback change,
+    no new lifecycle event, no BrokerReconciliation.mqh edit, is
+    authorized by this document.
+Still NOT authorized by this document: implementing OnTradeTransaction
+    (already implemented and sealed as of C3.2 - this reminder covers
+    any FURTHER change to it), calling HistorySelect/HistoryDealGet*/
+    HistoryOrderGet*, adding EVENT_TYPE_ORDER_FILLED or EVENT_TYPE_
+    TRANSACTION_REJECTION_CONFIRMED or any other new value to
     ENUM_EVENT_TYPE, any candidate-lifecycle transition or broker-side
-    query/mutation, and the controlled demo smoke protocol. Each remains
-    its own, separate, explicitly-approved future step.
+    query/mutation, any BrokerReconciliation.mqh change, and the
+    controlled demo smoke protocol. Each remains its own, separate,
+    explicitly-approved future step.
 ```
