@@ -23,6 +23,7 @@
 #include <MLQuantAI/Market/MLQuantAI_FeatureEngine.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_BrokerSubmissionAuditReadiness.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_ManualApprovalReadiness.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_BrokerTransactionObservation.mqh>
 
 input group "=== System ==="
 input bool   DebugMode                   = false;
@@ -251,6 +252,21 @@ void OnDeinit(const int reason)
    EventStore_Close();
    FeatureEngine_Deinit();
    Comment("");
+}
+
+// C3.2 (per Docs/PhaseC_C3_TransactionReconciliationContract.md,
+// sections 10-19, frozen): broker-observation only, NOT reconciliation,
+// NOT fill handling, NOT execution authorization. Deliberately minimal
+// per the frozen callback shape - the entirety of this handler's logic
+// lives in BrokerTransactionObservation_RecordAndGuard (Execution/
+// MLQuantAI_BrokerTransactionObservation.mqh), which builds the raw
+// envelope, attempts exactly one durable append, and trips Safe Mode on
+// failure instead of retrying. No history/position/order query, no
+// candidate-lifecycle transition, no broker mutation - anywhere in this
+// call chain.
+void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest &request, const MqlTradeResult &result)
+{
+   BrokerTransactionObservation_RecordAndGuard(trans, request, result);
 }
 
 void OnTick()

@@ -4,6 +4,45 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.2 implementation: raw broker-transaction observation (IMPLEMENTING)
+
+Implements the C3.2 micro-contract frozen below (sections 10-19 of
+`Docs/PhaseC_C3_TransactionReconciliationContract.md`) - broker-
+observation only, NOT reconciliation, NOT fill handling, NOT execution
+authorization:
+
+- `Core/MLQuantAI_Enums.mqh`: appends `EVENT_TYPE_BROKER_TRANSACTION_
+  OBSERVED` as the new last `ENUM_EVENT_TYPE` value, with matching
+  `EventTypeToString`/`EventTypeFromString` cases added in the same pass.
+- New `Execution/MLQuantAI_BrokerTransactionObservation.mqh`:
+  `BrokerTransactionEnvelope` (the raw fact struct, sourced entirely from
+  `MqlTradeTransaction`, plus `request_id` from `MqlTradeResult` ONLY
+  when `trans.type == TRADE_TRANSACTION_REQUEST` - the frozen trust
+  boundary) and `BrokerTransactionObservation_RecordAndGuard()`, the
+  single function an `OnTradeTransaction` handler is authorized to call:
+  builds the envelope, attempts exactly one durable
+  `EventStore_LogSystem` append, and on failure calls
+  `SafeMode_Trip("broker transaction observation append failed")` per
+  the frozen durability rule - no retry, no history/candidate/broker
+  call anywhere in this file (verified this round via source-text scan,
+  zero non-comment hits for any prohibited API).
+- `MLQuantAI.mq5`: adds the new include and a minimal `OnTradeTransaction`
+  handler whose entire body is one call to
+  `BrokerTransactionObservation_RecordAndGuard`.
+- New `Tests/MLQuantAI_Test_C3_2_BrokerTransactionObservation.mq5`:
+  fixture-only suite (a real `OnTradeTransaction` callback cannot be
+  synthesized under any MQL5 test harness, per section 18's finding) -
+  proves the enum is appended at the end with correct ToString/FromString
+  round-trip, the trust boundary (`request_id` populated only for
+  `TRADE_TRANSACTION_REQUEST`, the explicit `not_applicable` sentinel
+  otherwise - never a fabricated zero), a successful append leaves Safe
+  Mode untouched and writes exactly one line, and a failed/unopened-
+  EventStore append trips Safe Mode with the exact frozen reason string
+  and does not retry on a second, independent call.
+
+Awaiting a real MetaEditor compile + test run before this entry is
+marked PASSED.
+
 ## [Unreleased] - C3.2 implementation micro-contract (documentation only, contract amendment)
 
 `Docs/PhaseC_C3_TransactionReconciliationContract.md` sections 17-19 -
