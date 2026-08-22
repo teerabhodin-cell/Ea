@@ -497,7 +497,8 @@ At minimum, the future C3.6 suite must prove:
 6.  outcome maps to wrong/multiple candidates → RECOMMEND_BLOCKED (fail closed)
 7.  duplicate rerun within same scan → same action_id, collapsed to one row
 8.  cold rebuild from same store → identical result set AND order
-9.  missing upstream projection readiness → RECOMMEND_BLOCKED (fail closed)
+9.  missing upstream projection readiness → scan-level failure: zero output
+    rows, report/log upstream_readiness_not_ready, NOT a RECOMMEND_BLOCKED row
 10. replay not ok / SafeMode engaged → zero recommendations (upstream_replay_not_ready)
 11. candidate→exec-request index: 0 mappings → RECOMMEND_BLOCKED
 12. candidate→exec-request index: >1 mappings → RECOMMEND_BLOCKED
