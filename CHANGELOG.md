@@ -4,6 +4,51 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Step 8.5 smoke-test fixture fix: no longer orphans itself (IMPLEMENTING)
+
+Test-only fix, scoped entirely to `RunRuntimeLifecycleSmokeTest()` and
+its own new helper functions in `MLQuantAI.mq5` - no production
+candidate-creation path, no `CandidateProjection` validation rule, no
+other file, touched.
+
+**Finding**: the smoke-test candidate has never actually been schema-
+conformant with `CandidateProjection` (`Infrastructure/EventStore/
+MLQuantAI_CandidateProjection.mqh`) since B6.1 introduced its validation
+chain - it called `EventStore_LogCandidateCreated(smoke)` with no
+`extra_json` at all, so `candidate_schema_version`/`context_event_id`/
+`context_hash`/`candidate_hash`/`detector_hash`/`side`/
+`setup_anchor_bar_time`/`expiry_time`/`expiry_after_bars`/
+`entry_hint`/`sl_hint`/`tp_hint`/`trigger_reason_mask`/
+`trigger_reasons[]` were all absent - a much larger gap than the
+originally-suspected "missing `MARKET_CONTEXT_READY`" alone.
+
+**Fix**: `RunRuntimeLifecycleSmokeTest()` now durably logs its own
+synthetic `MARKET_CONTEXT_READY` line first (`BuildSmokeTestContext()`,
+namespaced `instrument_id`/`trigger_timeframe` = `"SMOKE"` so it can
+never collide with a real `MarketContext`), then supplies every field
+`CandidateProjection_ApplyLine` requires via a new
+`SmokeTestCandidateCreatedExtraJson()` fragment - including a
+deterministic, synthetic `trigger_reason_mask`
+(`SMOKE_TEST_REASON_MASK`) that satisfies
+`CandidateProjection_ValidateReasonConsistency`'s CRT_V1-derived XOR/
+required-bit rules, since that check runs unconditionally against the
+same shared vocabulary regardless of which strategy produced the line.
+This candidate is explicitly tagged synthetic to every other consumer
+(`strategy_id = -1`, `strategy_name = "RuntimeLifecycleSmokeTest"`,
+`candidate_hash`/`detector_hash` prefixed `SMOKE_`) - it does not claim
+a real CRT_V1 detection happened.
+
+**Scope boundary, explicit**: this fix prevents *future* smoke-test
+candidates (in *new*, not-yet-created event store files) from becoming
+orphans. It does **not** retroactively repair whatever already-orphaned
+line exists in a pre-existing event store file written before this fix -
+only a fresh, date-stamped file (the default naming convention) or
+explicit manual cleanup addresses that pre-existing condition.
+
+Awaiting a real MetaEditor compile of `MLQuantAI.mq5` (as the EA, not a
+Tests/ script - the smoke test lives inside the live EA itself) plus the
+standard regression suite before this entry is marked PASSED.
+
 ## [Unreleased] - C3.4 implementation: startup-readiness wrapper (IMPLEMENTING, awaiting real MetaEditor run)
 
 Implements the C3.4 design contract frozen below (sections 25-27 of
