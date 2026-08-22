@@ -4,6 +4,61 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.5 deferred-transaction-authority design contract (DESIGN ONLY, docs-only, 2026-08-23)
+
+Docs-only contract on baseline `mlquantai@8321448` (C1–C3.4 sealed). No
+new code, no `.mqh`/`.mq5` file, no sealed file touched, no new
+`ENUM_EVENT_TYPE` value, no `EventStore_LogTransition` call, no
+`OnTick`/`OnTradeTransaction` change, no `History*`/`Position*`/`Order*`
+API, no `OrderSend`/`CTrade`, no candidate-lifecycle transition.
+
+Freezes the authority boundary before any processor is built:
+
+- **Sole owner**: the future `DeferredTransactionProcessor` is the only
+  component permitted to propose/process broker-fact-derived candidate
+  lifecycle actions. Every projection, readiness wrapper, callback, and
+  reconciliation component keeps its current role unchanged; only the
+  future processor gains (in C3.7, separately authorized) lifecycle
+  authority.
+- **Authority gap, frozen**: no production broker-fill evidence consumer
+  currently emits `CANDIDATE_EXECUTED`. Excluding synthetic smoke/test
+  fixtures, the normal submission path only moves candidates to
+  `SUBMITTED` or immediate `REJECTED_BY_BROKER` from
+  `BrokerSubmissionAdapter`. `CANDIDATE_EXECUTED` is legal-but-unused.
+- **Evidence chain**: `deal_ticket` -> C3.3 `ResolveExecutionRequestId`
+  (matches only `SUBMISSION_STATUS_SUBMITTED` outcomes) ->
+  `execution_request_id` -> C1.3 -> `candidate_id` -> CandidateProjection
+  `state`.
+- **Eligibility predicate** (`SUBMITTED -> EXECUTED`, design-only):
+  candidate `SUBMITTED` + unique `execution_request_id` mapping +
+  `MATCHED_VOLUME_REACHED` + identity round-trip + no conflicting mapping
+  + internally consistent volume/order/deal evidence + no prior applied
+  action + all upstream projections `.ok`.
+- **Rejection separation**: deferred `RECOMMEND_REJECTED` is reserved and
+  non-emittable under current C3.3 inputs; no rejection from no-fill,
+  delay, timeout, `UNMATCHED`, absence of a live position, or stale
+  snapshot.
+- **Partial-fill**: stays `SUBMITTED` + recommendation `NONE`; reuses
+  C3.3's existing `MATCHED_VOLUME_REACHED` semantics exactly.
+- **Trigger model**: C3.6 starts as `OnInit`-only read-only
+  recommendation scan (Option A); no `OnTick` full rebuild, no incremental
+  `OnTradeTransaction` update.
+- **Idempotency**: deterministic, replay-stable `action_id` derived from
+  immutable evidence (candidate + request + action type + order ticket +
+  terminal match status + sorted source deal/event identity).
+- **Frozen constraint**: `TX_MATCH_ORDER_TERMINAL` is reserved/never
+  assigned by C3.3, so only `MATCHED_VOLUME_REACHED` is a fill signal.
+- **Fixture-debt boundary**: old daily store stays read-only evidence;
+  clean canonical positive + negative fixtures are required before C3.6
+  implementation acceptance (separate test-data-only decision, not this
+  merge).
+
+Full frozen contract: `Docs/PhaseC_C3_5_DeferredAuthorityContract.md`.
+Implementation (C3.6), lifecycle authority (C3.7), reconciliation
+integration (C3.8), recovery/history (C4), controlled execution (C5),
+position/exit lifecycle (C6), and operational hardening (C7) remain
+separately-authorized future steps.
+
 ## [Unreleased] - Step 8.5 smoke-test fixture fix: no longer orphans itself (PASSED 626/626, real MetaEditor run, 2026-08-23)
 
 Test-only fix, scoped entirely to `RunRuntimeLifecycleSmokeTest()` and
