@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - C3.2 implementation: raw broker-transaction observation (IMPLEMENTING)
+## [Unreleased] - C3.2 implementation: raw broker-transaction observation (PASSED 471/471, real MetaEditor run, 2026-08-22)
 
 Implements the C3.2 micro-contract frozen below (sections 10-19 of
 `Docs/PhaseC_C3_TransactionReconciliationContract.md`) - broker-
@@ -39,6 +39,23 @@ authorization:
   Mode untouched and writes exactly one line, and a failed/unopened-
   EventStore append trips Safe Mode with the exact frozen reason string
   and does not retry on a second, independent call.
+
+New suite: `Test_C3_2_BrokerTransactionObservation` 23/23. Full existing
+regression, real MetaEditor run, zero regressions from the enum
+insertion or the new `MLQuantAI.mq5` handler:
+`Test_C2_ManualApprovalEmission` 38/38, `Test_C2_ManualApprovalProjection`
+73/73, `Test_C2_EnvironmentLockGate` 45/45, `Test_C2_2_BrokerSubmissionGate`
+147/147, `Test_C2_3_BrokerSubmissionAuditProjection` 104/104,
+`Test_C2_BrokerSubmissionGate_DurableIdempotency` 41/41 - total 448/448,
+matching the pre-C3.2 baseline exactly. Combined total this round:
+471/471.
+
+Live EA startup log (same session) shows zero symptom tied to
+`BROKER_TRANSACTION_OBSERVED`/`OnTradeTransaction` - the only warnings
+present are the already-known, pre-existing "orphan candidate" startup-
+rebuild-failure warning from the dormant Phase A/B Runtime Lifecycle
+Smoke Test (flagged earlier this session, unrelated to and unchanged by
+this round).
 
 Awaiting a real MetaEditor compile + test run before this entry is
 marked PASSED.
