@@ -4,6 +4,63 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.4 wiring/rebuild-policy design contract (documentation only)
+
+`Docs/PhaseC_C3_TransactionReconciliationContract.md` sections 25-29 -
+freezes the C3.4 design contract after a read-only research pass across
+5 areas (wiring boundary, replay timing, projection rebuild policy,
+unresolved-observation visibility, and the relationship between C3.3's
+durable read model and the existing live `BrokerReconciliation`).
+**Design-only: no code, no wiring, no readiness-wrapper file, no C3.3
+projection change, no test, no `MLQuantAI.mq5` edit.**
+
+Freezes, per the user's explicit decisions on all 5 points:
+
+**Wiring boundary**: `TransactionMatching_StartupRebuild` (not yet
+written) slots into `OnInit` immediately after the two existing C2
+startup rebuilds, before `SYSTEM_STARTED` is logged - required because
+`TransactionMatching_RebuildFromFile` (C3.3, sealed) stages
+`BrokerSubmissionAuditProjection_RebuildFromFile` as its own black-box
+gate. The wrapper's shape is frozen as a thin readiness wrapper (clear
+readiness, call the sealed C3.3 rebuild unmodified, persist the report,
+set readiness only on success, log a summary) - exactly mirroring
+`BrokerSubmissionAuditReadiness.mqh`/`ManualApprovalReadiness.mqh`'s own
+established pattern.
+
+**Replay timing**: `OnInit`-only startup snapshot. Both a periodic
+`OnTick` re-rebuild and a true incremental update from
+`OnTradeTransaction` are explicitly rejected this round - the former
+turns a full-file scan into hidden runtime behavior, the latter needs an
+incremental-state/idempotency contract that doesn't exist yet. The read
+model is therefore explicitly stale immediately after `OnInit` - this
+must be surfaced in readiness/report metadata, never assumed current.
+
+**Rebuild policy**: `OnInit`-only trigger, `EventStore_ReadAllLines`-only
+source, full deterministic rebuild each time, and on failure: log
+`deals_applied`/`deals_failed`/`first_error`, but do NOT engage Safe
+Mode and do NOT block EA initialization from this failure alone - C3.3
+carries no lifecycle authority, so a failed diagnostic rebuild isn't a
+safety event the way a failed C2.3/manual-approval rebuild is.
+
+**Unresolved-order visibility**: six new report-level counters
+(`orders_total`/`orders_unmatched`/`orders_ambiguous`/
+`orders_matched_partial`/`orders_matched_volume_reached`/
+`orders_matched_order_terminal`, the last frozen at 0 until a terminal-
+state contract exists), each counting `OrderAggregateRecord`s once per
+`order_ticket`, summing to `orders_total`. Logging policy: summary-only
+for every status except `AMBIGUOUS`, which gets exactly one startup WARN
+with the count - never per-ticket detail, never Safe Mode or a
+lifecycle/reconciliation action from any status.
+
+**BrokerReconciliation relationship**: strict three-way ownership
+separation - `BrokerReconciliation` (live-position consistency for
+`CANDIDATE_EXECUTED` only), `TransactionMatching` (durable diagnostic
+projection only), and the still-unbuilt deferred processor (future sole
+owner of any lifecycle action derived from broker facts).
+`MATCHED_VOLUME_REACHED` is frozen as evidence, never authorization - no
+`BrokerReconciliation.mqh` change and no `CANDIDATE_SUBMITTED`
+second-pass is authorized by this document.
+
 ## [Unreleased] - C3.3 implementation: deferred matching / transaction projection (PASSED 109/109, real MetaEditor run, 2026-08-22)
 
 Implements the C3.3 contract frozen below (sections 20-24 of
