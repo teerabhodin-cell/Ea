@@ -31,6 +31,17 @@
 #include <MLQuantAI/Execution/MLQuantAI_TransactionMatchingReadiness.mqh>
 #include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_ReplayEngine.mqh>
 #include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_EventStoreHealth.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_CandidateProjection.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_FeatureSnapshotProjection.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_ModelArtifactProjection.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_AIDecisionProjection.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_RiskPlanProjection.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_RealizedOutcomeProjection.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_EligibilityDecisionProjection.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_ExecutionAuditProjection.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_BrokerSubmissionAuditProjection.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_BrokerSubmissionGate.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_ManualApprovalProjection.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_DeferredTransactionProcessor.mqh>
 
 #define TEST_FILE "MLQuantAI_Test_C3_6_DeferredTransactionProcessor.jsonl"
@@ -391,10 +402,44 @@ bool EmitDealAddObservation(ulong dealTicket, ulong orderTicket, double volume, 
    return BrokerTransactionObservation_RecordAndGuard(t, req, r);
 }
 
+// The emission helpers (CRT_EmitCandidateCreated, FeatureSnapshot_Emit,
+// EligibilityDecision_EmitDecisionAndWireLifecycle, ExecutionRequest_
+// EmitAndEvaluate, BrokerSubmission_*) update LIVE in-memory projections
+// that reject duplicate deterministic IDs. Because candidate_id and every
+// downstream ID are derived from the market setup (anchor/dayOffset) rather
+// than the suffix, two tests that happen to share a dayOffset produce the
+// same IDs and the second test's emission is rejected as a duplicate by the
+// stale live projection left over from the first test. C3.3 avoids this by
+// giving every test a distinct dayOffset; we go further and also reset every
+// projection here so the emission phase always starts from a clean slate.
+// (The rebuild phase calls Reset on these again and repopulates from the file,
+// so resetting here is harmless for tests that rebuild afterwards.)
+void ResetLiveProjections()
+{
+   StateProjector_Reset();
+   CandidateProjection_Reset();
+   FeatureSnapshotProjection_Reset();
+   ModelArtifactProjection_Reset();
+   AIDecisionProjection_Reset();
+   RiskPlanProjection_Reset();
+   EligibilityDecisionProjection_Reset();
+   ExecutionRequestProjection_Reset();
+   DryRunResultProjection_Reset();
+   SubmissionAttemptProjection_Reset();
+   SubmissionOutcomeProjection_Reset();
+   BrokerSubmissionGate_Reset();
+   TransactionDealRegistry_Reset();
+   OrderAggregateRegistry_Reset();
+   TransactionMatchingReadiness_Reset();
+   ManualApprovalProjection_Reset();
+   RealizedOutcomeProjection_Reset();
+}
+
 void ResetTestFile(string file)
 {
    EventStore_Close();
    EventStoreHealth_ClearSafeMode();
+   ResetLiveProjections();
    if(FileIsExist(file, FILE_COMMON))
       FileDelete(file, FILE_COMMON);
 }
