@@ -404,9 +404,11 @@ shape is confirmed against the real EventStore / projection APIs.
 
 ---
 
-## Appendix A — Implementation status (branch phase0.3-fixture-implementation)
+## Appendix A — Implementation status (Phase 0.3 GATE CLOSED)
 
-**Status**: IMPLEMENTATION DRAFT (not yet compiled/verified by the user).
+**Status**: 🔒 CLOSED — merged into `mlquantai` @ `e137bb8` (--no-ff) on
+2026-08-23. Full regression gate verified by the user in MetaEditor (two
+independent runs, identical all-pass):
 
 - Test file: `Tests/MLQuantAI_Test_Phase0_3_FixtureDebtGate.mq5` (single file,
   per the authorized allowlist). No `Tests/Fixtures/*` helper was needed.
@@ -427,7 +429,16 @@ shape is confirmed against the real EventStore / projection APIs.
   processor, no `RECOMMEND_EXECUTED`, no action-event write, no DIRECT
   `EventStore_LogTransition`, no new C3.6 transition.
 
-**Gate not closed.** Closes only after the user compiles the new test in
-MetaEditor (0 errors / 0 warnings) and the full regression gate passes:
-new Phase 0.3 suite ALL PASS, C3.3 109/109, C3.4 57/57, C2.3 104/104,
-C2 448/448, main EA 0/0. Until then C3.6 remains blocked.
+**Gate CLOSED.** Closed after the user compiled the new test in
+MetaEditor (0 errors / 0 warnings) and the full regression gate passed
+(two identical all-pass runs): new Phase 0.3 suite 83/83, C3.3 109/109,
+C3.4 57/57, C2.3 104/104, C2 baseline 448/448, main EA 0/0.
+
+**C3.6 now UNLOCKED** (🟢 AUTHORIZABLE), narrowly limited to an
+OnInit-only, read-only deferred recommendation processor. Input: sealed
+C3.3 evidence + C3.5 predicates. Output: deterministic recommendation
+read model/report only. Hard prohibitions (require a new contract to
+lift): no `EventStore_LogTransition`, no lifecycle event, no candidate
+transition, no `RECOMMEND_REJECTED`, no `OnTick`/`OnTradeTransaction`
+update, no broker/history/position/order APIs, no lifecycle or broker
+mutation.
