@@ -4,6 +4,62 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.4 implementation: startup-readiness wrapper (IMPLEMENTING, awaiting real MetaEditor run)
+
+Implements the C3.4 design contract frozen below (sections 25-27 of
+`Docs/PhaseC_C3_TransactionReconciliationContract.md`) - strictly the
+`TransactionMatching_StartupRebuild` startup-readiness wrapper. NOT an
+`OnTick`/`OnTradeTransaction` incremental update, NOT a C3.3 matching-
+semantic change, NOT a candidate-lifecycle action, NOT a
+`BrokerReconciliation.mqh` change.
+
+New `Execution/MLQuantAI_TransactionMatchingReadiness.mqh`:
+- `TransactionMatchingReadinessReport`: wraps C3.3's sealed
+  `TransactionMatchingReport` plus the six section-28 order-status
+  counters (`orders_total`/`orders_unmatched`/`orders_ambiguous`/
+  `orders_matched_partial`/`orders_matched_volume_reached`/
+  `orders_matched_order_terminal`, the last frozen at 0) and a `rebuilt_at`
+  staleness marker.
+- `g_TransactionMatching_Ready` / `TransactionMatchingReadiness_IsReady()`
+  / `_Reset()`: fail-closed-by-default readiness flag, same discipline as
+  every prior C1.3/C2.3/manual-approval readiness wrapper - set fresh
+  from each call's own `report.ok`, never OR'd with a stale prior success.
+- `TransactionMatchingReadiness_LastReport()`: diagnostics-only accessor;
+  the report is never treated as authoritative state.
+- `TransactionMatching_StartupRebuild(fileName)`: the one frozen entry
+  point (section 25). Calls the sealed C3.3
+  `TransactionMatching_RebuildFromFile()` unmodified, stamps `rebuilt_at`,
+  tallies the six counters only on success, logs one `LogInfo` summary
+  plus exactly one `LogWarn` if `orders_ambiguous > 0` (never per-ticket
+  spam). On failure: logs `deals_applied`/`deals_failed`/`first_error` via
+  `LogWarn` only - deliberately does **not** call `SafeMode_Trip` and does
+  **not** gate EA initialization, per section 27's explicit rule that C3.3
+  carries no lifecycle authority yet (unlike the C2.3/manual-approval
+  wrappers this file's shape is otherwise copied from).
+
+`MLQuantAI.mq5`: adds the include and one `OnInit` call site -
+`TransactionMatching_StartupRebuild(g_EventStoreFileName);` - placed after
+`ManualApproval_StartupRebuild(...)` and before
+`EventStore_LogSystem(EVENT_TYPE_SYSTEM_STARTED, ...)`, per the frozen
+section 25 ordering.
+
+New `Tests/MLQuantAI_Test_C3_4_TransactionMatchingReadiness.mq5`:
+fixture-only (no real `OnTradeTransaction` callback), covering: a clean
+success path (ready, report persisted, counters correct, `rebuilt_at`
+stamped, Safe Mode untouched); a failure path (not ready, Safe Mode still
+untouched, failure report retained, a later call still sets readiness
+fresh from its own result); staleness metadata (`rebuilt_at` re-stamped
+on every call, never silently reused); the six-counter invariant
+(fixtures producing `UNMATCHED`/`AMBIGUOUS`/`MATCHED_PARTIAL`/
+`MATCHED_VOLUME_REACHED` each, asserting the sum of all six counters
+always equals `orders_total`); and a structural no-broker-mutation proof.
+
+Still NOT authorized this round (explicit user scope limit): `OnTick`/
+`OnTradeTransaction` incremental updates, any C3.3 matching-semantic
+change, any candidate-lifecycle action, any new event/enum,
+`BrokerReconciliation.mqh` changes, `History*`/`Position*`/`Order*` broker
+API calls, the demo smoke protocol, or live execution.
+
 ## [Unreleased] - C3.4 wiring/rebuild-policy design contract (documentation only)
 
 `Docs/PhaseC_C3_TransactionReconciliationContract.md` sections 25-29 -

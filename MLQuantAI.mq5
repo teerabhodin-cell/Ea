@@ -24,6 +24,7 @@
 #include <MLQuantAI/Execution/MLQuantAI_BrokerSubmissionAuditReadiness.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_ManualApprovalReadiness.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_BrokerTransactionObservation.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_TransactionMatchingReadiness.mqh>
 
 input group "=== System ==="
 input bool   DebugMode                   = false;
@@ -212,6 +213,16 @@ int OnInit()
    ManualApprovalProjectionReport approvalReport = ManualApproval_StartupRebuild(g_EventStoreFileName);
    if(!approvalReport.ok)
       LogWarn("C2 manual-approval gate stays disabled this session - startup approval rebuild failed: " + approvalReport.first_error);
+
+   // C3.4 startup-readiness (Docs/PhaseC_C3_TransactionReconciliationContract.md,
+   // sections 25-27, frozen): rebuilds the C3.3 deferred-matching read
+   // model once, at startup only. Unlike the two calls directly above,
+   // this carries NO lifecycle authority yet - a failed rebuild here is
+   // diagnostic-only (LogWarn), never a Safe Mode condition, and never
+   // gates EA initialization. Strictly read-only - no OrderSend/CTrade/
+   // broker query/candidate mutation/event append/OnTradeTransaction
+   // anywhere in this call chain.
+   TransactionMatching_StartupRebuild(g_EventStoreFileName);
 
    EventStore_LogSystem(EventTypeToString(EVENT_TYPE_SYSTEM_STARTED),
                          StringFormat("%s v%s", MLQUANTAI_EA_NAME, MLQUANTAI_EA_VERSION),
