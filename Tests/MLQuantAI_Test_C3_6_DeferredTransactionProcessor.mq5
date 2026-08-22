@@ -196,6 +196,7 @@ void BuildC2AcceptingExecutionPolicy(ExecutionPolicy &policy)
 bool BuildDurableSubmittedRequestEx(string suffix, int dayOffset, ulong orderTicket, ulong dealTicket,
                                    TradeCandidate &outCandidate, MarketContext &outCtx,
                                    AIDecision &outDecision, RiskPlan &outPlan,
+                                   FeatureSnapshot &outSnapshot,
                                    string &outExecutionRequestId, double &outLotSize)
 {
    MarketContext ctx;
@@ -275,6 +276,7 @@ bool BuildDurableSubmittedRequestEx(string suffix, int dayOffset, ulong orderTic
    outCtx                   = ctx;
    outDecision              = decision;
    outPlan                  = plan;
+   outSnapshot               = snapshot;
    outExecutionRequestId    = req.execution_request_id;
    outLotSize               = req.lot_size;
    return true;
@@ -284,9 +286,9 @@ bool BuildDurableSubmittedRequestEx(string suffix, int dayOffset, ulong orderTic
 bool BuildDurableSubmittedRequest(string suffix, int dayOffset, ulong orderTicket, ulong dealTicket,
                                  string &outExecutionRequestId, double &outLotSize)
 {
-   TradeCandidate dummyC; MarketContext dummyCtx; AIDecision dummyD; RiskPlan dummyP;
+   TradeCandidate dummyC; MarketContext dummyCtx; AIDecision dummyD; RiskPlan dummyP; FeatureSnapshot dummyS;
    return BuildDurableSubmittedRequestEx(suffix, dayOffset, orderTicket, dealTicket, dummyC, dummyCtx,
-                                        dummyD, dummyP, outExecutionRequestId, outLotSize);
+                                        dummyD, dummyP, dummyS, outExecutionRequestId, outLotSize);
 }
 
 // Emits a SECOND EXECUTION_REQUEST_CREATED line for an already-submitted
@@ -296,13 +298,15 @@ bool BuildDurableSubmittedRequest(string suffix, int dayOffset, ulong orderTicke
 // candidate_id -> RECOMMEND_BLOCKED (multiple_execution_request_mappings).
 bool EmitSecondExecutionRequestForCandidate(TradeCandidate &c, const MarketContext &ctx,
                                              const AIDecision &decision, const RiskPlan &plan,
+                                             const FeatureSnapshot &snapshot,
                                              string &outExecReqId2)
 {
-   // Re-derive the feature snapshot from the candidate (NO emission - no
-   // duplicate FEATURE_SNAPSHOT_CREATED line). It is deterministic from the
-   // candidate, so it matches the one used to build the first request.
-   FeatureSnapshot snapshot;
-   if(!Candidate_ToFeatureSnapshot(c, ctx, snapshot)) return false;
+   // snapshot is the ORIGINAL (built while the candidate was still CREATED)
+   // passed in from the first BuildDurableSubmittedRequestEx call. We must NOT
+   // re-derive it via Candidate_ToFeatureSnapshot here - that builder rejects
+   // any candidate whose state is not CANDIDATE_CREATED, and the candidate is
+   // now SUBMITTED. Reusing the original keeps decision.ai_decision_hash
+   // consistent with the snapshot it was built from.
 
    EligibilityContext eligContext; BuildHealthyEligibilityContext(eligContext);
    // Use a DISTINCT eligibility policy version so the second
@@ -654,13 +658,13 @@ void Test_MultipleExecRequestMappings_RecommendBlocked()
    ResetTestFile(TEST_FILE);
    Check(EventStore_Open(TEST_FILE), "EventStore opens for this test");
 
-   TradeCandidate c; MarketContext ctx; AIDecision decision; RiskPlan plan; string execReqId1; double lotSize;
-   Check(BuildDurableSubmittedRequestEx("MULTI", 6, 5010, 6010, c, ctx, decision, plan, execReqId1, lotSize),
+   TradeCandidate c; MarketContext ctx; AIDecision decision; RiskPlan plan; FeatureSnapshot snapshot; string execReqId1; double lotSize;
+   Check(BuildDurableSubmittedRequestEx("MULTI", 6, 5010, 6010, c, ctx, decision, plan, snapshot, execReqId1, lotSize),
          "candidate submitted once (exec request 1)");
    // Emit a SECOND execution request for the SAME candidate (no second
    // submission) -> reverse index now holds 2 mappings -> BLOCKED.
    string execReqId2 = "";
-   Check(EmitSecondExecutionRequestForCandidate(c, ctx, decision, plan, execReqId2), "second execution request emitted for the same candidate");
+   Check(EmitSecondExecutionRequestForCandidate(c, ctx, decision, plan, snapshot, execReqId2), "second execution request emitted for the same candidate");
    Check(execReqId2 != "", "second execution request id is non-empty");
    Check(execReqId2 != execReqId1, "second execution request id is distinct from the first");
    // No DEAL_ADD for either request -> without a matched order this would
@@ -745,9 +749,13 @@ void Test_ReadinessNotReady_ZeroRecommendations()
    Check(EmitDealAddObservation(6012, 5012, lotSize, 1900.00), "full-volume DEAL_ADD emitted");
    EventStore_Close();
 
-   // Run ONLY replay (so SafeMode stays clear) but NOT TransactionMatching_
-   // StartupRebuild -> readiness stays false.
-   ReplayEngine_Run(TEST_FILE);
+   // Simulate "upstream readiness not ready" WITHOUT SafeMode: explicitly
+   // reset the TransactionMatching readiness flag. Readiness is a sticky
+   // process-global set true by prior tests' StartupRebuild calls, so
+   // merely skipping StartupRebuild here would leave a stale true value.
+   // Reset() forces ready=false + clears the retained report, exactly the
+   // state the processor's scan-level gate B must short-circuit on.
+   TransactionMatchingReadiness_Reset();
 
    DeferredTransactionProcessorReport report = DeferredTransactionProcessor_StartupScan(TEST_FILE);
 
@@ -813,13 +821,16 @@ void Test_DealTicketOrderSwapped_SameOutput()
    Check(EmitDealAddObservation(6031, 5030, lA - lA / 2.0, 1900.10), "second partial deal (6031) emitted");
    EventStore_Close();
 
-   // Store B: same two deals, REVERSED file order.
+   // Store B: same two deals, REVERSED file order. Distinct order/deal
+   // tickets (5031 / 6032,6033) avoid colliding with store A's live
+   // in-memory SubmissionOutcomeProjection for order 5030 / deal 6030,
+   // which persists across the two emission phases of this single test.
    ResetTestFile(TEST_FILE_B);
    Check(EventStore_Open(TEST_FILE_B), "store B opens");
    string eB; double lB;
-   Check(BuildDurableSubmittedRequest("SWAPB", 11, 5030, 6030, eB, lB), "candidate built (same order/deal tickets)");
-   Check(EmitDealAddObservation(6031, 5030, lB - lB / 2.0, 1900.10), "second partial deal (6031) emitted FIRST");
-   Check(EmitDealAddObservation(6030, 5030, lB / 2.0, 1900.00), "first partial deal (6030) emitted SECOND");
+   Check(BuildDurableSubmittedRequest("SWAPB", 11, 5031, 6032, eB, lB), "candidate built (same shape, distinct tickets)");
+   Check(EmitDealAddObservation(6033, 5031, lB / 2.0, 1900.10), "second partial deal (6033) emitted FIRST");
+   Check(EmitDealAddObservation(6032, 5031, lB - lB / 2.0, 1900.00), "first partial deal (6032) emitted SECOND");
    EventStore_Close();
 
    // Note: the candidate_ids differ between stores (different suffix),
@@ -836,9 +847,10 @@ void Test_DealTicketOrderSwapped_SameOutput()
 
    Check(ArraySize(idsA) == 1 && ArraySize(idsB) == 1, "both stores produced one EXECUTED row");
    // The deal-ticket portion of the action_id must be the same sorted set
-   // regardless of file order: [6030,6031].
+   // regardless of file order: store A emitted [6030,6031] ascending, store B
+   // emitted [6033,6032] descending - both must sort to ascending in the id.
    Check(StringFind(idsA[0], "[6030,6031]") >= 0, "store A action_id has sorted deal set [6030,6031]");
-   Check(StringFind(idsB[0], "[6030,6031]") >= 0, "store B action_id has the SAME sorted deal set [6030,6031]");
+   Check(StringFind(idsB[0], "[6032,6033]") >= 0, "store B action_id has sorted deal set [6032,6033] (reversed emission, same sorted result)");
 
    ResetTestFile(TEST_FILE_B);
 }
