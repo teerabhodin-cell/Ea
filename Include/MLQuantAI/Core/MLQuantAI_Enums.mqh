@@ -297,7 +297,15 @@ enum ENUM_EVENT_TYPE
    // MLQuantAI_ManualScript_GrantApproval.mq5 script - never by the EA
    // itself, never implying any candidate-lifecycle transition or
    // broker action on its own.
-   EVENT_TYPE_EXECUTION_MANUAL_APPROVAL_GRANTED
+   EVENT_TYPE_EXECUTION_MANUAL_APPROVAL_GRANTED,
+
+   // C3.2 (per Docs/PhaseC_C3_TransactionReconciliationContract.md,
+   // sections 13/18): a raw, immutable envelope of what one
+   // OnTradeTransaction callback observed - the ONLY event type that
+   // raw callback is authorized to emit. Carries no matching-hierarchy
+   // verdict and drives no lifecycle transition on its own; C3.2's own
+   // deferred processor (not yet built) is the sole future consumer.
+   EVENT_TYPE_BROKER_TRANSACTION_OBSERVED
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -338,6 +346,7 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_ORDER_SUBMISSION_ERROR:             return "ORDER_SUBMISSION_ERROR";
       case EVENT_TYPE_EXECUTION_SUBMISSION_UNKNOWN:       return "EXECUTION_SUBMISSION_UNKNOWN";
       case EVENT_TYPE_EXECUTION_MANUAL_APPROVAL_GRANTED:  return "EXECUTION_MANUAL_APPROVAL_GRANTED";
+      case EVENT_TYPE_BROKER_TRANSACTION_OBSERVED:        return "BROKER_TRANSACTION_OBSERVED";
    }
    return "UNKNOWN";
 }
@@ -378,6 +387,7 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "ORDER_SUBMISSION_ERROR")            return EVENT_TYPE_ORDER_SUBMISSION_ERROR;
    if(s == "EXECUTION_SUBMISSION_UNKNOWN")      return EVENT_TYPE_EXECUTION_SUBMISSION_UNKNOWN;
    if(s == "EXECUTION_MANUAL_APPROVAL_GRANTED") return EVENT_TYPE_EXECUTION_MANUAL_APPROVAL_GRANTED;
+   if(s == "BROKER_TRANSACTION_OBSERVED")       return EVENT_TYPE_BROKER_TRANSACTION_OBSERVED;
    return EVENT_TYPE_UNKNOWN;
 }
 
