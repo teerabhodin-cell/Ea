@@ -532,6 +532,144 @@ in `CHANGELOG.md` alongside this update. Documentation-only - does not
 alter section 1's frozen matching semantics, which never depended on the
 exact count.
 
+## 17. C3.2 durability-failure rule: Safe Mode, not drop-and-log
+
+The collision-check surfaced a real inconsistency: `EventStore_LogSystem`/
+`EventStore_AppendSystem` (the family `EVENT_TYPE_BROKER_TRANSACTION_
+OBSERVED` uses) do not call `SafeMode_Trip` on a failed durable write,
+unlike `EventStore_LogCandidateCreated`/`EventStore_LogTransition`
+(lifecycle events), which do. **Frozen, per the user's explicit
+instruction: `BROKER_TRANSACTION_OBSERVED` follows the lifecycle-event
+precedent, not the general system-event one.**
+
+Rationale (the user's own, verbatim reasoning): this callback is the
+primary channel recording the broker-fact envelope that matching,
+partial-fill handling, and restart reconciliation (sections 1, 4, 5, 8)
+all depend on. If the append fails, the system has lost evidence it
+cannot reliably reconstruct any other way - and because the platform's
+own transaction queue has bounded capacity with a documented overwrite
+risk on a slow handler (section 11), execution must not continue as
+though the audit stream remains complete. The correct response to a
+durability failure is to freeze new authority and require explicit
+operational review, not to carry on as if nothing happened.
+
+**Frozen callback shape**:
+
+```
+OnTradeTransaction
+  -> validate/build raw transaction envelope
+  -> EventStore_LogSystem(BROKER_TRANSACTION_OBSERVED)
+  |- success -> return immediately
+  \- failure -> SafeMode_Trip(
+        "broker transaction observation append failed"
+     )
+     -> return immediately
+```
+
+Once tripped, per the existing `SafeMode_Trip` contract (Infrastructure/
+`MLQuantAI_SafeModeState.mqh`, unchanged, sealed, verified this round):
+every new candidate / future submission path is blocked
+(`SafeMode_AllowNewCandidates()` already gates this, pre-existing
+mechanism, no new code needed here). The callback itself must:
+
+```
+No retry attempt inside the callback.
+No history API call.
+No candidate-lifecycle transition.
+No fill/rejection fact emitted.
+No broker-state mutation.
+```
+
+**Scope boundary, frozen**: calling `SafeMode_Trip` from the callback
+does not violate section 11's callback-minimal rule - the function is
+confirmed (this round, by direct inspection) to do only local-state
+assignment plus one `LogError` call, no I/O, no candidate touch, no
+broker call. It must still never trigger any of the following from
+inside the callback:
+
+```
+No scans.
+No projection rebuild.
+No reconciliation pass.
+No order/deal/position query.
+No lifecycle mutation.
+No broker API call.
+```
+
+Event loss has already happened or is possible at the moment this path
+is taken; the safe response is to freeze new authority and require
+explicit operational review/reconciliation before it is cleared - not
+to continue as though the audit stream remains complete.
+
+## 18. C3.2 collision-check findings, consolidated (frozen as implementation constraints)
+
+Everything below was verified by direct inspection this round (not
+recalled from memory) and is frozen as a constraint on C3.2's eventual
+implementation - still no code authorized by this document:
+
+- **Entry point**: no `OnTradeTransaction` handler exists anywhere in
+  the codebase today - `MLQuantAI.mq5` currently declares only
+  `OnInit`/`OnDeinit`/`OnTick`. The future handler is a new top-level
+  function in that same file, following the existing ordering
+  convention. No collision with an existing handler.
+- **`ENUM_EVENT_TYPE` insertion point**: `Core/MLQuantAI_Enums.mqh`,
+  immediately after `EVENT_TYPE_EXECUTION_MANUAL_APPROVAL_GRANTED` (the
+  current last value), before the enum's closing brace - matches every
+  earlier phase's own "append at the end" precedent already established
+  in that file. Must be added to **both** `EventTypeToString` and
+  `EventTypeFromString` in the same pass - a `FromString` omission is
+  exactly the class of bug already caught once this project (the
+  environment-lock reason-code gap) and must not be repeated here.
+- **Serializer convention**: `EVENT_TYPE_BROKER_TRANSACTION_OBSERVED`
+  fits the existing `SystemEvent` shape (auto-filled base envelope plus
+  `message`/`extra_json`) with zero new serializer plumbing - the
+  `extra_json` free-text-JSON-fragment convention is already reused by
+  every derived-artifact event since RiskPlan/FeatureSnapshot/
+  ModelArtifact/AIDecision/EligibilityDecision/ExecutionRequest, and
+  section 13's envelope field list fits it directly.
+- **Test-fixture seam**: no wrapper/mock type is needed - unlike the
+  `MockBrokerPosition` precedent (`Tests/MLQuantAI_Test_
+  BrokerReconciliation.mq5`), `MqlTradeTransaction` is itself a plain
+  public-field struct a test can construct and populate directly, then
+  feed straight to whatever pure envelope-building function C3.2 writes.
+- **Callback runtime budget**: MQL5 documents no numeric time budget for
+  `OnTradeTransaction`, only the 1,024-item queue with an overwrite risk
+  on a slow handler (section 11, already frozen). The non-blocking rule
+  is this project's own defensive design choice, not a platform-mandated
+  number - no test may assert against a numeric budget that does not
+  exist (already noted in section 15).
+- **Proof plan for "no history/candidate/broker call"**: MQL5 has no
+  static-analysis tool to prove a function's source never calls a
+  forbidden API, so this cannot be a syntactic proof. It must be a
+  BEHAVIORAL proof, following the existing `Test_NoBrokerMutation_
+  StructuralProof` precedent (C2 manual-approval suite): assert relevant
+  state (candidate projection, submission registries) is bit-for-bit
+  identical before and after the function under test runs, using only
+  fixture inputs - never an attempt to inspect source text.
+
+## 19. C3.2 test-case additions (design only, extends sections 9 and 15)
+
+C3.2's future test suite must additionally prove, via fixtures only,
+never a real broker call:
+
+- System-event append succeeds -> Safe Mode remains unchanged; exactly
+  one `BROKER_TRANSACTION_OBSERVED` envelope event is durably written.
+- System-event append fails -> Safe Mode becomes active with the frozen
+  reason string; no candidate transition occurs; no second append or
+  retry is attempted.
+- `EventStore` not open / unhealthy at call time -> same fail-closed
+  Safe-Mode result as an append failure (the existing `EventStore_
+  WriteLine` guard - `g_EventStore_Handle == INVALID_HANDLE` returns
+  `false` immediately - already makes this the same code path, so the
+  same test assertion applies without new plumbing).
+- A `TRADE_TRANSACTION_REQUEST` fixture populates `request`/`result`-
+  derived envelope fields; every other fixture transaction type leaves
+  them absent/`not_applicable`, never a zero value read as fact -
+  directly testing section 12's trust boundary.
+- The handler path is bounded to exactly one attempted append and at
+  most one `SafeMode_Trip` call per invocation - no loop, no repeated
+  append, no repeated trip.
+
 ## Scope guard (frozen, matches the user's explicit prohibition for this document)
 
 ```
@@ -546,6 +684,11 @@ Sections 10-16 freeze the C3.2 sub-contract's defensive rules, callback
     shape, trust boundary, event-envelope schema, deferred-processor
     split, and test-design additions - contract amendment and test
     design only, per the user's explicit follow-up authorization.
+Sections 17-19 freeze the C3.2 implementation micro-contract: the
+    durability-failure rule (SafeMode_Trip, not drop-and-log), the
+    consolidated collision-check findings as implementation constraints,
+    and the additional test-case list - still contract/test-design only,
+    per the user's explicit follow-up authorization.
 Still NOT authorized by this document: implementing OnTradeTransaction,
     calling HistorySelect/HistoryDealGet*/HistoryOrderGet*, adding
     EVENT_TYPE_BROKER_TRANSACTION_OBSERVED or any other new value to

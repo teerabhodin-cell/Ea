@@ -4,6 +4,44 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.2 implementation micro-contract (documentation only, contract amendment)
+
+`Docs/PhaseC_C3_TransactionReconciliationContract.md` sections 17-19 -
+freezes the C3.2 implementation micro-contract after a read-only
+implementation collision-check (entry point, `ENUM_EVENT_TYPE` insertion
+point, event-serializer convention, `EventStore` append/error-handling
+path, test-fixture seam, callback runtime budget, and a behavioral proof
+plan for "no history/candidate/broker call" inside the raw callback - no
+code, no handler, no enum change).
+
+The collision-check found a real inconsistency: `EventStore_LogSystem`
+does not trip Safe Mode on a failed durable write, unlike
+`EventStore_LogCandidateCreated`/`EventStore_LogTransition`. **Frozen,
+per the user's explicit decision: `EVENT_TYPE_BROKER_TRANSACTION_
+OBSERVED` follows the lifecycle-event precedent, not the general
+system-event one** - a failed append trips Safe Mode
+(`SafeMode_Trip("broker transaction observation append failed")`) and
+returns immediately, no retry, no history call, no candidate transition,
+no broker mutation. Rationale: this callback is the primary channel
+recording broker-fact evidence that matching, partial-fill handling, and
+restart reconciliation all depend on; combined with the platform's
+documented, bounded transaction-queue overwrite risk, a durability
+failure must freeze new authority rather than let execution continue as
+though the audit stream remains complete.
+
+Also freezes the consolidated collision-check findings as implementation
+constraints (append point, serializer shape, fixture seam, no-numeric-
+runtime-budget, behavioral-not-syntactic proof plan) and a further set of
+test-case additions (append-success, append-failure, unhealthy-
+`EventStore`, trust-boundary-per-transaction-type, and single-attempt-
+bounded-path assertions).
+
+Still not authorized: implementing `OnTradeTransaction`, calling
+`HistorySelect`/`HistoryDealGet*`/`HistoryOrderGet*`, adding
+`EVENT_TYPE_BROKER_TRANSACTION_OBSERVED` or any other value to
+`ENUM_EVENT_TYPE`, any candidate-lifecycle transition or broker-side
+query/mutation, and the controlled demo smoke protocol.
+
 ## [Unreleased] - C3.2 transaction-reconciliation sub-contract (documentation only, contract amendment)
 
 `Docs/PhaseC_C3_TransactionReconciliationContract.md` sections 10-16 -
