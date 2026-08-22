@@ -870,7 +870,7 @@ void Test_RepeatedScan_NoDurableSideEffect()
    Check(EventStore_Open(TEST_FILE), "EventStore opens for this test");
 
    string e; double l;
-   Check(BuildDurableSubmittedRequest("REPEAT", 12, 5040, 6040, e, l), "candidate built+submitted+matched");
+   Check(BuildDurableSubmittedRequest("REPEAT", 16, 5040, 6040, e, l), "candidate built+submitted+matched");
    Check(EmitDealAddObservation(6040, 5040, l, 1900.00), "full-volume DEAL_ADD emitted");
    EventStore_Close();
 
