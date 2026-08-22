@@ -365,6 +365,7 @@ bool ManualApprovalRegistry_HasValidApproval(string executionRequestId, string e
          rec.execution_policy_version == executionPolicyVersion &&
          rec.candidate_id == candidateId &&
          rec.correlation_id == correlationId &&
+         asOf >= rec.approval_timestamp &&
          rec.approval_expiry > asOf)
          return true;
    }

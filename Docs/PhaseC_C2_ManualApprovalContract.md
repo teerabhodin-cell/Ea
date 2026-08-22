@@ -112,9 +112,21 @@ bool ManualApprovalRegistry_HasValidApproval(string executionRequestId, string e
 testable with fabricated clock values, same discipline every other C2
 pure-evaluation function already follows. Returns `true` only if at
 least one applied `ManualApprovalProjectionRecord` matches all five
-identity fields exactly AND `record.approval_expiry > asOf`. Never
-checks `SubmissionAttemptRegistry` itself - see "consumption boundary"
-above.
+identity fields exactly AND `asOf >= record.approval_timestamp` AND
+`record.approval_expiry > asOf`. Never checks `SubmissionAttemptRegistry`
+itself - see "consumption boundary" above.
+
+**Amendment (found by this round's own test suite, confirmed by the
+user)**: the original frozen shape checked only `approval_expiry >
+asOf`, with no lower bound - meaning a query for an `asOf` strictly
+BEFORE a grant's own `approval_timestamp` would still return `true` for
+that grant, as long as `asOf` was also before its `approval_expiry`. In
+real operation `asOf` is always `TimeCurrent()` and every real grant's
+`approval_timestamp` is stamped at grant time (in the past relative to
+any later query), so this could never actually happen without clock
+skew or a deliberately future-dated grant - but "an approval usable
+before it was ever granted" is not a sound semantic, so the lower
+bound (`asOf >= approval_timestamp`) was added.
 
 ## Projection apply-time validation (frozen, deferred implementation)
 

@@ -436,15 +436,22 @@ void Test_DuplicateApprovalEventReplay_Idempotent()
    ManualApprovalGrant g; BuildValidGrantFor(req, "reviewer_a", D'2026.03.04 09:00:00', D'2026.03.04 09:10:00', g);
    Check(ManualApproval_Grant(g), "sanity: grant written");
 
+   // BuildFullChain durably writes many lines (MARKET_CONTEXT_READY
+   // through EXECUTION_DRY_RUN_COMPLETED) before the grant itself, so
+   // the grant is NOT necessarily at index 0 - locate it by type,
+   // same technique C2.3's own forged-line tests already established.
    string lines[];
    int n = EventStore_ReadAllLines(file, lines);
-   Check(n == 1, "sanity: exactly one line in the store");
+   string grantLine = "";
+   for(int i = 0; i < n; i++)
+      if(StringFind(lines[i], "\"type\":\"EXECUTION_MANUAL_APPROVAL_GRANTED\"") >= 0) grantLine = lines[i];
+   Check(grantLine != "", "sanity: the real EXECUTION_MANUAL_APPROVAL_GRANTED line was found");
 
    ManualApprovalProjectionReport report1 = ManualApprovalProjection_RebuildFromFile(file);
    Check(report1.ok && report1.approval_lines_applied == 1, "sanity: initial rebuild applies exactly one record");
 
    string reason;
-   bool applied = ManualApprovalProjection_ApplyLineWithLineage(lines[0], reason);
+   bool applied = ManualApprovalProjection_ApplyLineWithLineage(grantLine, reason);
    Check(applied, "re-applying the identical line directly returns true (a no-op, not an error)");
    Check(ManualApprovalProjection_Count() == 1, "still exactly one record - the replay did not double-count");
    Check(StringFind(reason, "duplicate") >= 0, "reason explicitly names it a duplicate replay");
@@ -470,10 +477,15 @@ void Test_ConflictingLogEventId_FailsClosed()
 
    EventStore_Close();
 
+   // Same as the replay test above: BuildFullChain writes many lines
+   // before the grant, so locate it by type rather than assuming
+   // index 0.
    string lines[];
    int n = EventStore_ReadAllLines(file, lines);
-   Check(n == 1, "sanity: exactly one line in the store");
-   string original = lines[0];
+   string original = "";
+   for(int i = 0; i < n; i++)
+      if(StringFind(lines[i], "\"type\":\"EXECUTION_MANUAL_APPROVAL_GRANTED\"") >= 0) original = lines[i];
+   Check(original != "", "sanity: the real EXECUTION_MANUAL_APPROVAL_GRANTED line was found");
 
    int approverPos = StringFind(original, "\"approver_identity\":\"reviewer_a\"");
    Check(approverPos >= 0, "sanity: approver_identity field located");
