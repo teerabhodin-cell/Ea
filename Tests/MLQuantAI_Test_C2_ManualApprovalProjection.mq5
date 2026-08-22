@@ -318,7 +318,7 @@ void BuildValidGrantFor(const ExecutionRequest &req, string approver, datetime t
 // Full chain: a valid grant rebuilds cleanly; HasValidApproval is true
 // strictly before expiry, false at/after expiry (boundary).
 //=====================================================================
-void Test_ValidGrant_Rebuilds_HasValidApproval_TrueBeforeExpiry_FalseAtExpiry()
+void Test_ValidGrant_HasValidApproval_ExpiryBoundary()
 {
    Print("--- valid grant rebuilds cleanly; HasValidApproval strictly before vs at/after expiry ---");
 
@@ -609,7 +609,7 @@ void Test_NoAcceptedDryRun_Rejected()
 // every OTHER field differs (different request, different approver,
 // different timestamps).
 //=====================================================================
-void Test_NonceCollisionAcrossDifferentGrants_FailsClosed_EvenIfEverythingElseDiffers()
+void Test_NonceCollisionAcrossDifferentGrants_FailsClosed()
 {
    Print("--- approval_nonce collision across two DIFFERENT, otherwise-unrelated grants fails closed ---");
 
@@ -705,7 +705,7 @@ void OnStart()
 {
    Print("=== MLQuantAI Test: C2 manual-approval contract - projection (read side) + HasValidApproval ===");
 
-   Test_ValidGrant_Rebuilds_HasValidApproval_TrueBeforeExpiry_FalseAtExpiry();
+   Test_ValidGrant_HasValidApproval_ExpiryBoundary();
    Test_NoApprovalAtAll_HasValidApprovalFalse();
    Test_TwoValidGrants_SameRequestId_BothApplied_NeverDeduped();
    Test_DuplicateApprovalEventReplay_Idempotent();
@@ -713,7 +713,7 @@ void OnStart()
    Test_OrphanExecutionRequestId_Rejected();
    Test_MismatchAgainstExecutionRequestProjection_Rejected();
    Test_NoAcceptedDryRun_Rejected();
-   Test_NonceCollisionAcrossDifferentGrants_FailsClosed_EvenIfEverythingElseDiffers();
+   Test_NonceCollisionAcrossDifferentGrants_FailsClosed();
    Test_HasValidApproval_UnaffectedByAnExistingSubmissionAttempt();
 
    Test_NoBrokerMutation_StructuralProof();
