@@ -25,6 +25,7 @@
 #include <MLQuantAI/Execution/MLQuantAI_ManualApprovalReadiness.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_BrokerTransactionObservation.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_TransactionMatchingReadiness.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_DeferredTransactionProcessor.mqh>
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_Contract.mqh>
 
 input group "=== System ==="
@@ -357,6 +358,26 @@ int OnInit()
            rr.lifecycle_events_applied, rr.lifecycle_events_failed, rr.system_events_applied));
    if(!rr.ok)
       EventStoreHealth_TripSafeMode(StringFormat("replay found an inconsistency: %s", rr.first_error));
+
+   // C3.6 deferred-transaction-processor (per
+   // Docs/PhaseC_C3_6_DeferredTransactionProcessorContract.md, FROZEN):
+   // a read-only RECOMMENDATION read model. Turns the already-sealed
+   // C3.3 transaction-matching evidence + this replay's candidate
+   // states into DeferredRecommendationRecord rows only. Runs AFTER
+   // ReplayEngine_Run (candidate state SUBMITTED comes from the
+   // StateProjector replay just populated, NOT CandidateProjection) and
+   // BEFORE BrokerReconciliation_CheckAll (which acts on already-EXECUTED
+   // candidates - C3.6 emits no transition, so there is nothing new for
+   // reconciliation to see yet). RECOMMEND_EXECUTED is a recommendation
+   // row, NOT a SUBMITTED -> EXECUTED transition; lifecycle authority is
+   // C3.7. Strictly read-only - no lifecycle-write API, no candidate
+   // mutation, no event append, no per-tick / per-trade-transaction
+   // callback, no broker terminal query or submission API, no
+   // *_RebuildFromFile recovery of individual upstream projections. If
+   // replay failed (SafeMode engaged above) or the matching read model
+   // is not ready, the scan emits zero recommendations (scan-level, not
+   // a row-level BLOCKED) and does NOT trip SafeMode or block EA init.
+   DeferredTransactionProcessor_StartupScan(g_EventStoreFileName);
 
    BrokerReconciliationReport brr = BrokerReconciliation_CheckAll();
 
