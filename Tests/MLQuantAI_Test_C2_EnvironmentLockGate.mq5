@@ -24,9 +24,14 @@
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_EventEmission.mqh>
 #include <MLQuantAI/Core/MLQuantAI_RiskSizing.mqh>
 #include <MLQuantAI/Market/MLQuantAI_FeatureSnapshotBuilder.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_FeatureSnapshotEventEmission.mqh>
 #include <MLQuantAI/AI/MLQuantAI_ModelArtifactBuilder.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_ModelArtifactEventEmission.mqh>
 #include <MLQuantAI/AI/MLQuantAI_AIDecisionBuilder.mqh>
+#include <MLQuantAI/AI/MLQuantAI_AIDecisionEventEmission.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_EligibilityBuilder.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_EligibilityEventEmission.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_RiskPlanEventEmission.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_ExecutionRequestBuilder.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_ExecutionRequestEventEmission.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_EnvironmentLockGate.mqh>
@@ -242,17 +247,77 @@ bool BuildAcceptedRequest(ExecutionRequest &req, ExecutionPolicy &policy, string
    return ExecutionRequest_Build(c, eligDecision, decision, plan, policy, req, rd);
 }
 
-// Same as BuildAcceptedRequest, but ALSO durably emits EXECUTION_REQUEST_
-// CREATED/EXECUTION_DRY_RUN_COMPLETED to the caller's own already-open
+// Unlike BuildAcceptedRequest/BuildEligibleChain (deliberately non-
+// durable - they only ever call "Build" functions, never "Emit"),
+// this ALSO durably emits every layer of the real chain (MARKET_
+// CONTEXT_READY -> CANDIDATE_CREATED -> FEATURE_SNAPSHOT_CREATED ->
+// MODEL_ARTIFACT_REGISTERED -> AI_DECISION_CREATED -> RISK_PLAN_CREATED
+// -> EligibilityDecision's own lifecycle wiring -> EXECUTION_REQUEST_
+// CREATED/EXECUTION_DRY_RUN_COMPLETED) to the caller's own already-open
 // event store - needed only by the manual-approval tests below, since
 // ManualApprovalRegistry_HasValidApproval() requires a real, staged
 // ExecutionRequestProjection/DryRunResultProjection record to match
-// against (per ManualApprovalProjection's own orphan/mismatch/accepted-
-// dry-run checks). Every other test in this file stays non-durable.
+// against, and C1.3's own ExecutionAuditProjection_RebuildFromFile
+// (staged first by ManualApprovalProjection_RebuildFromFile) rejects
+// the WHOLE rebuild closed if ANY upstream layer is missing - not just
+// the final ExecutionRequest. Every other test in this file stays
+// non-durable. Mirrors Tests/MLQuantAI_Test_C2_ManualApprovalProjection.mq5's
+// own BuildFullChain exactly.
 bool BuildAndEmitAcceptedRequest(ExecutionRequest &req, ExecutionPolicy &policy, string suffix, int dayOffset)
 {
-   TradeCandidate c; RiskPlan plan; AIDecision decision; EligibilityDecision eligDecision;
-   if(!BuildEligibleChain(c, plan, decision, eligDecision, suffix, dayOffset)) return false;
+   MarketContext ctx;
+   BuildBaseContext(ctx, suffix);
+   datetime t0 = D'2026.05.01 00:00:00' + dayOffset * 86400;
+   datetime anchor;
+   Fixture_Bullish_Valid(ctx.trigger_tf_recent, anchor, t0);
+   ctx.anchor_bar_time = anchor;
+
+   if(!EventStore_LogSystem(EventTypeToString(EVENT_TYPE_MARKET_CONTEXT_READY), "market context built", MarketContext_ToJsonFragment(ctx)))
+      return false;
+
+   CRTDetectionResult r;
+   CRT_DetectV1(ctx, r);
+   if(!r.detected) return false;
+   TradeCandidate c;
+   if(!CRT_ToTradeCandidate(ctx, r, c)) return false;
+   if(!CRT_EmitCandidateCreated(c, ctx.symbol_spec.digits)) return false;
+
+   FeatureSnapshot snapshot;
+   if(!Candidate_ToFeatureSnapshot(c, ctx, snapshot)) return false;
+   if(!FeatureSnapshot_EmitFeatureSnapshotCreated(snapshot)) return false;
+
+   ModelArtifact artifact;
+   if(!ModelArtifact_Build("MODEL_" + suffix, "v1", "hash_artifact_" + suffix,
+                             "FEATURES_B8_1_V1", "TDSET_dummy_" + suffix, "hash_tdset_" + suffix,
+                             "SETUP_QUALITY_V1", "INPUT_SCHEMA_V1", "OUTPUT_SCHEMA_V1",
+                             "ONNXRuntime", "1.16.0", MODEL_PROMOTION_PROMOTED, artifact))
+      return false;
+   if(!ModelArtifact_EmitModelArtifactRegistered(artifact)) return false;
+
+   InferenceResult inference;
+   BuildValidInferenceResult(snapshot, artifact.model_registry_id, artifact.model_registry_hash, artifact.model_artifact_hash,
+                               0.90f, inference);
+   AIDecisionPolicy aiPolicy;
+   AIDecisionPolicy_Init(aiPolicy);
+   aiPolicy.decision_policy_version = "AIPOLICY_C2ENVLOCK_V1";
+   aiPolicy.threshold_version       = "THRESH_C2ENVLOCK_V1";
+   aiPolicy.allow_threshold         = 0.70;
+   AIDecision decision; string aiReasonDetail;
+   if(!AIDecision_Build(inference, snapshot, aiPolicy, decision, aiReasonDetail)) return false;
+   if(!AIDecision_EmitAIDecisionCreated(decision)) return false;
+
+   RiskContext riskCtx; BuildValidRiskContext(riskCtx, suffix);
+   RiskPlan plan;
+   if(!Candidate_ToRiskPlan(c, riskCtx, plan)) return false;
+   if(!RiskPlan_EmitRiskPlanCreated(plan)) return false;
+
+   EligibilityContext eligContext; BuildHealthyEligibilityContext(eligContext);
+   EligibilityPolicy eligPolicy; BuildEnabledEligibilityPolicy(eligPolicy);
+   EligibilityDecision eligDecision; string eligReasonDetail;
+   if(!EligibilityDecision_Build(plan, decision, snapshot, eligContext, eligPolicy, eligDecision, eligReasonDetail)) return false;
+   if(!EligibilityDecision_EmitDecisionAndWireLifecycle(eligDecision, eligContext, c)) return false;
+   if(eligDecision.decision != ELIGIBILITY_DECISION_ELIGIBLE) return false;
+
    BuildC2AcceptingExecutionPolicy(policy);
    string rd;
    if(!ExecutionRequest_Build(c, eligDecision, decision, plan, policy, req, rd)) return false;
