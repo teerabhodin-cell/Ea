@@ -821,14 +821,18 @@ void Test_DealTicketOrderSwapped_SameOutput()
    Check(EmitDealAddObservation(6031, 5030, lA - lA / 2.0, 1900.10), "second partial deal (6031) emitted");
    EventStore_Close();
 
-   // Store B: same two deals, REVERSED file order. Distinct order/deal
-   // tickets (5031 / 6032,6033) avoid colliding with store A's live
-   // in-memory SubmissionOutcomeProjection for order 5030 / deal 6030,
+   // Store B: same two deals, REVERSED file order. Uses a DISTINCT dayOffset
+   // (12, not 11) so the candidate_id (derived from market setup/anchor,
+   // NOT the suffix) is genuinely different from store A's - otherwise the
+   // live CandidateProjection rejects a duplicate candidate_id. Distinct
+   // order/deal tickets (5031 / 6032,6033) avoid colliding with store A's
+   // live in-memory SubmissionOutcomeProjection for order 5030 / deal 6030,
    // which persists across the two emission phases of this single test.
    ResetTestFile(TEST_FILE_B);
    Check(EventStore_Open(TEST_FILE_B), "store B opens");
    string eB; double lB;
-   Check(BuildDurableSubmittedRequest("SWAPB", 11, 5031, 6032, eB, lB), "candidate built (same shape, distinct tickets)");
+   Check(BuildDurableSubmittedRequest("SWAPB", 12, 5031, 6032, eB, lB), "candidate built (distinct dayOffset + tickets)");
+   Check(lB > 0.02, "store B lot_size large enough for two partial fills");
    Check(EmitDealAddObservation(6033, 5031, lB / 2.0, 1900.10), "second partial deal (6033) emitted FIRST");
    Check(EmitDealAddObservation(6032, 5031, lB - lB / 2.0, 1900.00), "first partial deal (6032) emitted SECOND");
    EventStore_Close();
