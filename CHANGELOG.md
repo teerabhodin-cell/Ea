@@ -4,6 +4,61 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.3 implementation: deferred matching / transaction projection (IMPLEMENTING)
+
+Implements the C3.3 contract frozen below (sections 20-24 of
+`Docs/PhaseC_C3_TransactionReconciliationContract.md`) - EventStore-only
+replay, strict ticket-only matching, order-ticket volume aggregation.
+NOT reconciliation, NOT fill handling, NOT execution authorization; no
+candidate transition, no `ORDER_FILLED`/`TRANSACTION_REJECTION_
+CONFIRMED`, no `BrokerReconciliation.mqh` change.
+
+New `Execution/MLQuantAI_TransactionMatchingProjection.mqh`:
+- `TransactionDealRecord`/`TransactionDealRegistry_*`: one record per
+  unique `deal_ticket` observed via a `TRADE_TRANSACTION_DEAL_ADD`-typed
+  `BROKER_TRANSACTION_OBSERVED` line - the only transaction type C3.3
+  actively ingests this round. Idempotent by `deal_ticket` itself
+  (deliberate departure from the `log_event_id`-keyed precedent every
+  other projection uses): identical canonical payload on a repeat
+  `deal_ticket` is a no-op; a DIFFERENT canonical payload on the same
+  `deal_ticket` fails the whole rebuild closed as a collision.
+- `OrderAggregateRecord`/`OrderAggregateRegistry_*`: one derived record
+  per `order_ticket`, summing `running_filled_volume` across its deals.
+  `match_status` is `UNMATCHED`/`AMBIGUOUS`/`MATCHED_PARTIAL`/
+  `MATCHED_VOLUME_REACHED`/`MATCHED_ORDER_TERMINAL` (the last reserved,
+  never assigned this round - the `ORDER_STATE` terminal criterion isn't
+  frozen).
+- `TransactionMatching_ResolveExecutionRequestId`: per-deal matching -
+  `deal_ticket` against a durable, `SUBMISSION_STATUS_SUBMITTED`
+  `SubmissionOutcome` first, then `order_ticket`; a
+  `REJECTED`/`ERROR`/`UNKNOWN` outcome is never a valid match target.
+  Deals under one `order_ticket` resolving to more than one distinct
+  `execution_request_id` flip that order to `AMBIGUOUS`, clearing any
+  provisional match.
+- `TransactionMatching_RebuildFromFile`: stages
+  `BrokerSubmissionAuditProjection_RebuildFromFile` (which itself
+  transitively stages C1.3's `ExecutionAuditProjection_RebuildFromFile`)
+  unmodified as a black-box gate first - fails closed if that upstream
+  rebuild fails. Pure read-model output; zero durable writes, zero
+  events, zero `ENUM_EVENT_TYPE` additions.
+
+New `Tests/MLQuantAI_Test_C3_3_TransactionMatchingProjection.mq5`:
+fixture-only suite (11 cases per section 24) - exact deal_ticket match,
+exact order_ticket fallback match, duplicate-deal replay vs conflicting-
+payload collision, multi-deal partial-fill aggregation reaching
+`MATCHED_VOLUME_REACHED`, zero-ticket malformed observation, ambiguous
+order-ticket-to-multiple-requests mapping, unmatched observation,
+rejected-outcome-never-a-match-target, cold-rebuild determinism, and a
+behavioral no-broker-mutation/no-candidate-transition proof.
+
+Source-text scan (zero non-comment hits) confirms no History*/
+Position*/Order*/OrderSend/CTrade/EventStore_LogTransition/
+EventStore_LogSystem/EventStore_Append* call anywhere in the new
+projection file.
+
+Awaiting a real MetaEditor compile + test run before this entry is
+marked PASSED.
+
 ## [Unreleased] - C3.3 deferred-matching/transaction-projection contract (documentation only)
 
 `Docs/PhaseC_C3_TransactionReconciliationContract.md` sections 20-24 -
