@@ -14,6 +14,17 @@ Implementation (`C3.2`, the actual handler + `History*` calls) is
 **separate approval**, per the user's frozen sequence - this doc is the
 prerequisite freeze, not a green light to build it.
 
+**Update**: sections 25-29 below freeze the `C3.4` wiring/rebuild-policy
+design contract - **design-only, no code, no wiring, no readiness
+wrapper file authorized by this round**. It settles the wiring boundary
+(the exact `OnInit` insertion point and the thin readiness-wrapper
+shape), the replay-timing decision (startup-only, explicitly stale
+thereafter), the rebuild policy (trigger/source/semantics/failure
+handling), new report-level unresolved-order visibility counters, and
+the ownership separation between C3.3's durable projection, the
+existing live `BrokerReconciliation`, and the still-unbuilt deferred
+processor. See the updated scope guard at the bottom of this document.
+
 **Update**: sections 20-24 below freeze the `C3.3` deferred-matching/
 transaction-projection contract - a durable, read-only PROJECTION over
 already-sealed `BROKER_TRANSACTION_OBSERVED` lines (C3.2), strictly
@@ -914,6 +925,207 @@ live broker call. C3.3's future test suite must prove, at minimum:
     prove this syntactically)
 ```
 
+## 25. C3.4 wiring boundary (frozen, design-only)
+
+Frozen `OnInit` insertion point - `TransactionMatching_StartupRebuild`
+slots in immediately after the two existing C2 startup rebuilds, before
+the session-start marker is written:
+
+```
+OnInit:
+1. BrokerSubmissionAudit_StartupRebuild(file)
+2. ManualApproval_StartupRebuild(file)
+3. TransactionMatching_StartupRebuild(file)   <- new, this round's design
+4. EventStore_LogSystem(SYSTEM_STARTED, ...)
+5. ReplayEngine_Run(file)
+6. BrokerReconciliation_CheckAll()
+```
+
+Position 3 is required, not arbitrary: `TransactionMatching_
+RebuildFromFile` (C3.3, sealed) stages `BrokerSubmissionAuditProjection_
+RebuildFromFile` as its own black-box gate, so it cannot run before step
+1 succeeds. It is placed before step 4 (`SYSTEM_STARTED`) so that line
+is never mistaken for a `BROKER_TRANSACTION_OBSERVED`-relevant event by
+the C3.3 rebuild, and before step 5/6 purely for log-readability (C3.3's
+own read model is fully decoupled from `ReplayEngine`/`BrokerReconciliation`
+today - see section 29 - so this ordering carries no functional
+dependency, only a diagnostic-log-ordering one).
+
+**`TransactionMatching_StartupRebuild`'s frozen shape** - a thin
+readiness wrapper, exactly mirroring `BrokerSubmissionAuditReadiness.mqh`/
+`ManualApprovalReadiness.mqh`'s own established pattern, not a new one:
+
+```
+bool TransactionMatching_StartupRebuild(const string file_path)
+```
+
+Its ONLY responsibilities, frozen:
+
+```
+1. Clear readiness (fail-closed default) before rebuilding.
+2. Call TransactionMatching_RebuildFromFile(file_path) - unmodified,
+   the sealed C3.3 function, never re-implemented here.
+3. Persist the returned report as last_report (for read-only
+   diagnostics - see section 28).
+4. Set readiness = true ONLY if the report's own .ok field is true.
+5. Log a read-only summary line (counts only, see section 28's
+   logging policy - never per-ticket detail at this level).
+```
+
+Explicitly prohibited in this wrapper, same as every readiness wrapper
+before it: no lifecycle transition, no event emission, no live broker
+API call, no `OnTradeTransaction`/callback wiring of any kind. This is a
+pure startup-time orchestration function, nothing else.
+
+## 26. C3.4 replay timing (frozen, design-only): startup-only, explicitly stale thereafter
+
+**Decision, frozen**: C3.4 wires `TransactionMatching_StartupRebuild`
+as an `OnInit`-only startup snapshot. C3.3's read model is a **durable
+startup/audit projection, not a live decision input**.
+
+**Explicitly rejected, both for this round**:
+- A periodic re-rebuild inside `OnTick` - re-running a full-file rebuild
+  on a timer would turn an expensive, full-file-scan operation into
+  hidden, undocumented runtime behavior nothing in the codebase today
+  does at this cadence, and does not scale as the event store grows.
+- A true incremental update triggered from `OnTradeTransaction` itself -
+  unlike `CRT_EmitCandidateCreated`'s single "does this ID already
+  exist" live-guard trick, C3.3's matching is a genuine over-time
+  reconciliation problem (a later `SubmissionOutcome` can resolve an
+  `UNMATCHED` order; a later deal can change `MATCHED_PARTIAL` to
+  `MATCHED_VOLUME_REACHED`). A correct incremental update needs its own
+  explicit incremental-state and idempotency contract, which does not
+  exist and is not designed by this document.
+
+**Consequence, frozen and required to be surfaced, not hidden**: the
+read model is stale immediately after `OnInit` completes - any
+`BROKER_TRANSACTION_OBSERVED` line written during the live session is
+invisible to `g_TxDeal_Records[]`/`g_TxOrder_Records[]` until the next
+restart. This staleness must be explicit in the readiness/report
+metadata a future consumer would read (e.g. a `rebuilt_at`/session-scope
+note), never silently assumed current - the same "never let a stale
+belief masquerade as live truth" discipline `BrokerReconciliation_
+CheckAll()`'s own header comment already establishes for a different
+mechanism.
+
+## 27. C3.4 rebuild policy (frozen, design-only)
+
+```
+Rebuild trigger:   OnInit only (section 26).
+Rebuild source:    EventStore_ReadAllLines only - no other input.
+Rebuild semantics: clear all C3.3 projection state first, then rebuild
+                   deterministically from the file alone (unchanged from
+                   C3.3's own sealed TransactionMatching_RebuildFromFile
+                   behavior - this section freezes how the WRAPPER
+                   around it behaves, not the rebuild function itself).
+Rebuild failure:   readiness = false; the report is retained ONLY for
+                   diagnostics (section 25's last_report), never treated
+                   as authoritative state.
+Session update:    none - no re-rebuild, no incremental update, for the
+                   rest of the session (section 26).
+```
+
+**On a C3.3 rebuild failure, frozen**:
+- Log an error naming `deals_applied`, `deals_failed`, and the report's
+  own `first_error` - enough for a human to diagnose without re-running
+  anything.
+- Do **NOT** engage Safe Mode from this failure alone - C3.3 carries no
+  lifecycle authority (section 23, already frozen), so a failed
+  diagnostic rebuild is not itself a safety event the way a failed C2.3/
+  manual-approval rebuild is (those gate real submission authority;
+  C3.3 gates nothing yet).
+- Do **NOT** block EA initialization because of this failure alone -
+  `OnInit` continues exactly as it does today; only the pre-existing
+  C1-C2 readiness gates (steps 1-2) retain their own, already-frozen
+  block-on-failure behavior, unchanged by this document.
+- Never use a stale (i.e. previous-session) C3.3 projection state as
+  authority - `TransactionMatching_RebuildFromFile` already resets its
+  own registries at the start of every call (C3.3, sealed), so a failed
+  rebuild leaves the registries empty, never half-populated from a
+  prior success.
+
+## 28. C3.4 unresolved-order visibility (frozen, design-only - report shape only, no code)
+
+Adds six new counters to a future `TransactionMatchingReport`-shaped
+struct (the wrapper's own reporting layer, not a change to C3.3's sealed
+`TransactionMatchingReport` itself - see the scope guard below for the
+exact boundary this implies for a future implementation round):
+
+```
+orders_total
+orders_unmatched
+orders_ambiguous
+orders_matched_partial
+orders_matched_volume_reached
+orders_matched_order_terminal
+```
+
+**Counter definition, frozen**:
+- Each counts `OrderAggregateRecord`s by `match_status`, exactly once
+  per `order_ticket` - never per-deal, never per-observation-line.
+- Populated only AFTER the full file has been rebuilt - no partial/
+  running counts during the scan itself.
+- `orders_unmatched + orders_ambiguous + orders_matched_partial +
+  orders_matched_volume_reached + orders_matched_order_terminal ==
+  orders_total`, always - a future implementation's own test matrix
+  must prove this invariant directly.
+- `orders_matched_order_terminal` stays frozen at `0` under C3.4 - the
+  `ORDER_STATE` terminal criterion is still not frozen (section 21),
+  unchanged by this round.
+
+**Logging policy, frozen**:
+
+```
+UNMATCHED               -> summary count only (no per-ticket log line)
+MATCHED_PARTIAL          -> summary count only
+MATCHED_VOLUME_REACHED   -> summary count only
+AMBIGUOUS                 -> ONE startup WARN with the summary count -
+                              never one WARN per ambiguous ticket (no
+                              per-ticket spam, regardless of how many
+                              orders are ambiguous)
+```
+
+**Explicitly prohibited, frozen**: no status value, alone or in
+combination, may trigger Safe Mode, a candidate-lifecycle transition, or
+any `BrokerReconciliation`-side action. These counters are observability
+only - the same "diagnostic, never authority" boundary section 21
+already established for the underlying `match_status` values
+themselves, now extended to their aggregate counts.
+
+## 29. C3.4 relationship to live BrokerReconciliation (frozen, design-only)
+
+Freezes a strict three-way ownership separation - **no
+`BrokerReconciliation.mqh` change, no new "second pass" for
+`CANDIDATE_SUBMITTED` candidates, is authorized by this document**:
+
+```
+BrokerReconciliation (existing, sealed):
+  Live-position consistency for CANDIDATE_EXECUTED candidates only.
+  Reads PositionsTotal()/PositionGetString(POSITION_COMMENT) at OnInit
+  time. Unchanged by this document.
+
+TransactionMatching (C3.3, sealed):
+  A durable deal/order matching DIAGNOSTIC projection only. No
+  lifecycle authority, no live broker read, no write of any kind.
+  Unchanged by this document.
+
+Deferred processor (not yet built, per C3.1 section 14/C3.2 section
+14):
+  The future SOLE owner of any candidate-lifecycle action derived from
+  broker facts - the only future component permitted to call
+  EventStore_LogTransition off of a matched transaction fact.
+```
+
+**Explicit, frozen consequence**: `MATCHED_VOLUME_REACHED` is
+**evidence, never authorization**. A `CANDIDATE_SUBMITTED` candidate
+whose order shows `MATCHED_VOLUME_REACHED` in C3.3's read model does
+NOT get transitioned to `CANDIDATE_EXECUTED` by anything this document
+authorizes - that transition remains exclusively the deferred
+processor's future job, under its own, separately-frozen policy. This
+document deliberately leaves `BrokerReconciliation`'s own blind spot
+(zero visibility into `CANDIDATE_SUBMITTED` candidates) unresolved - it
+is named here as a known gap, not fixed here.
+
 ## Scope guard (frozen, matches the user's explicit prohibition for this document)
 
 ```
@@ -944,13 +1156,25 @@ Sections 20-24 freeze the C3.3 deferred-matching/transaction-projection
     follow-up authorization. No projection code, no raw-callback change,
     no new lifecycle event, no BrokerReconciliation.mqh edit, is
     authorized by this document.
+Sections 25-29 freeze the C3.4 wiring/rebuild-policy design contract:
+    the OnInit insertion point and TransactionMatching_StartupRebuild's
+    thin-wrapper shape, the startup-only/explicitly-stale replay-timing
+    decision, the rebuild policy (trigger/source/semantics/failure
+    handling, no Safe Mode, no session update), six new unresolved-order
+    visibility counters and their logging policy, and the strict
+    ownership separation between BrokerReconciliation/TransactionMatching/
+    the still-unbuilt deferred processor - DESIGN ONLY, per the user's
+    explicit instruction. No code, no wiring, no readiness-wrapper file,
+    no C3.3 projection change, no test, no MLQuantAI.mq5 edit, is
+    authorized by this document.
 Still NOT authorized by this document: implementing OnTradeTransaction
     (already implemented and sealed as of C3.2 - this reminder covers
     any FURTHER change to it), calling HistorySelect/HistoryDealGet*/
     HistoryOrderGet*, adding EVENT_TYPE_ORDER_FILLED or EVENT_TYPE_
     TRANSACTION_REJECTION_CONFIRMED or any other new value to
     ENUM_EVENT_TYPE, any candidate-lifecycle transition or broker-side
-    query/mutation, any BrokerReconciliation.mqh change, and the
-    controlled demo smoke protocol. Each remains its own, separate,
+    query/mutation, any BrokerReconciliation.mqh change, writing
+    TransactionMatching_StartupRebuild itself, wiring MLQuantAI.mq5, and
+    the controlled demo smoke protocol. Each remains its own, separate,
     explicitly-approved future step.
 ```
