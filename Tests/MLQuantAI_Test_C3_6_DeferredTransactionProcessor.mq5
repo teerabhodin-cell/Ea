@@ -157,7 +157,7 @@ void BuildHealthyEligibilityContext(EligibilityContext &context)
    context.account.open_risk_percent = 0.0;
    context.account.daily_pnl_percent = 0.0;
    context.account.drawdown_from_peak_percent = 0.0;
-   context.account.safe_mode_active = false;
+   context.safe_mode_active = false;
    context.eligibility_context_hash = EligibilityContext_ComputeHash(context);
 }
 
