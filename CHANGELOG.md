@@ -4,6 +4,53 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.6 deferred-transaction-processor design contract (DESIGN ONLY, docs-only, 2026-08-23)
+
+Docs-only design contract on baseline `mlquantai@f9d3ade` (C1–C3.4 sealed;
+C3.5 frozen; Phase 0.3 gate CLOSED; C3.6 UNLOCKED). No `.mqh`/`.mq5` file,
+no test file, no `MLQuantAI.mq5` wiring, no new `ENUM_EVENT_TYPE` value, no
+new projection struct/API, no `EventStore_LogTransition`, no lifecycle
+transition, no broker API, no compile, no test run.
+
+- **Purpose**: C3.6 turns sealed transaction-matching evidence into a
+  read-only recommendation read model. `RECOMMEND_EXECUTED` is a
+  recommendation row, NOT a `SUBMITTED → EXECUTED` transition. Lifecycle
+  authority is C3.7 (separately authorized).
+- **Startup placement (refines C3.5 §10)**: `DeferredTransactionProcessor_
+  StartupScan` slots in `OnInit` between `ReplayEngine_Run` and
+  `BrokerReconciliation_CheckAll`, because `CANDIDATE_SUBMITTED` comes from
+  `StateProjector` (populated by `ReplayEngine_Run`), not `CandidateProjection`.
+- **Replay-failure semantics**: replay not ok / SafeMode engaged → zero
+  recommendations, `upstream_replay_not_ready` diagnostic, no new SafeMode
+  action, no EA-init block from C3.6.
+- **Candidate → execution_request_id reverse index** (contract, not impl
+  detail): built from `ExecutionRequestProjection` only; 0 mappings →
+  `RECOMMEND_BLOCKED`; 1 → usable; >1 → `RECOMMEND_BLOCKED`. No symbol/time/
+  order/correlation fallback. No sealed-projection edit.
+- **Recommendation vocabulary**: only `RECOMMEND_NONE`, `RECOMMEND_EXECUTED`,
+  `RECOMMEND_BLOCKED`. `RECOMMEND_REJECTED` must not exist as enum member,
+  output row, event, or side effect.
+- **Deterministic action_id**: `C36|EXECUTED|candidate_id|execution_request_id|
+  order_ticket|MATCHED_VOLUME_REACHED|[sorted deal_tickets]|v1`. No session ID,
+  wall-clock, line number, rebuild order, log text, or `rebuilt_at`.
+- **Semantic output ordering**: `candidate_id ASC → execution_request_id ASC
+  → order_ticket ASC → sorted deal-ticket set / action_id ASC`. No file-order
+  reliance.
+- **Idempotency/duplicates (adjusted)**: registry resets every scan;
+  within-scan duplicate (same action_id + identical payload) collapses to one
+  row; across cold scans the same semantic output is reconstructed once, not a
+  durable already-applied action; collision (same action_id + different
+  payload) → `RECOMMEND_BLOCKED`. "Already applied" must not mean lifecycle
+  action in C3.6.
+- **Stale-after-OnInit**: snapshot only; no `OnTick`/`OnTradeTransaction`
+  update, no timer, no incremental queue.
+- **Implementation allowlist** (for separately authorized Commit 2): new
+  `Execution/MLQuantAI_DeferredTransactionProcessor.mqh` + new test + one
+  `OnInit` wiring line in `MLQuantAI.mq5`. Existing projections read-only.
+
+The contract is not the implementation. C3.6 Commit 2 (implementation) and
+C3.7 (lifecycle authority) remain separately authorized, in order.
+
 ## [Unreleased] - Phase 0.3 fixture implementation: A negative + B positive test (2026-08-23)
 
 Implementation of the Phase 0.3 fixture-debt gate decision on branch
