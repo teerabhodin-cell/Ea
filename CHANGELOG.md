@@ -4,6 +4,64 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase 0.3 fixture-debt gate decision contract (DESIGN ONLY, docs-only, 2026-08-23)
+
+Docs-only decision on baseline `mlquantai@b75ce34` (B5–B9, C1–C2, C3.1–C3.4
+sealed; C3.5 contract frozen). No fixture file, no test file, no
+`.mqh`/`.mq5` source, no sealed file touched, no new `ENUM_EVENT_TYPE`
+value, no `EventStore_LogTransition` call, no `OnTick`/
+`OnTradeTransaction` change, no `History*`/`Position*`/`Order*` API, no
+`OrderSend`/`CTrade`, no candidate-lifecycle transition, no C3.6
+`DeferredTransactionProcessor` code.
+
+Freezes the A+B fixture split that unblocks C3.6:
+
+- **A — Historical negative fixture**: `MLQuantAI_events_2026-08-21.jsonl`
+  is permanently READ-ONLY historical evidence — never renamed, deleted,
+  truncated, appended, normalized, or opened for read or write by any
+  automated test. Automated negative testing uses a **dedicated**
+  fixture (a source-controlled copy in `Tests/Fixtures/` with recorded
+  provenance + SHA-256, or a minimal orphan fixture generated at test
+  start from a documented bad-line pattern), never the live daily store.
+- **B — Canonical positive fixture**: a generated-at-test-start
+  dedicated `.jsonl` store (existing `TEST_FILE` + `FileDelete` +
+  `EventStore_Open` convention) carrying the full chain the real
+  C2.3/C3.3 rebuild requires: `MARKET_CONTEXT_READY →
+  CANDIDATE_CREATED → EXECUTION_REQUEST_CREATED →
+  EXECUTION_DRY_RUN_COMPLETED (ACCEPTED) →
+  EXECUTION_SUBMISSION_ATTEMPTED → ORDER_SUBMITTED /
+  SUBMISSION_STATUS_SUBMITTED → BROKER_TRANSACTION_OBSERVED DEAL_ADD
+  → C3.3 MATCHED_VOLUME_REACHED → (future C3.6) RECOMMEND_EXECUTED`.
+  IDs/tickets/timestamps/prices/volumes from fixed constants; cold
+  rebuild yields identical projection state and `match_status`.
+- **Negative assertion**: asserts the failure boundary and cause
+  (rebuild `ok=false`, `lines_failed>0`, diagnostic names the stable
+  orphan-candidate cause at CandidateProjection or a downstream stage
+  gating through it) — never brittle timestamp/session/sequence/
+  line-number equality, never a catch-all "failed".
+- **action_id identity** (for C3.6): derives from semantic immutable
+  evidence first (`candidate_id`, `execution_request_id`, `action_type`,
+  `order_ticket`, terminal `MATCHED_VOLUME_REACHED`, sorted
+  `deal_ticket` set) — not from `EventStore` `session_id` or append
+  sequence unless those are deterministic in the fixture.
+- **Isolation**: every test uses a dedicated store; no test touches any
+  daily production-named store; cleanup never touches negative
+  historical evidence; each fixture has exactly one owning test.
+- **C3.6 readiness**: positive fixture reconstructs
+  `CandidateProjection → ExecutionAuditProjection →
+  BrokerSubmissionAuditProjection → TransactionMatchingProjection`;
+  covers full-match, partial, unmatched, ambiguous/collision cases
+  (some promotable to C3.6-specific fixtures).
+- **Definition of Done**: the gate is NOT closed by this doc. It closes
+  only when both the negative diagnostic test and the canonical positive
+  fixture test exist and pass; until then C3.6 remains blocked per the
+  C3.5 contract.
+
+Full frozen decision: `Docs/Phase0_3_FixtureDebtGate.md`. The Phase 0.3
+implementation (actual negative + positive test files and any fixture
+copies) is a separate, later branch authorized only after this decision
+is merged.
+
 ## [Unreleased] - C3.5 deferred-transaction-authority design contract (DESIGN ONLY, docs-only, 2026-08-23)
 
 Docs-only contract on baseline `mlquantai@8321448` (C1–C3.4 sealed). No
