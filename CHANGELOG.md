@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - C2 manual-approval gate integration (awaiting real MetaEditor run)
+## [Unreleased] - C2 manual-approval gate integration (PASSED 448/448, real MetaEditor run, 2026-08-22)
 
 The read side of the manual-approval contract, plus a real wiring gap
 found and fixed while implementing it. Per
@@ -79,10 +79,40 @@ replay/conflict, orphan, four-field mismatch, no-accepted-dry-run,
 nonce collision, consumption-boundary proof) and four new cases added
 to `Tests/MLQuantAI_Test_C2_EnvironmentLockGate.mq5` (registry not
 ready, ready-but-not-granted, ready-with-valid-approval stays ACCEPTED,
-precedence). Full regression (C2.2 147/147, C2.3 104/104, integration
-41/41, environment-lock, write-side manual-approval 38/38) still
-pending a real MetaEditor run to confirm no regression from the
-`BrokerSubmission_Submit()` signature change.
+precedence).
+
+**Confirmed by real MetaEditor runs, with real bugs found and fixed
+along the way (none in the shipped registry/gate logic's own frozen
+rules, except one - see below)**:
+- Two identifiers over MQL5's 63-char limit (72 and 80 chars) -
+  compile error, renamed.
+- `Tests/MLQuantAI_Test_C2_EnvironmentLockGate.mq5`'s own
+  `BuildAndEmitAcceptedRequest` durably emitted only the final
+  `EXECUTION_REQUEST_CREATED`/`EXECUTION_DRY_RUN_COMPLETED` pair,
+  never the upstream `CANDIDATE_CREATED`/`FEATURE_SNAPSHOT_CREATED`/
+  `MODEL_ARTIFACT_REGISTERED`/`AI_DECISION_CREATED`/`RISK_PLAN_CREATED`/
+  eligibility-lifecycle events those reference - C1.3's own orphan
+  check correctly rejected the incomplete fixture (3 test failures);
+  rewritten to emit the full chain.
+- A genuine gap in the ORIGINALLY frozen `HasValidApproval()` shape:
+  it checked only `approval_expiry > asOf`, no lower bound against
+  `approval_timestamp` - meaning a query for an `asOf` strictly BEFORE
+  a grant was ever made could still return `true`. Found by this
+  round's own test suite, confirmed by the user: added
+  `asOf >= record.approval_timestamp` as a second required condition,
+  contract doc amended.
+- Two more test-fixture bugs in `Tests/MLQuantAI_Test_C2_ManualApprovalProjection.mq5`
+  wrongly assumed the approval-grant line sat at `lines[0]`, when
+  `BuildFullChain` durably writes several upstream lines first - fixed
+  to locate the grant line by type.
+
+Full regression suite ALL PASS, no regression from the
+`BrokerSubmission_Submit()` signature change: `Test_C2_ManualApprovalEmission`
+38/38, `Test_C2_ManualApprovalProjection` 73/73,
+`Test_C2_EnvironmentLockGate` 45/45, `Test_C2_2_BrokerSubmissionGate`
+147/147, `Test_C2_3_BrokerSubmissionAuditProjection` 104/104,
+`Test_C2_BrokerSubmissionGate_DurableIdempotency` 41/41 - total
+448/448.
 
 No sealed file touched (`MLQuantAI_SafetyGate.mqh`,
 `MLQuantAI_BrokerSubmissionGate.mqh`,

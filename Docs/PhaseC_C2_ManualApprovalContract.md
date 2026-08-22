@@ -178,7 +178,7 @@ later failed call revokes a stale `true`). Wired into `MLQuantAI.mq5`'s
 `OnInit`, alongside the existing `BrokerSubmissionAudit_StartupRebuild`
 call, only once this contract is confirmed.
 
-## C2 gate integration (frozen shape - status: IMPLEMENTING)
+## C2 gate integration (frozen shape - status: PASSED, 448/448, real MetaEditor run, 2026-08-22)
 
 A new check inside `BrokerSubmissionEnvironmentLock_Evaluate`
 (`Execution/MLQuantAI_EnvironmentLockGate.mqh`, its third amendment):
