@@ -4,6 +4,63 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - Phase 0.3 fixture implementation: A negative + B positive test (2026-08-23)
+
+Implementation of the Phase 0.3 fixture-debt gate decision on branch
+`phase0.3-fixture-implementation` from `mlquantai@6851ac0`. One new test
+file only: `Tests/MLQuantAI_Test_Phase0_3_FixtureDebtGate.mq5` (+ docs
+status). No production `.mqh`/`.mq5` source, no sealed file, no
+`MLQuantAI.mq5`, no C3.3/C3.4/C3.5 semantics change, no new
+`ENUM_EVENT_TYPE` value, no `DeferredTransactionProcessor`, no
+`RECOMMEND_EXECUTED` emission, no action-event write, no new lifecycle
+transition (no `EXECUTED`), no `OnTick`/`OnTradeTransaction` change, no
+`History*`/`Position*`/`Order*` API, no `OrderSend`/`CTrade`, no
+daily/historical store access.
+
+- **A — Negative diagnostic fixture**: builds a fully valid candidate
+  struct in memory (via `CRT_DetectV1` + `CRT_ToTradeCandidate`, suffix
+  `NEGORPHAN`, non-empty `context_event_id`) and emits ONLY
+  `CRT_EmitCandidateCreated` into a dedicated store
+  (`MLQuantAI_Test_Phase0_3_NegativeOrphanFixture.jsonl`) with NO
+  `MARKET_CONTEXT_READY`. `CandidateProjection_RebuildFromFile` returns
+  `ok=false`, `lines_failed>0`, `lines_applied==0`, `first_error` contains
+  the stable `orphan candidate:` cause, and `first_error_code ==
+  CANDPROJ_REASON_ORPHAN_CONTEXT` — NOT a timestamp/session/line-number
+  fluke. The negative fixture file (line count + byte size) is asserted
+  unchanged by the read-only rebuild.
+- **B — Canonical positive fixture**: generated-at-test-start dedicated
+  store (`MLQuantAI_Test_Phase0_3_CanonicalPositiveFixture.jsonl`) carrying
+  the full chain the real C2.3/C3.3 rebuild requires: `MARKET_CONTEXT_READY
+  → CANDIDATE_CREATED → EXECUTION_REQUEST_CREATED →
+  EXECUTION_DRY_RUN_COMPLETED(ACCEPTED) → EXECUTION_SUBMISSION_ATTEMPTED
+  → ORDER_SUBMITTED → BROKER_TRANSACTION_OBSERVED(DEAL_ADD) →
+  MATCHED_VOLUME_REACHED`. Fixed constants for IDs/tickets/timestamps
+  (`submittedAt = D'2026.07.15 12:00:00' + dayOffset*86400`, NOT
+  `TimeCurrent()`). Proves `CandidateProjection` +
+  `BrokerSubmissionAuditProjection` + `TransactionMatching` rebuilds are
+  all clean (zero failed lines), the order resolves to
+  `MATCHED_VOLUME_REACHED`, and the join chain resolves uniquely:
+  `deal_ticket → order_ticket → execution_request_id → candidate_id →
+  CANDIDATE_SUBMITTED` (the sealed SUBMITTED waypoint; no `EXECUTED`,
+  C3.6 does not exist yet). Deterministic across two cold rebuilds.
+- **C — C3.5 readiness evidence ONLY**: asserts the fixture exposes the
+  immutable semantic facts a future C3.6 `action_id` would consume
+  (`candidate_id`, `execution_request_id`, `order_ticket`, terminal
+  `MATCHED_VOLUME_REACHED`, sorted `deal_ticket` set) and that a local
+  read-only `future_action_id_input_key` over those facts is identical
+  across two rebuilds. Does NOT create the processor, does NOT emit
+  `RECOMMEND_EXECUTED`, does NOT write an action event, makes no DIRECT
+  `EventStore_LogTransition` call, performs no new C3.6 transition.
+- **Isolation**: every fixture is a dedicated test-owned store; no test
+  opens/reads/writes/deletes/renames/truncates
+  `MLQuantAI_events_2026-08-21.jsonl` or any `MLQuantAI_events_*.jsonl`
+  daily/historical store.
+
+The gate is NOT closed by this commit alone. It closes only when the user
+compiles the new test in MetaEditor (0 errors / 0 warnings), the new Phase
+0.3 suite passes, and the full regression baseline still passes (C3.3
+109/109, C3.4 57/57, C2.3 104/104, C2 448/448, main EA 0/0).
+
 ## [Unreleased] - Phase 0.3 fixture-debt gate decision contract (DESIGN ONLY, docs-only, 2026-08-23)
 
 Docs-only decision on baseline `mlquantai@b75ce34` (B5–B9, C1–C2, C3.1–C3.4
