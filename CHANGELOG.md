@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - C3.3 implementation: deferred matching / transaction projection (IMPLEMENTING)
+## [Unreleased] - C3.3 implementation: deferred matching / transaction projection (PASSED 109/109, real MetaEditor run, 2026-08-22)
 
 Implements the C3.3 contract frozen below (sections 20-24 of
 `Docs/PhaseC_C3_TransactionReconciliationContract.md`) - EventStore-only
