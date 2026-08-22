@@ -56,8 +56,16 @@ Position*/Order*/OrderSend/CTrade/EventStore_LogTransition/
 EventStore_LogSystem/EventStore_Append* call anywhere in the new
 projection file.
 
-Awaiting a real MetaEditor compile + test run before this entry is
-marked PASSED.
+Full existing regression, real MetaEditor run, zero regressions (this
+branch touches only 3 files - CHANGELOG.md, the new projection file, and
+its own test file - no shared/production file is touched, so this is
+confirmation, not a required gate):
+`Test_C2_ManualApprovalEmission` 38/38, `Test_C2_ManualApprovalProjection`
+73/73, `Test_C2_EnvironmentLockGate` 45/45, `Test_C2_2_BrokerSubmissionGate`
+147/147, `Test_C2_3_BrokerSubmissionAuditProjection` 104/104,
+`Test_C2_BrokerSubmissionGate_DurableIdempotency` 41/41 - total 448/448,
+matching the pre-existing baseline exactly. Combined total this round:
+557/557.
 
 **Test-fixture bug found and fixed via the user's real first run (98/109,
 11 failures)**: every test past the first that reused `dayOffset=0`
