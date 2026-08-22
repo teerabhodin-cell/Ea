@@ -401,3 +401,33 @@ shape is confirmed against the real EventStore / projection APIs.
    codebase and the C3.5 contract.
 8. Explicit user merge authorization (no auto-merge).
 ```
+
+---
+
+## Appendix A — Implementation status (branch phase0.3-fixture-implementation)
+
+**Status**: IMPLEMENTATION DRAFT (not yet compiled/verified by the user).
+
+- Test file: `Tests/MLQuantAI_Test_Phase0_3_FixtureDebtGate.mq5` (single file,
+  per the authorized allowlist). No `Tests/Fixtures/*` helper was needed.
+- A (negative): in-memory valid candidate via `CRT_DetectV1` +
+  `CRT_ToTradeCandidate` (suffix `NEGORPHAN`), only `CRT_EmitCandidateCreated`
+  emitted into a dedicated store with no `MARKET_CONTEXT_READY`. Asserts
+  `ok=false`, `lines_failed>0`, `lines_applied==0`, `first_error` contains
+  `orphan candidate:`, `first_error_code == CANDPROJ_REASON_ORPHAN_CONTEXT`,
+  and the fixture file (line count + byte size) is unchanged by the rebuild.
+- B (positive): generated-at-test-start dedicated store carrying the full
+  chain. Fixed `submittedAt = D'2026.07.15 12:00:00' + dayOffset*86400`
+  (NOT `TimeCurrent()`). Proves all three rebuilds are clean (zero failed
+  lines), `MATCHED_VOLUME_REACHED`, the join chain
+  `deal_ticket -> order_ticket -> execution_request_id -> candidate_id ->
+  CANDIDATE_SUBMITTED`, and determinism across two cold rebuilds.
+- C (readiness only): local read-only `future_action_id_input_key` over the
+  immutable semantic facts, asserted identical across two rebuilds. No
+  processor, no `RECOMMEND_EXECUTED`, no action-event write, no DIRECT
+  `EventStore_LogTransition`, no new C3.6 transition.
+
+**Gate not closed.** Closes only after the user compiles the new test in
+MetaEditor (0 errors / 0 warnings) and the full regression gate passes:
+new Phase 0.3 suite ALL PASS, C3.3 109/109, C3.4 57/57, C2.3 104/104,
+C2 448/448, main EA 0/0. Until then C3.6 remains blocked.
