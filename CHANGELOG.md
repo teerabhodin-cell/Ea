@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - Step 8.5 smoke-test fixture fix: no longer orphans itself (IMPLEMENTING)
+## [Unreleased] - Step 8.5 smoke-test fixture fix: no longer orphans itself (PASSED 626/626, real MetaEditor run, 2026-08-23)
 
 Test-only fix, scoped entirely to `RunRuntimeLifecycleSmokeTest()` and
 its own new helper functions in `MLQuantAI.mq5` - no production
@@ -45,9 +45,25 @@ line exists in a pre-existing event store file written before this fix -
 only a fresh, date-stamped file (the default naming convention) or
 explicit manual cleanup addresses that pre-existing condition.
 
-Awaiting a real MetaEditor compile of `MLQuantAI.mq5` (as the EA, not a
-Tests/ script - the smoke test lives inside the live EA itself) plus the
-standard regression suite before this entry is marked PASSED.
+**Verification (real MetaEditor run, 2026-08-23)**: `MLQuantAI.mq5` compiles
+with 0 errors / 0 warnings, and the full regression gate passes:
+
+- Isolated forward-behavior test (`Tests/MLQuantAI_Test_SmokeOrphanFixtureFix.mq5`,
+  dedicated test store, 12/12): the smoke candidate now carries full
+  `MARKET_CONTEXT_READY` -> `CANDIDATE_CREATED` lineage and replays cleanly
+  through `CandidateProjection` -> `BrokerSubmissionAudit` ->
+  `ManualApproval` -> `TransactionMatching` startup-rebuild chain with zero
+  `orphan candidate` errors and zero failed lines.
+- C2 regression (448/448): EnvironmentLockGate 45/45,
+  BrokerSubmissionGate_DurableIdempotency 41/41, ManualApprovalEmission
+  38/38, ManualApprovalProjection 73/73, C2.2 BrokerSubmissionGate 147/147,
+  C2.3 BrokerSubmissionAuditProjection 104/104.
+- C3.3 TransactionMatchingProjection 109/109.
+- C3.4 TransactionMatchingReadiness 57/57.
+
+Total: 626/626. The real-`OrderSend` smoke script
+(`MLQuantAI_SmokeTest_C2_2_RealOrderSend`) correctly remains ABORTED under
+its opt-in flag and is not part of this gate.
 
 ## [Unreleased] - C3.4 implementation: startup-readiness wrapper (IMPLEMENTING, awaiting real MetaEditor run)
 
