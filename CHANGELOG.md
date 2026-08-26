@@ -4,6 +4,75 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.9 implementation: cross-candidate execution provenance conflict auditor (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-26)
+
+`Include/MLQuantAI/Infrastructure/EventStore/MLQuantAI_ExecutionProvenanceConflictAuditor.mqh`
+(new) + `Tests/MLQuantAI_Test_C3_9_ExecutionProvenanceConflictAuditor.mq5` (new).
+Read-only diagnostic, not wired into `OnInit`: scans the full durable
+lifecycle log for `CANDIDATE_EXECUTED` events and flags any broker-side
+identifier (`execution_request_id`, `order_ticket`, or an individual
+`deal_tickets_sorted` entry) claimed by more than one distinct
+`candidate_id` - two different candidates both durably claiming the same
+real broker fill.
+
+**Planning history (same round)**: this started as C3.8A, a proposed
+"Submission Idempotency Guard" sitting in front of C3.7's
+`LifecycleAuthority_StartupApply()`. Investigation found no authentic
+integration seam for it - that function takes only a `fileName`, is
+called once per `OnInit`, and already performs a fresh
+`StateProjector_TryGetState()` re-check per row that skips any
+non-`SUBMITTED` candidate (including already-`EXECUTED` ones), so the
+proposed guard would have duplicated existing, sealed, already-tested
+behavior. C3.8A was cancelled; its planning branch
+(`feat/c3-8-submission-idempotency-guard`) was abandoned, never merged.
+The next candidate, an initial C3.9 "Semantic Lifecycle Integrity
+Auditor" (full-log genesis-uniqueness / chain-continuity / transition-
+legality checking), was found to have the identical problem:
+`ReplayEngine_Run()` already folds every lifecycle line through
+`StateProjector_Apply()` on every startup, which already enforces all
+three of those rules and already trips Safe Mode
+(`EventStoreHealth_TripSafeMode`, wired at `MLQuantAI.mq5:357-361`) on
+any violation found anywhere in the durable history. C3.9 was narrowed to
+the one genuinely non-overlapping gap: `StateProjector` only tracks state
+per single `candidate_id` and never reads `extra_json` back, so nothing
+in the sealed pipeline checks whether two *different* candidates'
+provenance overlaps.
+
+Public surface: `ExecutionProvenanceConflictAuditor_ScanLines(lines[], n)`
+(pure - same `lines[]`-direct split `EventStoreValidator_ValidateLines`/
+`_ValidateFile` and C3.7's own `C37_FindMatchingExecutedLine` already
+establish) and `ExecutionProvenanceConflictAuditor_ScanFile(fileName)`
+(thin wrapper). Identifier matching uses a typed pair
+`(id_type, canonical_value)`, never a concatenated display string, so an
+`execution_request_id` value that happens to look like `"order:123"` can
+never collide with a real `order_ticket` of `123`. A file-local helper,
+`EPCA_GetLongArray()`, parses `deal_tickets_sorted`'s unquoted-integer
+array shape - not exported as a general `EventSerializer` API, since
+`EventSerializer_GetStringArray` only ever decoded quoted-string arrays
+and this is the only unquoted-integer array field the codebase writes.
+Its parser validates a 19-digit token's magnitude against the exact
+int64 bounds via string comparison before any numeric conversion (digit
+count alone is insufficient - a 19-digit token can still exceed int64
+max), and assigns the exact `INT64_MIN` boundary from the compiler's own
+signed literal rather than a positive-magnitude-then-negate path, since
+that value's magnitude cannot be represented as a positive `long` en
+route to negation.
+
+Memory growth is proportional to durable `CANDIDATE_EXECUTED` provenance
+observed during the scan and is intentionally uncapped, consistent with
+existing replay/validator conventions - no cap/limit pattern exists
+anywhere else in this repository for this class of problem, and nothing
+is ever silently truncated.
+
+Sealed files untouched (confirmed by diff proof below):
+`MLQuantAI.mq5`, `LifecycleAuthorityProcessor.mqh`, `EventSerializer.mqh`,
+`EventStore.mqh`, `EventStoreValidator.mqh`, `StateMachine.mqh` (`Core/`,
+not `Infrastructure/EventStore/` - a stale path in this round's earlier
+sealed-file lists, corrected and reconfirmed against the real path),
+`StateProjector.mqh`, `CandidateProjection.mqh`,
+`DeferredTransactionProcessor.mqh`, `BrokerReconciliation.mqh`. No
+`OnInit` wiring, no Safe Mode trip, no durable write in this round.
+
 ## [Unreleased] - C3.7 implementation: bounded lifecycle authority processor (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-26)
 
 **Amendment 3 (same round)**: adds a dedicated regression suite,
