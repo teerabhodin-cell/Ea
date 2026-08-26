@@ -399,10 +399,13 @@ void Test_EligibleRow_TransitionsToExecuted()
    Check(BuildDurableSubmittedRequest("EXEOK", 0, 5001, 6001, candidateId, execReqId, lotSize),
          "sanity: durable SUBMITTED candidate built (order=5001, deal=6001)");
    Check(EmitDealAddObservation(6001, 5001, lotSize, 1900.00), "sanity: full-volume DEAL_ADD emitted");
-   EventStore_Close();
 
+   // Store stays OPEN across the rebuild chain, exactly mirroring real
+   // OnInit (the store is opened once and never closed mid-chain) - C3.7
+   // is the first consumer in this suite that needs to WRITE after the
+   // rebuild, so (unlike C3.6's read-only suite) it must not artificially
+   // close/reopen the handle around this boundary.
    RunRebuildChain(TEST_FILE);
-   Check(EventStore_Open(TEST_FILE), "store reopens for C3.7 (mirrors OnInit's continuously-open handle)");
    Check(DeferredTransactionProcessor_Count() == 1, "sanity: C3.6 produced exactly one recommendation row");
    DeferredRecommendationRecord c36row;
    Check(DeferredTransactionProcessor_GetAt(0, c36row) && c36row.recommended_action == RECOMMEND_EXECUTED,
@@ -522,10 +525,11 @@ void Test_ColdRestartIdempotency_NoSecondTransition()
    string candidateId; string execReqId; double lotSize;
    Check(BuildDurableSubmittedRequest("RESTART", 4, 5005, 6005, candidateId, execReqId, lotSize), "sanity: candidate submitted");
    Check(EmitDealAddObservation(6005, 5005, lotSize, 1900.00), "sanity: full-volume DEAL_ADD emitted");
-   EventStore_Close();
 
+   // Store stays OPEN across the rebuild chain for the first pass (mirrors
+   // real OnInit's continuously-open handle) - the second pass below is
+   // the genuine cold-restart simulation.
    RunRebuildChain(TEST_FILE);
-   Check(EventStore_Open(TEST_FILE), "store reopens for C3.7's first pass (mirrors OnInit's continuously-open handle)");
    LifecycleAuthorityReport first = LifecycleAuthority_StartupApply(TEST_FILE);
    Check(first.ok && first.transitioned_count == 1, "first pass transitions exactly one candidate");
    EventStore_Close();
@@ -776,10 +780,9 @@ void Test_StateProjectorReflectsFreshExecuted_BeforeReconciliation()
    string candidateId; string execReqId; double lotSize;
    Check(BuildDurableSubmittedRequest("RECONORD", 9, 5010, 6010, candidateId, execReqId, lotSize), "sanity: candidate submitted");
    Check(EmitDealAddObservation(6010, 5010, lotSize, 1900.00), "sanity: full-volume DEAL_ADD emitted");
-   EventStore_Close();
 
+   // Store stays OPEN across the rebuild chain (mirrors real OnInit).
    RunRebuildChain(TEST_FILE);
-   Check(EventStore_Open(TEST_FILE), "store reopens for C3.7 (mirrors OnInit's continuously-open handle)");
    LifecycleAuthorityReport report = LifecycleAuthority_StartupApply(TEST_FILE);
    Check(report.ok && report.transitioned_count == 1, "sanity: transition succeeds");
 
@@ -841,10 +844,9 @@ void Test_EvidenceRecovery_IgnoresTrailingNonLifecycleLine()
    string candidateId; string execReqId; double lotSize;
    Check(BuildDurableSubmittedRequest("TRAILING", 12, 5013, 6013, candidateId, execReqId, lotSize), "sanity: candidate submitted");
    Check(EmitDealAddObservation(6013, 5013, lotSize, 1900.00), "sanity: full-volume DEAL_ADD emitted");
-   EventStore_Close();
 
+   // Store stays OPEN across the rebuild chain (mirrors real OnInit).
    RunRebuildChain(TEST_FILE);
-   Check(EventStore_Open(TEST_FILE), "store reopens for C3.7 (mirrors OnInit's continuously-open handle)");
    Check(DeferredTransactionProcessor_Count() == 1, "sanity: one RECOMMEND_EXECUTED row");
    DeferredRecommendationRecord row;
    Check(DeferredTransactionProcessor_GetAt(0, row) && row.recommended_action == RECOMMEND_EXECUTED, "sanity: row is EXECUTED");
@@ -904,10 +906,9 @@ void Test_EvidenceRecovery_MultipleMatches_HelperReturnsTwoPlus()
    string candidateId; string execReqId; double lotSize;
    Check(BuildDurableSubmittedRequest("DUPMATCH", 13, 5014, 6014, candidateId, execReqId, lotSize), "sanity: candidate submitted");
    Check(EmitDealAddObservation(6014, 5014, lotSize, 1900.00), "sanity: full-volume DEAL_ADD emitted");
-   EventStore_Close();
 
+   // Store stays OPEN across the rebuild chain (mirrors real OnInit).
    RunRebuildChain(TEST_FILE);
-   Check(EventStore_Open(TEST_FILE), "store reopens for C3.7 (mirrors OnInit's continuously-open handle)");
    DeferredRecommendationRecord row;
    Check(DeferredTransactionProcessor_GetAt(0, row) && row.recommended_action == RECOMMEND_EXECUTED, "sanity: row is EXECUTED");
 
