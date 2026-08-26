@@ -237,7 +237,7 @@ void Test_MalformedReason_MissingClosingQuote_ExtraJsonStaysEmpty()
 
 void Test_MalformedLine_NoClosingBrace_ExtraJsonStaysEmpty()
 {
-   Print("--- Test_MalformedLine_MissingFinalClosingBrace_ExtraJsonStaysEmpty ---");
+   Print("--- Test_MalformedLine_NoClosingBrace_ExtraJsonStaysEmpty ---");
    // reason closes correctly and a fragment follows, but the line has NO
    // closing brace anywhere - it is simply truncated.
    string line = BuildFullLine("CND_MALFORMED02", "CREATED", "CREATED", "NONE", "\"foo\":\"bar\"");
