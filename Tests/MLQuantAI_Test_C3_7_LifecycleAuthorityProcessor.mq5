@@ -402,6 +402,7 @@ void Test_EligibleRow_TransitionsToExecuted()
    EventStore_Close();
 
    RunRebuildChain(TEST_FILE);
+   Check(EventStore_Open(TEST_FILE), "store reopens for C3.7 (mirrors OnInit's continuously-open handle)");
    Check(DeferredTransactionProcessor_Count() == 1, "sanity: C3.6 produced exactly one recommendation row");
    DeferredRecommendationRecord c36row;
    Check(DeferredTransactionProcessor_GetAt(0, c36row) && c36row.recommended_action == RECOMMEND_EXECUTED,
@@ -524,13 +525,16 @@ void Test_ColdRestartIdempotency_NoSecondTransition()
    EventStore_Close();
 
    RunRebuildChain(TEST_FILE);
+   Check(EventStore_Open(TEST_FILE), "store reopens for C3.7's first pass (mirrors OnInit's continuously-open handle)");
    LifecycleAuthorityReport first = LifecycleAuthority_StartupApply(TEST_FILE);
    Check(first.ok && first.transitioned_count == 1, "first pass transitions exactly one candidate");
+   EventStore_Close();
 
    // Second pass: cold-restart-equivalent - reset every live projection
    // and rebuild everything from scratch against the SAME durable file.
    ResetLiveProjections();
    RunRebuildChain(TEST_FILE);
+   Check(EventStore_Open(TEST_FILE), "store reopens for C3.7's second pass (mirrors OnInit's continuously-open handle)");
    Check(DeferredTransactionProcessor_Count() == 1, "sanity: C3.6's second-pass registry still holds one row for this candidate");
    DeferredRecommendationRecord row2;
    Check(DeferredTransactionProcessor_GetAt(0, row2) && row2.recommended_action == RECOMMEND_NONE
@@ -775,6 +779,7 @@ void Test_StateProjectorReflectsFreshExecuted_BeforeReconciliation()
    EventStore_Close();
 
    RunRebuildChain(TEST_FILE);
+   Check(EventStore_Open(TEST_FILE), "store reopens for C3.7 (mirrors OnInit's continuously-open handle)");
    LifecycleAuthorityReport report = LifecycleAuthority_StartupApply(TEST_FILE);
    Check(report.ok && report.transitioned_count == 1, "sanity: transition succeeds");
 
@@ -839,6 +844,7 @@ void Test_EvidenceRecovery_IgnoresTrailingNonLifecycleLine()
    EventStore_Close();
 
    RunRebuildChain(TEST_FILE);
+   Check(EventStore_Open(TEST_FILE), "store reopens for C3.7 (mirrors OnInit's continuously-open handle)");
    Check(DeferredTransactionProcessor_Count() == 1, "sanity: one RECOMMEND_EXECUTED row");
    DeferredRecommendationRecord row;
    Check(DeferredTransactionProcessor_GetAt(0, row) && row.recommended_action == RECOMMEND_EXECUTED, "sanity: row is EXECUTED");
@@ -901,7 +907,7 @@ void Test_EvidenceRecovery_MultipleMatches_HelperReturnsTwoPlus()
    EventStore_Close();
 
    RunRebuildChain(TEST_FILE);
-   DeferredTransactionProcessor_GetAt(0, DeferredRecommendationRecord());
+   Check(EventStore_Open(TEST_FILE), "store reopens for C3.7 (mirrors OnInit's continuously-open handle)");
    DeferredRecommendationRecord row;
    Check(DeferredTransactionProcessor_GetAt(0, row) && row.recommended_action == RECOMMEND_EXECUTED, "sanity: row is EXECUTED");
 
