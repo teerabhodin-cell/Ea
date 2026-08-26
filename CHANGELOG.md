@@ -4,6 +4,65 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.10A implementation: async terminal order observation matcher (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
+
+`Include/MLQuantAI/Execution/MLQuantAI_AsyncTerminalOrderObservationMatcher.mqh`
+(new) + `Tests/MLQuantAI_Test_C3_10A_AsyncTerminalOrderObservationMatcher.mq5`
+(new). Read-only diagnostic, not wired into `OnInit`: scans the durable
+`BROKER_TRANSACTION_OBSERVED` log for asynchronous, order-object-level
+terminal outcomes (rejected/cancelled/expired - the arrive-later
+counterpart to C2.2's own synchronous `OrderSend()`-time rejection) and
+matches each to a submitted execution request / candidate via the
+already-sealed `SubmissionOutcomeProjection` → `ExecutionRequestProjection`
+lookup chain.
+
+**Classification is real-demo-evidence-backed, not documentation-derived.**
+The original design assumption (`TRADE_TRANSACTION_ORDER_UPDATE` carries
+the terminal `order_state`) was captured live on a demo account and found
+wrong: `ORDER_UPDATE` only ever carried transient states (`PLACED`,
+`REQUEST_CANCEL`) in the captured evidence - all three real terminal
+states (`ORDER_STATE_REJECTED`, `ORDER_STATE_CANCELED`,
+`ORDER_STATE_EXPIRED`) appeared exclusively on
+`TRADE_TRANSACTION_ORDER_DELETE`, with `TRADE_TRANSACTION_HISTORY_ADD`
+mirroring the same terminal state on a second channel (deliberately
+ignored in this slice, not deduped against `ORDER_DELETE`). The
+`REJECTED` case specifically required a second, harder-to-construct demo
+scenario (an accepted pending order later rejected at trigger time due to
+insufficient margin) - a synchronous send-time rejection (`OrderSend()`
+"No money" on a market order) was captured first and found to produce an
+uninformative `TRADE_TRANSACTION_REQUEST` envelope with no order object
+and no distinguishing field at all (the raw observation schema never
+captures `result.retcode`), confirming that case is C2.2's own domain,
+not this matcher's.
+
+Matching hierarchy deliberately improves on one characteristic of C3.3's
+own `TransactionMatching_ResolveExecutionRequestId`: multiple `SUBMITTED`
+outcomes matching the same `order_ticket` resolve to `ATOM_AMBIGUOUS`,
+never first-match-wins. A raw `order_ticket` seen on more than one
+qualifying `ORDER_DELETE` terminal line within one scan escalates every
+match for that ticket to `ATOM_AMBIGUOUS` in a deterministic post-pass,
+with all three status counters recomputed from `matches[].status` alone
+afterward (never incrementally patched during escalation, so there is no
+drift).
+
+`seq` validation (`ATOM_ValidateSeqToken`, file-local) validates the raw
+token string via `EventSerializer_GetRawNumber` - an existing, sealed
+parser surface - before any call to `StringToInteger`, whose behavior on
+an oversized digit string is unspecified; same overflow-risk class C3.9's
+`EPCA_GetLongArray` already guards against, applied here to a scalar
+field instead of an array element.
+
+Sealed files untouched: `MLQuantAI.mq5`,
+`BrokerTransactionObservation.mqh`, `TransactionMatchingProjection.mqh`,
+`BrokerSubmissionAuditProjection.mqh`, `BrokerSubmissionAuditReadiness.mqh`,
+`ExecutionAuditProjection.mqh`, `LifecycleAuthorityProcessor.mqh`,
+`DeferredTransactionProcessor.mqh`, `EventSerializer.mqh`, `EventStore.mqh`,
+`EventStoreValidator.mqh`, `StateProjector.mqh`, `CandidateProjection.mqh`,
+`BrokerReconciliation.mqh`, `StateMachine.mqh`. No `OnInit` wiring, no
+`EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED`, no
+`CANDIDATE_REJECTED_BY_BROKER` transition, no durable write in this
+round.
+
 ## [Unreleased] - C3.9 implementation: cross-candidate execution provenance conflict auditor (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-26)
 
 `Include/MLQuantAI/Infrastructure/EventStore/MLQuantAI_ExecutionProvenanceConflictAuditor.mqh`
