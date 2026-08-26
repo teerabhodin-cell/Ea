@@ -40,6 +40,34 @@ This is the one file outside C3.7's original allowlist touched this
 round, added with the user's explicit authorization once the root cause
 was isolated and a minimal fix proposed.
 
+**Amendment 2 (same round)**: with the `extra_json` fix in place, a real
+MetaEditor run reached 128/133, with every remaining failure isolated to
+`Test_ProjectorApplyFailure_SafeModeStopsScan`. Its fixture (pre-corrupt
+`StateProjector`'s state for the candidate to `CANDIDATE_ERROR`, then
+call `LifecycleAuthority_StartupApply`) does not reach the
+`projector_apply_failed` branch at all: the same run showed
+`skipped_not_submitted=1` and `report.ok=true` - the function's own
+fresh `StateProjector_TryGetState()` re-check reads that exact corrupted
+state *first* and defensively skips the row, before either the durable
+write or the later `StateProjector_Apply(recovered, ...)` call is ever
+reached. Since nothing mutates `StateProjector`'s registry between that
+fresh check and the later apply within one synchronous,
+single-threaded loop iteration, `StateProjector_Apply`'s own
+`current != e.from_state` branch cannot be triggered through
+`LifecycleAuthority_StartupApply`'s public entry point at all - real,
+run-confirmed evidence of the same structural-unreachability category as
+item 5's `CandidateProjection`-missing guard.
+
+Per the user's authorization, `Test_ProjectorApplyFailure_SafeModeStopsScan`
+is converted from an injected-fixture attempt to a structural-inspection
+proof (matching `Test_CandidateProjectionLineage_StructuralInvariant`'s
+own pattern): the `projector_apply_failed` branch remains real, compiled,
+frozen-contract-required defense-in-depth, kept for a divergence that can
+only arise from a future change to `StateProjector_Apply`'s own
+consistency rule or a non-single-threaded execution model - not dead
+code, not removed, just proven unreachable-by-design rather than
+constructed.
+
 Implements the C3.7 contract frozen below
 (`Docs/PhaseC_C3_7_BoundedLifecycleAuthorityContract.md`) on baseline
 `mlquantai@dd9f2aa`. Not yet merged; not yet compiled or run by the
