@@ -4,6 +4,71 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.7 implementation: bounded lifecycle authority processor (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-26)
+
+Implements the C3.7 contract frozen below
+(`Docs/PhaseC_C3_7_BoundedLifecycleAuthorityContract.md`) on baseline
+`mlquantai@dd9f2aa`. Not yet merged; not yet compiled or run by the
+author (no compiler available in this environment) - pending the user's
+own real MetaEditor compile + test evidence before any merge.
+
+New `Execution/MLQuantAI_LifecycleAuthorityProcessor.mqh`:
+- `LifecycleAuthorityReport` (tallies + `scan_stopped_early`/`stop_reason`
+  observability fields) and `LifecycleAuthority_StartupApply(fileName)`,
+  the sole `OnInit`-time entry point.
+- First pass tallies every C3.6 `DeferredRecommendationRecord` row
+  (`blocked_count`/`none_count`/`eligible_count`) over the complete
+  registry and emits at most one summary `LogWarn` if any row is
+  `RECOMMEND_BLOCKED` - never per-row.
+- Second pass attempts a real `EventStore_LogTransition(...,
+  CANDIDATE_EXECUTED, REASON_EXECUTED_OK, extraJson)` for every
+  `RECOMMEND_EXECUTED` row, after re-checking a *fresh*
+  `StateProjector_TryGetState() == CANDIDATE_SUBMITTED` and reconstructing
+  the `TradeCandidate` from `CandidateProjection_TryGet()` +
+  `StateProjector_TryGetState()` (never `CandidateProjectionRecord.state`).
+- Never fabricates the `LifecycleEvent` fed to `StateProjector_Apply()`.
+  After a successful durable write, `C37_FindMatchingExecutedLine()` reads
+  the store back via the existing sealed `EventStore_ReadAllLines()` and
+  scans backward through `EventSerializer_ParseLifecycle()`-parsed lines,
+  matching every field explicitly (candidate_id, from/to state, reason,
+  and the row's own `c3_6_action_id` inside `extra_json`) - never assuming
+  the last line is the just-written one. Exactly one match is required:
+  zero or multiple matches both `SafeMode_Trip()` and stop the scan.
+- **Corrects the merged design contract's §3/§9 failure semantics**: on a
+  durable-write failure, the scan now **stops immediately** (`SafeMode_Trip`
+  already fires inside `EventStore_LogTransition`; this file additionally
+  returns without attempting any further row), rather than the contract
+  document's original "continue to the next row" text - a correction the
+  user gave after the docs-only contract had already been merged, on the
+  reasoning that continuing after Safe Mode engages would violate
+  fail-closed semantics. The contract document itself is unchanged this
+  round; this note is the record of the supersession pending a future
+  doc-amendment round.
+- No new `ENUM_EVENT_TYPE`/`ENUM_REASON_CODE` value. No `RECOMMEND_REJECTED`
+  handling (remains reserved, non-emittable - not a member of
+  `ENUM_RECOMMENDED_ACTION` at all). No durable idempotency registry - relies
+  on the sealed terminal-state guard (`CANDIDATE_EXECUTED` is terminal) plus
+  C3.6's own proven at-most-one-`RECOMMEND_EXECUTED`-row-per-candidate
+  guarantee.
+
+`MLQuantAI.mq5`: adds the new include; replaces the previously
+unconditional `BrokerReconciliation_CheckAll()` call in `OnInit` with a
+call gated on `LifecycleAuthority_StartupApply()`'s own `report.ok`, so a
+scan that stopped early (durable-write failure, evidence not recovered,
+ambiguous evidence, or a `StateProjector_Apply` failure) skips reconciling
+against a provably-diverged read model this session. `BrokerReconciliation.mqh`
+itself is not edited.
+
+New `Tests/MLQuantAI_Test_C3_7_LifecycleAuthorityProcessor.mq5`: 13 test
+functions covering the full frozen test matrix, including structural-only
+proofs (no injected C3.6 registry row, no fabricated MT5 position, no real
+`BrokerReconciliation_CheckAll()` call from this suite) for the two items
+the user required to be proven that way, an isolated-helper technique for
+the zero-match/multiple-match evidence-recovery cases, and a two-candidate
+fixture (`Test_DurableWriteFailure_SafeModeStopsScan`) proving the second
+candidate is never even attempted after the first candidate's durable
+write fails.
+
 ## [Unreleased] - C3.7 bounded lifecycle authority design contract (DESIGN ONLY, docs-only, 2026-08-26)
 
 Docs-only design contract on baseline `mlquantai@b2751c9` (C1–C3.6
