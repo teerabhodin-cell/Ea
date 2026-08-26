@@ -4,6 +4,100 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.6 implementation: deferred-transaction-processor (PASSED 760/760, real MetaEditor run, 2026-08-26)
+
+Implements the C3.6 contract frozen below
+(`Docs/PhaseC_C3_6_DeferredTransactionProcessorContract.md`) - an
+`OnInit`-only, read-only recommendation read model over already-sealed
+C3.3 transaction-matching evidence + replayed candidate state. Produces
+`DeferredRecommendationRecord` rows only: `RECOMMEND_NONE` /
+`RECOMMEND_EXECUTED` / `RECOMMEND_BLOCKED`. NOT a lifecycle transition,
+NOT an event, NOT a mutation of any sealed projection.
+`RECOMMEND_EXECUTED` is a recommendation row only - turning it into a
+real `SUBMITTED → EXECUTED` transition is C3.7, a separately authorized
+future contract.
+
+New `Execution/MLQuantAI_DeferredTransactionProcessor.mqh`:
+- `DeferredRecommendationRecord` (frozen field set, contract §10):
+  identity/evidence fields, per-deal/execution-request provenance,
+  candidate lineage, and a `stale_after_startup` session-scope marker.
+- Internal `candidate_id → execution_request_id` reverse index (contract
+  §6), built from `ExecutionRequestProjection` only, entirely inside this
+  file - no sealed-projection edit. 0 mappings → `RECOMMEND_BLOCKED`; 1 →
+  usable; >1 → `RECOMMEND_BLOCKED`.
+- An ambiguous-implicated set: since C3.3 clears
+  `matched_execution_request_id` for `AMBIGUOUS` orders, a candidate
+  whose execution request is implicated in an ambiguous order is
+  independently detected and `RECOMMEND_BLOCKED`, rather than silently
+  falling through to `RECOMMEND_NONE`.
+- The 7 eligibility clauses (contract §7), evaluated in order:
+  `candidate.state == CANDIDATE_SUBMITTED` (sole source: `StateProjector`,
+  populated by `ReplayEngine_Run` - not `CandidateProjection`, which only
+  ever holds `CREATED`); unique reverse-index mapping; unique matching
+  `OrderAggregateRecord`; `match_status == MATCHED_VOLUME_REACHED`;
+  identity round-trip re-verification; volume evidence recomputed and
+  compared with exact equality (no new epsilon, per contract); running
+  filled volume re-confirmed against `intended_lot_size`.
+- Deterministic `action_id` (contract §11): `candidate_id` +
+  `execution_request_id` + `order_ticket` + `MATCHED_VOLUME_REACHED` +
+  sorted deal-ticket set + a `v1` contract-version suffix - never a
+  wall-clock, session ID, or file line number.
+- Within-scan duplicate/collision guard (contract §12) and semantic
+  output ordering (contract §13: `candidate_id` ASC → `execution_request_id`
+  ASC → `order_ticket` ASC → `action_id` ASC), re-sorted after every scan
+  so no caller can rely on file/insertion order.
+- Two scan-level fail-closed gates (contract §5/§7, zero rows emitted,
+  never a row-level `RECOMMEND_BLOCKED`): `EventStoreHealth_IsSafeMode()`
+  (`upstream_replay_not_ready`) and `TransactionMatchingReadiness`
+  (`upstream_readiness_not_ready`). Neither trips Safe Mode nor blocks EA
+  initialization - C3.6 fails closed on itself only.
+
+`MLQuantAI.mq5`: adds the include and one `OnInit` call site -
+`DeferredTransactionProcessor_StartupScan(g_EventStoreFileName);` -
+placed after `ReplayEngine_Run` and before `BrokerReconciliation_CheckAll`,
+per the frozen contract §3 ordering (candidate state requires the
+replayed `StateProjector`, not just the C3.3/C3.4 read model alone).
+
+New `Tests/MLQuantAI_Test_C3_6_DeferredTransactionProcessor.mq5`:
+14 fixture-only test functions (146 checks) covering the full contract §17
+matrix - full match → `RECOMMEND_EXECUTED`; partial fill / no fill /
+candidate-not-submitted → `RECOMMEND_NONE`; ambiguous-implicated / >1
+execution-request mappings / 0 execution-request mappings →
+`RECOMMEND_BLOCKED`; scan-level replay-not-ready and readiness-not-ready
+→ zero rows; cold-rebuild and repeated-scan determinism; deal-ticket
+emission-order independence; semantic output ordering; and a combined
+structural-proof test covering: within-scan duplicate/collision on the
+same `action_id` (proven structurally unreachable, since `action_id`
+embeds `candidate_id` and each candidate is visited exactly once per
+scan - same "verified by inspection, not independently reproducible"
+category as C2.2's own `bid<=0.0` branch precedent), `RECOMMEND_REJECTED`
+absence (real `RecommendationToString` round-trip plus enum-membership
+inspection), no forbidden API (static scan), and stale-after-OnInit (no
+`OnTick`/`OnTradeTransaction` path exists).
+
+Source-text scan (zero non-comment hits) confirms no
+`OrderSend`/`CTrade`/`History*`/`Position*`/`OrderGetTicket`/
+`EventStore_LogTransition` call, and no `RECOMMEND_REJECTED`, anywhere in
+the new processor or test file.
+
+Full regression, real MetaEditor run, zero regressions - `MLQuantAI.mq5`
+compile 0 errors/0 warnings, new test compile 0 errors/0 warnings:
+new C3.6 suite 146/146, `Test_C3_3_TransactionMatchingProjection` 109/109,
+`Test_C3_4_TransactionMatchingReadiness` 57/57,
+`Test_C2_2_BrokerSubmissionGate` 147/147,
+`Test_C2_3_BrokerSubmissionAuditProjection` 104/104,
+`Test_C2_BrokerSubmissionGate_DurableIdempotency` 41/41,
+`Test_C2_EnvironmentLockGate` 45/45, `Test_C2_ManualApprovalEmission`
+38/38, `Test_C2_ManualApprovalProjection` 73/73 - C2 baseline 448/448
+matching the pre-existing baseline exactly. Combined total this round:
+448 + 109 + 57 + 146 = **760/760**.
+
+After this merge: no candidate transition and no action event exist
+anywhere in the codebase. C3.7 (bounded lifecycle authority - the sole
+round permitted to turn a `RECOMMEND_EXECUTED` row into a real
+`SUBMITTED → EXECUTED` transition) remains blocked until this evidence is
+reviewed and merge is explicitly authorized.
+
 ## [Unreleased] - C3.6 deferred-transaction-processor design contract (DESIGN ONLY, docs-only, 2026-08-23)
 
 Docs-only design contract on baseline `mlquantai@f9d3ade` (C1–C3.4 sealed;
