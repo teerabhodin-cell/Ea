@@ -6,6 +6,31 @@ All notable changes to MLQuantAI. Format loosely follows
 
 ## [Unreleased] - C3.7 implementation: bounded lifecycle authority processor (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-26)
 
+**Amendment 3 (same round)**: adds a dedicated regression suite,
+`Tests/MLQuantAI_Test_EventSerializer_ExtraJson.mq5`, testing
+`EventSerializer_ParseLifecycle()`'s `extra_json` extraction directly -
+required before merge given the fix lives in shared, sealed event-store
+serialization code, not just C3.7's own boundary. 9 test functions, all
+against hand-built raw JSONL lines mirroring `EventSerializer_ToJson()`'s
+real field order (or the real `ToJson()` call itself for the round-trip
+case), covering: a legacy line with no spliced fragment parses
+`extra_json == ""` identically to pre-fix behavior; a simple flat
+fragment extracts to the exact expected substring; a deliberately
+escaped-quote/backslash `reason` value (synthetic - no current emitter
+produces one, but the scanner itself must be correct regardless) still
+lets the fragment extract correctly; a fragment containing its own
+nested quotes/braces/brackets/arrays is preserved byte-for-byte; a real
+`LifecycleEvent` round-trips through the real `ToJson()`/`ParseLifecycle()`
+pair losslessly, `extra_json` included; three malformed-input cases
+(missing closing quote on `reason`, missing final closing brace,
+a dangling escape at end-of-line) each prove the required fail-closed
+invariant - `extra_json` stays empty, never a truncated partial
+fragment exposed as valid data; and a real C3.7-shaped fragment
+(mirroring `C37_BuildExtraJson`'s frozen field set) parses correctly and
+lets `C37_FindMatchingExecutedLine()` identify its own `action_id`
+unambiguously, closing the loop between this fix and what C3.7 actually
+depends on.
+
 **Amendment (same round)**: real MetaEditor runs surfaced a genuine,
 previously-latent bug in the sealed
 `Infrastructure/EventStore/MLQuantAI_EventSerializer.mqh` -
