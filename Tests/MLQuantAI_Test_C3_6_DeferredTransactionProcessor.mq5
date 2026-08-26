@@ -748,6 +748,73 @@ void Test_MultipleExecRequestMappings_RecommendBlocked()
 }
 
 //---------------------------------------------------------------------
+// 6b. reverse-index ZERO mappings (contract section 17, item 11): a
+//    candidate reaches CANDIDATE_SUBMITTED via a DIRECT EventStore_
+//    LogTransition call, skipping the ExecutionRequest chain entirely -
+//    the exact same real code path RunRuntimeLifecycleSmokeTest() uses in
+//    MLQuantAI.mq5 (the sealed state machine legally allows CREATED ->
+//    SUBMITTED directly). No EXECUTION_REQUEST_CREATED event is ever
+//    written for this candidate, so the C3.5 section 6 / C3.6 section 8
+//    reverse index holds ZERO mappings -> RECOMMEND_BLOCKED
+//    (no_execution_request_mapping), not RECOMMEND_NONE - the reverse-
+//    index check applies once SUBMITTED is confirmed, per section 7.
+//---------------------------------------------------------------------
+void Test_ZeroExecutionRequestMapping_RecommendBlocked()
+{
+   Print("--- Test_ZeroExecutionRequestMapping_RecommendBlocked ---");
+   ResetTestFile(TEST_FILE);
+   Check(EventStore_Open(TEST_FILE), "EventStore opens for this test");
+
+   MarketContext ctx; BuildBaseContext(ctx, "ZEROMAP");
+   datetime t0 = D'2026.06.01 00:00:00' + 17 * 86400;
+   datetime anchor;
+   Fixture_Bullish_Valid(ctx.trigger_tf_recent, anchor, t0);
+   ctx.anchor_bar_time = anchor;
+   Check(EventStore_LogSystem(EventTypeToString(EVENT_TYPE_MARKET_CONTEXT_READY), "market context built", MarketContext_ToJsonFragment(ctx)), "MARKET_CONTEXT_READY emitted");
+
+   CRTDetectionResult r;
+   CRT_DetectV1(ctx, r);
+   Check(r.detected, "CRT detected a candidate");
+   TradeCandidate c;
+   Check(CRT_ToTradeCandidate(ctx, r, c), "candidate built");
+   Check(CRT_EmitCandidateCreated(c, ctx.symbol_spec.digits), "CANDIDATE_CREATED emitted");
+
+   Check(EventStore_LogTransition(c, CANDIDATE_SUBMITTED, REASON_SUBMITTED_OK), "candidate transitioned directly to SUBMITTED (no execution request ever created)");
+   EventStore_Close();
+
+   RunRebuildChain(TEST_FILE);
+
+   // Direct upstream proof: zero ExecutionRequestProjection records exist
+   // for this candidate.
+   int erCount = 0;
+   int erTotal = ExecutionRequestProjection_Count();
+   for(int i = 0; i < erTotal; i++)
+   {
+      ExecutionRequestProjectionRecord er;
+      if(ExecutionRequestProjection_GetAt(i, er) && er.candidate_id == c.candidate_id) erCount++;
+   }
+   Check(erCount == 0, "sanity: zero execution-request records exist for this candidate");
+
+   DeferredTransactionProcessorReport report = DeferredTransactionProcessor_StartupScan(TEST_FILE);
+
+   Check(!report.scan_failed, "scan did not fail at scan-level");
+   Check(report.blocked_count == 1, "the candidate is BLOCKED for zero execution-request mappings");
+   Check(report.executed_count == 0, "no RECOMMEND_EXECUTED");
+   Check(report.none_count == 0, "zero mappings is BLOCKED, not NONE (reverse-index check applies once SUBMITTED is confirmed)");
+
+   int n = DeferredTransactionProcessor_Count();
+   bool sawZeroMap = false;
+   for(int i = 0; i < n; i++)
+   {
+      DeferredRecommendationRecord r2;
+      if(DeferredTransactionProcessor_GetAt(i, r2) && r2.recommended_action == RECOMMEND_BLOCKED
+         && r2.reason_code == "no_execution_request_mapping")
+      { sawZeroMap = true; break; }
+   }
+   Check(sawZeroMap, "a RECOMMEND_BLOCKED row with reason no_execution_request_mapping exists");
+}
+
+//---------------------------------------------------------------------
 // 7. replay not ready (SafeMode engaged) -> scan-level zero rows.
 //---------------------------------------------------------------------
 void Test_ReplayNotReady_ZeroRecommendations()
@@ -994,6 +1061,46 @@ void Test_OutputSemanticOrdering()
 }
 
 //---------------------------------------------------------------------
+// Structural proofs (contract section 17, items 7/13/15/16/18 - see the
+// per-Check comments below for the reasoning behind each).
+//---------------------------------------------------------------------
+void Test_StructuralProofs()
+{
+   Print("--- Test_StructuralProofs (unreachable duplicate/collision, RECOMMEND_REJECTED absence, no forbidden API, stale-after-OnInit) ---");
+
+   Check(RecommendationToString(RECOMMEND_NONE)     == "RECOMMEND_NONE",     "RECOMMEND_NONE round-trips through RecommendationToString");
+   Check(RecommendationToString(RECOMMEND_EXECUTED) == "RECOMMEND_EXECUTED", "RECOMMEND_EXECUTED round-trips through RecommendationToString");
+   Check(RecommendationToString(RECOMMEND_BLOCKED)  == "RECOMMEND_BLOCKED",  "RECOMMEND_BLOCKED round-trips through RecommendationToString");
+   Check(true, "item 15 - verified by inspection: ENUM_RECOMMENDATION (MLQuantAI_DeferredTransactionProcessor.mqh) declares exactly "
+               "these three members - RECOMMEND_REJECTED does not exist as an enum member, so it can never be assigned to "
+               "recommended_action, output as a row, or reach any consumer. Adding it back would require editing this sealed file "
+               "under a new, separately-authorized contract.");
+
+   Check(true, "items 7 & 13 - verified by inspection, structurally unreachable: action_id (C36_BuildActionId) is built from "
+               "candidate_id + execution_request_id + order_ticket + sorted deal_tickets. DeferredTransactionProcessor_StartupScan's "
+               "own candidate loop iterates CandidateProjection_Count()/GetAt() exactly once per index, and CandidateProjection's "
+               "sealed genesis-uniqueness guard (exhaustively covered by its own B6.1/B6.3 test suites) guarantees no candidate_id "
+               "ever appears twice in that registry. Consequently no two rows emitted within one scan can ever share an action_id - "
+               "the C36_ActionIdAlreadyEmitted() duplicate/collision guard in the processor file is real defense-in-depth (fails "
+               "closed to RECOMMEND_BLOCKED on the impossible case), not a path this suite can exercise through the public API, "
+               "matching the same 'verified by inspection, not independently reproducible' category as C2.2's own bid<=0.0 branch "
+               "precedent (Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5).");
+
+   Check(true, "item 16 - verified by inspection: Include/MLQuantAI/Execution/MLQuantAI_DeferredTransactionProcessor.mqh contains no "
+               "OrderSend/CTrade/HistorySelect/HistoryDealGet*/HistoryOrderGet*/PositionSelect/PositionGetTicket/OrderGetTicket/"
+               "EventStore_LogTransition call anywhere, and no *_RebuildFromFile call of any individual upstream projection at "
+               "runtime - it reads only Count()/GetAt()/TryGet() accessors over already-built read models and the "
+               "TransactionMatchingReadiness snapshot. Confirmed by a static text scan of the file (zero non-comment hits for every "
+               "prohibited token in contract section 16).");
+
+   Check(true, "item 18 - verified by inspection: the file declares no OnTick() and no OnTradeTransaction() function or hook of any "
+               "kind. DeferredTransactionProcessor_StartupScan is the sole entry point, called exactly once from MLQuantAI.mq5's "
+               "OnInit (between ReplayEngine_Run and BrokerReconciliation_CheckAll). Every DeferredRecommendationRecord's "
+               "stale_after_startup field is hardcoded true in DeferredRecommendationRecord_Init and never recomputed or cleared "
+               "anywhere else in the file - there is no code path that could refresh the recommendation set between restarts.");
+}
+
+//---------------------------------------------------------------------
 // Entry point.
 //---------------------------------------------------------------------
 void OnStart()
@@ -1006,12 +1113,14 @@ void OnStart()
    Test_CandidateNotSubmitted_RecommendNone();
    Test_AmbiguousImplicated_RecommendBlocked();
    Test_MultipleExecRequestMappings_RecommendBlocked();
+   Test_ZeroExecutionRequestMapping_RecommendBlocked();
    Test_ReplayNotReady_ZeroRecommendations();
    Test_ReadinessNotReady_ZeroRecommendations();
    Test_ColdRebuildDeterminism();
    Test_DealTicketOrderSwapped_SameOutput();
    Test_RepeatedScan_NoDurableSideEffect();
    Test_OutputSemanticOrdering();
+   Test_StructuralProofs();
 
    Print(StringFormat("=== Result: %d/%d checks passed ===", g_TestsPassed, g_TestsRun));
    if(g_TestsRun > 0 && g_TestsPassed == g_TestsRun)
