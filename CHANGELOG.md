@@ -6,6 +6,40 @@ All notable changes to MLQuantAI. Format loosely follows
 
 ## [Unreleased] - C3.7 implementation: bounded lifecycle authority processor (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-26)
 
+**Amendment (same round)**: real MetaEditor runs surfaced a genuine,
+previously-latent bug in the sealed
+`Infrastructure/EventStore/MLQuantAI_EventSerializer.mqh` -
+`EventSerializer_ParseLifecycle()` parsed every fixed `LifecycleEvent`
+field (`candidate_id`, `from_state`/`to_state`, `reason`,
+`sequence_number`, `log_event_id`, ...) but never populated
+`out.extra_json` at all, leaving it at its `LifecycleEvent_Init()`
+default (`""`). `EventSerializer_ToJson()`'s own write side splices
+`extra_json` in as raw trailing key:value pairs after `"reason"` and
+before the closing `}` (never nested under its own key) - the read side
+simply never reversed that splice, because no consumer before C3.7 ever
+needed a parsed event's `extra_json` back (`ReplayEngine_Run`,
+`StateProjector`, `EventStoreValidator` only ever need the fixed replay
+fields). C3.7's own `C37_FindMatchingExecutedLine()` is the first
+caller in the codebase to require it, so every durable-evidence
+recovery attempt failed with `evidence_not_recovered` until this was
+found and fixed - diagnosed via a temporary log statement (added, run,
+then removed within this same round) that proved the read-back itself
+was correct (`n=14` lines, the right line present as raw text) while the
+*parsed* `extra_json` field was empty.
+
+Fix (`EventSerializer_ParseLifecycle`, minimal and additive): after
+parsing `reason` (always the last fixed field), locate the end of its
+value and, if a comma follows rather than the closing brace, capture
+everything from there to the line's final `}` as `out.extra_json` -
+mirroring the write side's own splice convention exactly. Verified no
+other caller anywhere in `Include/` reads a parsed event's
+`.extra_json`, so this is a pure bug fix with no behavior change for
+any existing consumer.
+
+This is the one file outside C3.7's original allowlist touched this
+round, added with the user's explicit authorization once the root cause
+was isolated and a minimal fix proposed.
+
 Implements the C3.7 contract frozen below
 (`Docs/PhaseC_C3_7_BoundedLifecycleAuthorityContract.md`) on baseline
 `mlquantai@dd9f2aa`. Not yet merged; not yet compiled or run by the

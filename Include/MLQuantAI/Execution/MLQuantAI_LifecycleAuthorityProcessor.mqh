@@ -297,21 +297,6 @@ LifecycleAuthorityReport LifecycleAuthority_StartupApply(string fileName)
       LifecycleEvent recovered;
       int matchCount = C37_FindMatchingExecutedLine(lines, n, row.candidate_id, row.action_id, recovered);
 
-      // TEMPORARY DIAGNOSTIC - remove before merge. Isolates whether the
-      // read-back returns zero lines at all (read/handle-reuse problem)
-      // vs returns lines but none match (matching/content problem).
-      {
-         bool rawSubstringSeen = false;
-         for(int di = 0; di < n; di++)
-            if(StringFind(lines[di], row.candidate_id) >= 0 && StringFind(lines[di], "CANDIDATE_EXECUTED") >= 0)
-               rawSubstringSeen = true;
-         LogInfo(StringFormat("C3.7 DIAG: fileName='%s' g_EventStore_FileName='%s' g_EventStore_Handle=%d "
-                 "n=%d matchCount=%d rawSubstringSeen=%s candidate_id='%s' action_id='%s'",
-                 fileName, g_EventStore_FileName, g_EventStore_Handle,
-                 n, matchCount, rawSubstringSeen ? "true" : "false", row.candidate_id, row.action_id));
-         if(n > 0) LogInfo("C3.7 DIAG: last line read = " + lines[n-1]);
-      }
-
       if(matchCount == 0)
       {
          SafeMode_Trip("C3.7 durable transition write succeeded but exact appended lifecycle evidence could not be recovered");
