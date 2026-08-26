@@ -4,6 +4,158 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.7 implementation: bounded lifecycle authority processor (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-26)
+
+**Amendment 3 (same round)**: adds a dedicated regression suite,
+`Tests/MLQuantAI_Test_EventSerializer_ExtraJson.mq5`, testing
+`EventSerializer_ParseLifecycle()`'s `extra_json` extraction directly -
+required before merge given the fix lives in shared, sealed event-store
+serialization code, not just C3.7's own boundary. 9 test functions, all
+against hand-built raw JSONL lines mirroring `EventSerializer_ToJson()`'s
+real field order (or the real `ToJson()` call itself for the round-trip
+case), covering: a legacy line with no spliced fragment parses
+`extra_json == ""` identically to pre-fix behavior; a simple flat
+fragment extracts to the exact expected substring; a deliberately
+escaped-quote/backslash `reason` value (synthetic - no current emitter
+produces one, but the scanner itself must be correct regardless) still
+lets the fragment extract correctly; a fragment containing its own
+nested quotes/braces/brackets/arrays is preserved byte-for-byte; a real
+`LifecycleEvent` round-trips through the real `ToJson()`/`ParseLifecycle()`
+pair losslessly, `extra_json` included; three malformed-input cases
+(missing closing quote on `reason`, missing final closing brace,
+a dangling escape at end-of-line) each prove the required fail-closed
+invariant - `extra_json` stays empty, never a truncated partial
+fragment exposed as valid data; and a real C3.7-shaped fragment
+(mirroring `C37_BuildExtraJson`'s frozen field set) parses correctly and
+lets `C37_FindMatchingExecutedLine()` identify its own `action_id`
+unambiguously, closing the loop between this fix and what C3.7 actually
+depends on.
+
+**Amendment (same round)**: real MetaEditor runs surfaced a genuine,
+previously-latent bug in the sealed
+`Infrastructure/EventStore/MLQuantAI_EventSerializer.mqh` -
+`EventSerializer_ParseLifecycle()` parsed every fixed `LifecycleEvent`
+field (`candidate_id`, `from_state`/`to_state`, `reason`,
+`sequence_number`, `log_event_id`, ...) but never populated
+`out.extra_json` at all, leaving it at its `LifecycleEvent_Init()`
+default (`""`). `EventSerializer_ToJson()`'s own write side splices
+`extra_json` in as raw trailing key:value pairs after `"reason"` and
+before the closing `}` (never nested under its own key) - the read side
+simply never reversed that splice, because no consumer before C3.7 ever
+needed a parsed event's `extra_json` back (`ReplayEngine_Run`,
+`StateProjector`, `EventStoreValidator` only ever need the fixed replay
+fields). C3.7's own `C37_FindMatchingExecutedLine()` is the first
+caller in the codebase to require it, so every durable-evidence
+recovery attempt failed with `evidence_not_recovered` until this was
+found and fixed - diagnosed via a temporary log statement (added, run,
+then removed within this same round) that proved the read-back itself
+was correct (`n=14` lines, the right line present as raw text) while the
+*parsed* `extra_json` field was empty.
+
+Fix (`EventSerializer_ParseLifecycle`, minimal and additive): after
+parsing `reason` (always the last fixed field), locate the end of its
+value and, if a comma follows rather than the closing brace, capture
+everything from there to the line's final `}` as `out.extra_json` -
+mirroring the write side's own splice convention exactly. Verified no
+other caller anywhere in `Include/` reads a parsed event's
+`.extra_json`, so this is a pure bug fix with no behavior change for
+any existing consumer.
+
+This is the one file outside C3.7's original allowlist touched this
+round, added with the user's explicit authorization once the root cause
+was isolated and a minimal fix proposed.
+
+**Amendment 2 (same round)**: with the `extra_json` fix in place, a real
+MetaEditor run reached 128/133, with every remaining failure isolated to
+`Test_ProjectorApplyFailure_SafeModeStopsScan`. Its fixture (pre-corrupt
+`StateProjector`'s state for the candidate to `CANDIDATE_ERROR`, then
+call `LifecycleAuthority_StartupApply`) does not reach the
+`projector_apply_failed` branch at all: the same run showed
+`skipped_not_submitted=1` and `report.ok=true` - the function's own
+fresh `StateProjector_TryGetState()` re-check reads that exact corrupted
+state *first* and defensively skips the row, before either the durable
+write or the later `StateProjector_Apply(recovered, ...)` call is ever
+reached. Since nothing mutates `StateProjector`'s registry between that
+fresh check and the later apply within one synchronous,
+single-threaded loop iteration, `StateProjector_Apply`'s own
+`current != e.from_state` branch cannot be triggered through
+`LifecycleAuthority_StartupApply`'s public entry point at all - real,
+run-confirmed evidence of the same structural-unreachability category as
+item 5's `CandidateProjection`-missing guard.
+
+Per the user's authorization, `Test_ProjectorApplyFailure_SafeModeStopsScan`
+is converted from an injected-fixture attempt to a structural-inspection
+proof (matching `Test_CandidateProjectionLineage_StructuralInvariant`'s
+own pattern): the `projector_apply_failed` branch remains real, compiled,
+frozen-contract-required defense-in-depth, kept for a divergence that can
+only arise from a future change to `StateProjector_Apply`'s own
+consistency rule or a non-single-threaded execution model - not dead
+code, not removed, just proven unreachable-by-design rather than
+constructed.
+
+Implements the C3.7 contract frozen below
+(`Docs/PhaseC_C3_7_BoundedLifecycleAuthorityContract.md`) on baseline
+`mlquantai@dd9f2aa`. Not yet merged; not yet compiled or run by the
+author (no compiler available in this environment) - pending the user's
+own real MetaEditor compile + test evidence before any merge.
+
+New `Execution/MLQuantAI_LifecycleAuthorityProcessor.mqh`:
+- `LifecycleAuthorityReport` (tallies + `scan_stopped_early`/`stop_reason`
+  observability fields) and `LifecycleAuthority_StartupApply(fileName)`,
+  the sole `OnInit`-time entry point.
+- First pass tallies every C3.6 `DeferredRecommendationRecord` row
+  (`blocked_count`/`none_count`/`eligible_count`) over the complete
+  registry and emits at most one summary `LogWarn` if any row is
+  `RECOMMEND_BLOCKED` - never per-row.
+- Second pass attempts a real `EventStore_LogTransition(...,
+  CANDIDATE_EXECUTED, REASON_EXECUTED_OK, extraJson)` for every
+  `RECOMMEND_EXECUTED` row, after re-checking a *fresh*
+  `StateProjector_TryGetState() == CANDIDATE_SUBMITTED` and reconstructing
+  the `TradeCandidate` from `CandidateProjection_TryGet()` +
+  `StateProjector_TryGetState()` (never `CandidateProjectionRecord.state`).
+- Never fabricates the `LifecycleEvent` fed to `StateProjector_Apply()`.
+  After a successful durable write, `C37_FindMatchingExecutedLine()` reads
+  the store back via the existing sealed `EventStore_ReadAllLines()` and
+  scans backward through `EventSerializer_ParseLifecycle()`-parsed lines,
+  matching every field explicitly (candidate_id, from/to state, reason,
+  and the row's own `c3_6_action_id` inside `extra_json`) - never assuming
+  the last line is the just-written one. Exactly one match is required:
+  zero or multiple matches both `SafeMode_Trip()` and stop the scan.
+- **Corrects the merged design contract's §3/§9 failure semantics**: on a
+  durable-write failure, the scan now **stops immediately** (`SafeMode_Trip`
+  already fires inside `EventStore_LogTransition`; this file additionally
+  returns without attempting any further row), rather than the contract
+  document's original "continue to the next row" text - a correction the
+  user gave after the docs-only contract had already been merged, on the
+  reasoning that continuing after Safe Mode engages would violate
+  fail-closed semantics. The contract document itself is unchanged this
+  round; this note is the record of the supersession pending a future
+  doc-amendment round.
+- No new `ENUM_EVENT_TYPE`/`ENUM_REASON_CODE` value. No `RECOMMEND_REJECTED`
+  handling (remains reserved, non-emittable - not a member of
+  `ENUM_RECOMMENDED_ACTION` at all). No durable idempotency registry - relies
+  on the sealed terminal-state guard (`CANDIDATE_EXECUTED` is terminal) plus
+  C3.6's own proven at-most-one-`RECOMMEND_EXECUTED`-row-per-candidate
+  guarantee.
+
+`MLQuantAI.mq5`: adds the new include; replaces the previously
+unconditional `BrokerReconciliation_CheckAll()` call in `OnInit` with a
+call gated on `LifecycleAuthority_StartupApply()`'s own `report.ok`, so a
+scan that stopped early (durable-write failure, evidence not recovered,
+ambiguous evidence, or a `StateProjector_Apply` failure) skips reconciling
+against a provably-diverged read model this session. `BrokerReconciliation.mqh`
+itself is not edited.
+
+New `Tests/MLQuantAI_Test_C3_7_LifecycleAuthorityProcessor.mq5`: 13 test
+functions covering the full frozen test matrix, including structural-only
+proofs (no injected C3.6 registry row, no fabricated MT5 position, no real
+`BrokerReconciliation_CheckAll()` call from this suite) for the two items
+the user required to be proven that way, an isolated-helper technique for
+the zero-match/multiple-match evidence-recovery cases, and a two-candidate
+fixture (`Test_DurableWriteFailure_SafeModeStopsScan`) proving the second
+candidate is never even attempted after the first candidate's durable
+write fails.
+
 ## [Unreleased] - C3.7 bounded lifecycle authority design contract (DESIGN ONLY, docs-only, 2026-08-26)
 
 Docs-only design contract on baseline `mlquantai@b2751c9` (C1–C3.6

@@ -226,6 +226,37 @@ bool EventSerializer_ParseLifecycle(string line, LifecycleEvent &out)
    out.from_state = CandidateStateFromString(fromStr);
    out.to_state   = CandidateStateFromString(toStr);
    out.reason     = ReasonCodeFromString(EventSerializer_GetStr(line, "reason"));
+
+   // extra_json: EventSerializer_ToJson() splices this in as raw trailing
+   // key:value pairs immediately after "reason" and before the final
+   // closing brace (never nested under its own "extra_json" key - see the
+   // write side above). Mirror that on the way back: locate the end of
+   // the "reason" value, and if a comma follows (rather than the closing
+   // brace), everything from there up to the line's final '}' is the
+   // caller-supplied fragment.
+   {
+      string reasonNeedle = "\"reason\":\"";
+      int rp = StringFind(line, reasonNeedle);
+      if(rp >= 0)
+      {
+         int i = rp + StringLen(reasonNeedle);
+         int len = StringLen(line);
+         while(i < len)
+         {
+            ushort ch = StringGetCharacter(line, i);
+            if(ch == '\\' && i + 1 < len) { i += 2; continue; }
+            if(ch == '"') { i++; break; } // real, unescaped closing quote
+            i++;
+         }
+         if(i < len && StringGetCharacter(line, i) == ',')
+         {
+            int lastBrace = StringLen(line) - 1;
+            while(lastBrace >= 0 && StringGetCharacter(line, lastBrace) != '}') lastBrace--;
+            if(lastBrace > i)
+               out.extra_json = StringSubstr(line, i + 1, lastBrace - i - 1);
+         }
+      }
+   }
    return true;
 }
 

@@ -26,6 +26,7 @@
 #include <MLQuantAI/Execution/MLQuantAI_BrokerTransactionObservation.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_TransactionMatchingReadiness.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_DeferredTransactionProcessor.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_LifecycleAuthorityProcessor.mqh>
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_Contract.mqh>
 
 input group "=== System ==="
@@ -379,7 +380,34 @@ int OnInit()
    // a row-level BLOCKED) and does NOT trip SafeMode or block EA init.
    DeferredTransactionProcessor_StartupScan(g_EventStoreFileName);
 
-   BrokerReconciliationReport brr = BrokerReconciliation_CheckAll();
+   // C3.7 lifecycle authority processor (per
+   // Docs/PhaseC_C3_7_BoundedLifecycleAuthorityContract.md, FROZEN): the
+   // SOLE component authorized to turn a C3.6 RECOMMEND_EXECUTED row into
+   // a real CANDIDATE_SUBMITTED -> CANDIDATE_EXECUTED transition, via the
+   // existing sealed EventStore_LogTransition(). Re-verifies live state
+   // fresh from StateProjector immediately before every transition -
+   // never trusts C3.6's own scan-time snapshot. On a successful durable
+   // write, synchronously applies the REAL recovered durable event to
+   // StateProjector (never a fabricated one) so BrokerReconciliation_
+   // CheckAll below sees this session's own fresh EXECUTED candidates,
+   // not just prior-session ones. On any transition-layer failure
+   // (durable write, evidence recovery, or StateProjector_Apply), the
+   // scan stops immediately and BrokerReconciliation_CheckAll is
+   // skipped entirely this session - reconciling against a
+   // provably-diverged read model would be worse than skipping it.
+   LifecycleAuthorityReport lar = LifecycleAuthority_StartupApply(g_EventStoreFileName);
+
+   BrokerReconciliationReport brr;
+   if(lar.ok)
+   {
+      brr = BrokerReconciliation_CheckAll();
+   }
+   else
+   {
+      BrokerReconciliationReport_Init(brr);
+      LogWarn(StringFormat("C3.7 lifecycle authority: skipping BrokerReconciliation_CheckAll this session - "
+              "scan stopped early (%s): %s", lar.stop_reason, lar.first_error));
+   }
 
    // Step 8.5: prove a candidate this exact EA wrote gets replayed
    // correctly on the next restart - not just candidates written by the
