@@ -4,6 +4,96 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.7 bounded lifecycle authority design contract (DESIGN ONLY, docs-only, 2026-08-26)
+
+Docs-only design contract on baseline `mlquantai@b2751c9` (C1–C3.6
+sealed; C3.6 `DeferredTransactionProcessor` produces read-only
+`RECOMMEND_EXECUTED`/`RECOMMEND_NONE`/`RECOMMEND_BLOCKED` recommendation
+rows, zero lifecycle authority). No `.mqh`/`.mq5` file, no test file, no
+`MLQuantAI.mq5` wiring, no new `ENUM_EVENT_TYPE`/`ENUM_REASON_CODE`
+value, no compile, no test run.
+
+C3.7 is frozen as the **sole** component authorized to turn a C3.6
+`RECOMMEND_EXECUTED` row into a real `CANDIDATE_SUBMITTED →
+CANDIDATE_EXECUTED` transition, via the existing sealed
+`EventStore_LogTransition()` - the same production write path C2.2's
+`BrokerSubmissionAdapter` already uses. No new `ENUM_EVENT_TYPE`
+(`EVENT_TYPE_CANDIDATE_EXECUTED` already exists, sealed) and no new
+`ENUM_REASON_CODE` (`REASON_EXECUTED_OK` already exists, sealed,
+currently unused by any production emitter) are needed.
+
+Freezes, per the user's explicit decisions on 4 points plus the
+supporting research findings:
+
+**`RECOMMEND_EXECUTED` is evidence, never write-time authority**: before
+transitioning, C3.7 must re-validate upstream readiness, a *fresh*
+`StateProjector_TryGetState() == CANDIDATE_SUBMITTED` (never
+`DeferredRecommendationRecord.candidate_state_evidence`, a C3.6-scan-time
+snapshot), that a `CandidateProjection` record exists, and that the
+recommendation's provenance is structurally complete.
+
+**Startup placement, adopts synchronous `StateProjector` sync**: C3.7
+slots into `OnInit` between `DeferredTransactionProcessor_StartupScan`
+(C3.6) and `BrokerReconciliation_CheckAll`. On a successful durable
+transition, `StateProjector_Apply()` is called synchronously so
+`BrokerReconciliation_CheckAll()` - which reads `StateProjector`'s own
+registry directly - sees this session's own fresh `EXECUTED` candidates
+immediately, rather than waiting a full restart. If the durable write
+fails: inherited `SafeMode_Trip` (unchanged `EventStore_LogTransition`
+behavior), continue to the next row. If the durable write succeeds but
+the local `StateProjector_Apply` fails: `SafeMode_Trip` immediately, stop
+processing further rows, and skip `BrokerReconciliation_CheckAll()`
+entirely this session (reconciling against a provably-diverged read
+model would be worse than skipping it). `BrokerReconciliation.mqh`
+itself is never edited - only its effective position/scope in `OnInit`.
+
+**Candidate assembly, two-source reconstruction**: `candidate_id` /
+`root_event_id` / `correlation_id` / `strategy_id` from
+`CandidateProjection_TryGet()`; `.state` *only* from
+`StateProjector_TryGetState()` (never `CandidateProjectionRecord.state`,
+which is always `CANDIDATE_CREATED` in that B6-only projection) - because
+unlike C2.2's continuously-held in-session `TradeCandidate` object, C3.7's
+candidate may have reached `SUBMITTED` in an *earlier* session and there
+is no live object to reuse.
+
+**No new durable idempotency registry - explicit deviation from C3.5
+§9's own default assumption** (which sketched mirroring C2.3's
+`BrokerSubmissionAuditProjection` registry precedent): the sealed
+terminal-state guard (`CANDIDATE_EXECUTED` is terminal;
+`StateMachine_CanTransition(EXECUTED, *)` is always `false`) combined
+with C3.6's own already-tested guarantee (at most one
+`RECOMMEND_EXECUTED` row per `candidate_id` per scan) is a complete
+idempotency story for this specific terminal transition - a parallel
+durable registry would be redundant machinery. Explicitly scoped: this
+reasoning is a property of *this* terminal transition, not a reusable
+abstraction for any future non-terminal lifecycle authority.
+
+**One summary observability `LogWarn`** if `blocked_count > 0` after
+C3.6's scan ("C3.7 lifecycle authority: N recommendation(s) blocked; no
+blocked row was transitioned.") - never per-row, no Safe Mode, no broker
+read. `RECOMMEND_NONE` rows produce no warning (expected, non-terminal
+condition).
+
+**`extra_json` provenance contract** (frozen field set, copied verbatim
+from the `RECOMMEND_EXECUTED` row, never recomputed): schema version,
+`c3_6_action_id`, `execution_request_id`, `order_ticket`, sorted
+`deal_tickets`, `terminal_match_status`, `running_filled_volume`,
+`intended_lot_size`, and source log-event-id/sequence-number provenance
+for both the execution request and every deal.
+
+**File naming**: `MLQuantAI_LifecycleAuthorityProcessor.mqh` /
+`MLQuantAI_Test_C3_7_LifecycleAuthorityProcessor.mq5` - named by role
+(the sole bounded-lifecycle-authority holder), not by phase number,
+matching `MLQuantAI_BrokerReconciliation.mqh`/`MLQuantAI_StateProjector.mqh`'s
+own naming convention.
+
+Also freezes an 18-item required test matrix (design-only, no test file
+authorized here) and the implementation-round file allowlist. Still not
+authorized: any `.mqh`/`.mq5` file, any `MLQuantAI.mq5` wiring, any
+compile or test run, any edit to `BrokerReconciliation.mqh` or any other
+sealed file, and any `RECOMMEND_REJECTED` handling (remains reserved,
+non-emittable).
+
 ## [Unreleased] - C3.6 implementation: deferred-transaction-processor (PASSED 760/760, real MetaEditor run, 2026-08-26)
 
 Implements the C3.6 contract frozen below
