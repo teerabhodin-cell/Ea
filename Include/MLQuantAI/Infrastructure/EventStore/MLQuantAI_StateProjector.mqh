@@ -50,6 +50,24 @@ bool StateProjector_TryGetState(string candidateId, ENUM_CANDIDATE_STATE &outSta
    return true;
 }
 
+// C3.8.0: read-only enumeration surface, mirroring the _Count()/_GetAt()
+// pair every other sealed projection in this codebase already exposes
+// (ExecutionRequestProjection, SubmissionOutcomeProjection,
+// OrderAggregateRegistry, DeferredTransactionProcessor,
+// TransactionDealRegistry). No behavior change to any other function in
+// this file. Callers needing every (candidate_id, current_state) pair -
+// e.g. C3.8.1's future submitted-candidate visibility diagnostic - use
+// this instead of reaching into g_Proj_Candidates[]/g_Proj_Count
+// directly.
+int StateProjector_Count() { return g_Proj_Count; }
+
+bool StateProjector_GetAt(int index, ProjectedCandidate &out)
+{
+   if(index < 0 || index >= g_Proj_Count) return false;
+   out = g_Proj_Candidates[index];
+   return true;
+}
+
 // Applies one lifecycle event to the projected state. Returns false (with
 // a reason) if the event is inconsistent with everything replayed so
 // far - callers (ReplayEngine) treat that as a corruption finding, not a

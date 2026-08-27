@@ -4,6 +4,95 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.8.0 implementation: StateProjector enumeration accessors (PASSED 928/928, real MetaEditor run, 2026-08-27)
+
+`Include/MLQuantAI/Infrastructure/EventStore/MLQuantAI_StateProjector.mqh`
+(amended) + `Tests/MLQuantAI_Test_C3_8_0_StateProjectorEnumeration.mq5`
+(new). Adds the one enumeration primitive `StateProjector.mqh` was
+missing relative to every other sealed projection in this codebase
+(`ExecutionRequestProjection`, `SubmissionOutcomeProjection`,
+`OrderAggregateRegistry`, `DeferredTransactionProcessor`,
+`TransactionDealRegistry`, all already expose `_Count`/`_GetAt`):
+
+```
+int  StateProjector_Count();
+bool StateProjector_GetAt(int index, ProjectedCandidate &out);
+```
+
+Placed immediately after `StateProjector_TryGetState()` and before
+`StateProjector_Apply()`'s doc comment. `StateProjector_Count()` returns
+`g_Proj_Count` with no side effect. `StateProjector_GetAt()` performs one
+bounds check (`index < 0 || index >= g_Proj_Count`) and one value copy
+(`out = g_Proj_Candidates[index]`) - `ProjectedCandidate`'s five fields
+(three `string`, one `ENUM_CANDIDATE_STATE`, one `int`) contain no nested
+arrays, pointers, or class handles, so the copy is snapshot-safe: caller
+mutation of the returned struct cannot alter the stored registry record
+(proven directly by test, not just assumed).
+
+No behavior change to `StateProjector_Reset`/`_FindIndex`/`_TryGetState`/
+`_Apply`/`_ApplySystem` - all five keep their exact existing signatures
+and semantics. This is the only edit to `StateProjector.mqh` this round
+makes.
+
+Purely additive read-only surface for a future C3.8.1 (submitted-
+candidate visibility diagnostic, currently a nonbinding, uncommitted
+draft on a separate docs branch - not part of this round's scope) to
+enumerate `(candidate_id, current_state)` pairs without reaching into
+`g_Proj_Candidates[]`/`g_Proj_Count` directly, the way
+`BrokerReconciliation_CheckAll()` (unchanged by this commit) already
+does as undocumented file-scope access. No `OnInit`/`OnTick`/
+`OnTradeTransaction` wiring, no event append, no Safe Mode change, no
+candidate-lifecycle transition, no broker/terminal query, anywhere in
+this round.
+
+Test suite (`MLQuantAI_Test_C3_8_0_StateProjectorEnumeration.mq5`) builds
+every fixture through the existing, sealed `StateProjector_Apply()` entry
+point only - never writes `g_Proj_Candidates[]`/`g_Proj_Count` directly,
+so it exercises the public state-projector contract, not internal
+storage. Every test function calls `StateProjector_Reset()` at its own
+start and end, preventing cross-test state leakage. Covers: empty
+registry, bounds at -1/0/N-1/N/a large positive index, `Count()` tracking
+real applied records (and staying unchanged across a same-candidate
+transition), stable insertion ordering, full five-field record fidelity
+cross-checked against `StateProjector_TryGetState()`, caller-mutation
+non-aliasing, live transition visibility at a fixed index, and
+`Reset()` clearing the enumeration surface. This test proves behavior
+through the public API only - it does not attempt to byte-diff sealed
+files from within MQL5 (that proof is external/git-based, delivered
+separately as Checkpoint 3 evidence).
+
+Sealed files untouched (confirmed via `git diff --check`/`git diff
+--name-only`, external evidence, not an in-test claim): `MLQuantAI.mq5`;
+`EventStore.mqh`, `EventSerializer.mqh`, `EventStoreValidator.mqh`,
+`ReplayEngine.mqh`, `EventStoreHealth.mqh`, `CandidateProjection.mqh`;
+`Core/MLQuantAI_StateMachine.mqh`; `BrokerReconciliation.mqh`,
+`DeferredTransactionProcessor.mqh`, `LifecycleAuthorityProcessor.mqh`,
+`ExecutionProvenanceConflictAuditor.mqh`; every C3.10 A/B/C/D/E1 module.
+
+**C3.8.0 verification complete.** Real MetaEditor run:
+
+- 14 suites passed
+- 928/928 assertions passed
+- `MLQuantAI.mq5` compiled with 0 errors and 0 warnings
+
+The 14 suites: `MLQuantAI_Test_C3_8_0_StateProjectorEnumeration` (43/43,
+the new suite itself) plus the full transitive-consumer regression set -
+`MLQuantAI_Test_ReplayIntegrity` (16/16), `MLQuantAI_Test_EventStoreRecovery`
+(14/14), `MLQuantAI_Test_BrokerReconciliation` (5/5),
+`MLQuantAI_Test_C3_7_LifecycleAuthorityProcessor` (125/125),
+`MLQuantAI_Test_C3_9_ExecutionProvenanceConflictAuditor` (101/101),
+`MLQuantAI_Test_C3_10F_StackedIntegrationAudit` (33/33),
+`MLQuantAI_Test_C3_10E_AsyncTerminalRejectionHealthTrend` (28/28),
+`MLQuantAI_Test_C3_10D_AsyncTerminalRejectionStartupDiagnostics` (49/49),
+`MLQuantAI_Test_C3_10C_AsyncTerminalRejectionAudit` (95/95),
+`MLQuantAI_Test_C3_10B_AsyncTerminalRejectionAuthority` (177/177),
+`MLQuantAI_Test_C3_10A_AsyncTerminalOrderObservationMatcher` (79/79),
+`MLQuantAI_Test_B9_Commit2_EligibilityEvent` (84/84), and
+`MLQuantAI_Test_B9_Commit3_IntegrationRegression` (79/79) - zero
+failures anywhere. This entry records verification results only; it
+does not claim a PR review, merge, release, production deployment, or
+C3.8.1 authorization.
+
 ## [Unreleased] - C3.10E2 implementation: terminal rejection audit acknowledgement (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
 
 New `EVENT_TYPE_TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED` (appended at the tail
