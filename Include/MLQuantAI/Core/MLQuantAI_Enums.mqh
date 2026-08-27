@@ -314,7 +314,17 @@ enum ENUM_EVENT_TYPE
    // Written immediately before the corresponding
    // CANDIDATE_REJECTED_BY_BROKER lifecycle transition - never on its
    // own. Same append-at-end rule as every entry above.
-   EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED
+   EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED,
+
+   // C3.10E2 (per the Terminal Rejection Audit Acknowledgement
+   // Checkpoint 1 contract): a durable, append-only SystemEvent audit
+   // trail fact recording that a human operator acknowledged a specific
+   // C3.10C audit-report snapshot (identified by diagnostic_fingerprint,
+   // never raw evidence). Carries no state transition, no Safe Mode
+   // mutation, and no effect on C3.10B authority, C3.7/reconciliation,
+   // or trade permission - it is an accountability record only. Same
+   // append-at-end rule as every entry above.
+   EVENT_TYPE_TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -357,6 +367,7 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_EXECUTION_MANUAL_APPROVAL_GRANTED:  return "EXECUTION_MANUAL_APPROVAL_GRANTED";
       case EVENT_TYPE_BROKER_TRANSACTION_OBSERVED:        return "BROKER_TRANSACTION_OBSERVED";
       case EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED:    return "TRANSACTION_REJECTION_CONFIRMED";
+      case EVENT_TYPE_TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED: return "TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED";
    }
    return "UNKNOWN";
 }
@@ -399,6 +410,7 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "EXECUTION_MANUAL_APPROVAL_GRANTED") return EVENT_TYPE_EXECUTION_MANUAL_APPROVAL_GRANTED;
    if(s == "BROKER_TRANSACTION_OBSERVED")       return EVENT_TYPE_BROKER_TRANSACTION_OBSERVED;
    if(s == "TRANSACTION_REJECTION_CONFIRMED")   return EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED;
+   if(s == "TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED") return EVENT_TYPE_TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED;
    return EVENT_TYPE_UNKNOWN;
 }
 

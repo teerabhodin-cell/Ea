@@ -4,6 +4,57 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.10E2 implementation: terminal rejection audit acknowledgement (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
+
+New `EVENT_TYPE_TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED` (appended at the tail
+of `ENUM_EVENT_TYPE`) +
+`Include/MLQuantAI/Execution/MLQuantAI_TerminalRejectionAuditAcknowledgement.mqh`
+(new) + `Tests/MLQuantAI_ManualScript_AcknowledgeAudit.mq5` (new) +
+`Tests/MLQuantAI_Test_C3_10E2_TerminalRejectionAuditAcknowledgement.mq5`
+(new). Durable, append-only accountability record: a human operator
+acknowledges a specific C3.10C audit-report snapshot, identified by
+`diagnostic_fingerprint` alone, never raw evidence. Explicitly not
+repair, not override, not a Safe Mode clear, not an unblock of C3.10B,
+and no effect on trade permission - an audit trail only.
+
+Standalone, manually-run script (`Tests/MLQuantAI_ManualScript_
+AcknowledgeAudit.mq5`, mirroring `ManualScript_GrantApproval.mq5`'s
+established shape exactly): `#property script_show_inputs`, refuses a
+missing event-store file via `FileIsExist(fileName, FILE_COMMON)` rather
+than creating one, and takes `diagnostic_fingerprint` as a required
+operator-typed input - this scope does not auto-read or recompute the
+current audit report, preserving the trust boundary. No integration call
+in `MLQuantAI.mq5`, no runtime UI/input path, no wiring to C3.10A-F at
+all this round.
+
+Idempotency key is `(operator_id, diagnostic_fingerprint)`, enforced via
+a read-before-write duplicate scan
+(`EventStore_ReadAllLines` before `EventStore_LogSystem`) - idempotent
+only under the existing single-terminal/single-writer operational model;
+this is explicitly not an atomic cross-process claim primitive. A
+pre-existing durable record carrying an unrecognized
+`diagnostic_fingerprint_version`, or a blank identity field, makes the
+whole scan fail closed (`ok=false`, no append) rather than risk a
+silently-missed duplicate. No caller-supplied acknowledgement ID or
+timestamp: the event store's own `log_event_id`/`sequence_number`
+(assigned internally, exactly like every other event type in this
+codebase) are the durable identity/timing authority.
+
+A durable write failure returns `ok=false` with `first_error` set and
+never calls `SafeMode_Trip` - verified against the real
+`EventStore_LogSystem`/`EventStore_WriteLine` implementation, which
+(despite a stale comment elsewhere in this codebase claiming otherwise)
+never trips Safe Mode itself; only specific higher-level callers like
+`EventStore_LogTransition` do that. An acknowledgement write's own
+failure carries no trading-safety consequence, so none is asserted here.
+
+Zero dependency on any C3.10A/B/C/D/E1/F header or type - the frozen
+canonical-string/hash formula that would compute a `diagnostic_fingerprint`
+from a real `AsyncTerminalRejectionAuditReport`
+(`Ids_Deterministic("AUDITFP", ...)`) is documented in the contract but
+not implemented in this module, keeping this round's structural-purity
+proof unqualified.
+
 ## [Unreleased] - C3.10F implementation: stacked integration audit (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
 
 `Tests/MLQuantAI_Test_C3_10F_StackedIntegrationAudit.mq5` (new). Test-only,
