@@ -4,6 +4,60 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.10E1 implementation: async terminal rejection health trend (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
+
+`Include/MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionHealthTrend.mqh`
+(new) + `Tests/MLQuantAI_Test_C3_10E_AsyncTerminalRejectionHealthTrend.mq5`
+(new). Pure, read-only trend classifier over two already-built C3.10D
+`AsyncTerminalRejectionStartupDiagnostics` snapshots - lets an operator see
+whether the current startup is degraded, improved, unchanged, or unknown
+relative to the previous one. Reads nothing (no event store, no
+persistence, no snapshot caching of any kind), touches no Safe Mode,
+`StateProjector`, `CandidateProjection`, or broker/terminal API, and is
+deliberately unwired this round - not called from `MLQuantAI.mq5` or from
+C3.10D's own `_Build`/`_Log`. Split from a broader C3.10E "startup
+diagnostic history and operator acknowledgement" proposal specifically so
+this log-only, non-authoritative trend classifier could not accidentally
+become a durable authority; the durable-acknowledgement half (a new
+`EVENT_TYPE_TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED` SystemEvent with its own
+schema, idempotency, and Safe Mode/gating implications) is deferred to a
+later, separately-contracted slice.
+
+New `ENUM_ASYNC_TERMINAL_REJECTION_HEALTH_TREND` (local to this header, not
+a persistent/serialized enum) with four members: `UNKNOWN`, `UNCHANGED`,
+`IMPROVED`, `DEGRADED`. `AsyncTerminalRejectionHealthTrend_Compare(previous,
+current, hasPreviousSnapshot)` takes an explicit `hasPreviousSnapshot` bool
+rather than inferring "no previous data" from `previous`'s field values -
+a default-constructed `AsyncTerminalRejectionStartupDiagnostics` has every
+bool false, which would otherwise be indistinguishable from a genuine
+triple-failure prior run. `hasPreviousSnapshot==false` short-circuits to
+`UNKNOWN` before either struct is read at all.
+
+Frozen scoring rule, symmetric across all five of C3.10D's boolean health
+dimensions (`atom_ok`, `authority_ok`, `audit_ok`,
+`lifecycle_and_reconciliation_ran`, `safe_mode_active`): a dimension is
+"bad" per the frozen `bad_atom`/`bad_authority`/`bad_audit`/
+`bad_lifecycle`/`bad_safe_mode` definitions; `newly_bad` and `newly_good`
+are tallied by comparing bad-state per dimension between `previous` and
+`current`; any `newly_bad > 0` returns `DEGRADED` outright, otherwise any
+`newly_good > 0` returns `IMPROVED`, otherwise `UNCHANGED`. Negative change
+wins over positive change purely by this rule ordering, not as a
+special-cased branch. The test suite includes fixtures where
+`authority_ok` and `lifecycle_and_reconciliation_ran` are deliberately
+decoupled (a combination the one real production call site never
+produces, since there `lifecycle_and_reconciliation_ran` is always exactly
+`rejAuth.ok`), proving the comparator genuinely evaluates all five
+dimensions independently rather than relying on that accidental
+correlation.
+
+Sealed files untouched: `MLQuantAI.mq5` and all C3.10A/B/C/D modules
+(`AsyncTerminalOrderObservationMatcher.mqh`,
+`AsyncTerminalRejectionAuthority.mqh`, `AsyncTerminalRejectionAudit.mqh`,
+`AsyncTerminalRejectionStartupDiagnostics.mqh`). No new persistent event
+type or schema, no `OnTick`/`OnTradeTransaction` change, no `SafeMode_Trip`/
+`SafeMode_Clear` call, no forbidden broker/terminal API anywhere in the new
+file.
+
 ## [Unreleased] - C3.10D implementation: async terminal rejection startup diagnostics (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
 
 `Include/MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionStartupDiagnostics.mqh`
