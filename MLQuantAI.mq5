@@ -28,6 +28,7 @@
 #include <MLQuantAI/Execution/MLQuantAI_DeferredTransactionProcessor.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_AsyncTerminalOrderObservationMatcher.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionAuthority.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionAudit.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_LifecycleAuthorityProcessor.mqh>
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_Contract.mqh>
 
@@ -436,6 +437,36 @@ int OnInit()
       LogWarn(StringFormat("C3.10B async terminal rejection authority: skipping C3.7/BrokerReconciliation_CheckAll "
               "this session - scan stopped early (%s): %s", rejAuth.stop_reason, rejAuth.first_error));
    }
+
+   // C3.10C async terminal rejection audit (Checkpoint 1, locked):
+   // strictly read-only, non-blocking startup audit - a post-condition
+   // observer only. Runs unconditionally after the C3.10B/C3.7/
+   // BrokerReconciliation block above, never altering its outcome.
+   // Reuses the SAME atomReport instance C3.10B already consumed -
+   // never re-scans the file. ok==false never fails EA initialization
+   // on its own - only LogError with the full counter summary.
+   AsyncTerminalRejectionAuditReport c310cReport =
+      AsyncTerminalRejectionAudit_StartupScan(
+         g_EventStoreFileName,
+         atomReport);
+
+   if(!c310cReport.ok)
+     {
+      LogError(StringFormat(
+         "C3.10C async terminal rejection audit failed: %s "
+         "(confirmations=%d verified=%d missing_transition=%d "
+         "missing_confirmation=%d duplicate_confirmation=%d "
+         "provenance_mismatch=%d source_missing=%d source_ambiguous=%d)",
+         c310cReport.first_error,
+         c310cReport.confirmations_total,
+         c310cReport.verified_total,
+         c310cReport.missing_transition_count,
+         c310cReport.missing_confirmation_count,
+         c310cReport.duplicate_confirmation_count,
+         c310cReport.provenance_mismatch_count,
+         c310cReport.source_evidence_missing_count,
+         c310cReport.source_evidence_ambiguous_count));
+     }
 
    // Step 8.5: prove a candidate this exact EA wrote gets replayed
    // correctly on the next restart - not just candidates written by the

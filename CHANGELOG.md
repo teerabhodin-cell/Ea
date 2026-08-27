@@ -4,6 +4,69 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.10C implementation: async terminal rejection audit (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
+
+`Include/MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionAudit.mqh`
+(new) + `Tests/MLQuantAI_Test_C3_10C_AsyncTerminalRejectionAudit.mq5`
+(new). Strictly read-only, non-blocking startup audit - a post-condition
+observer, not a new lifecycle authority. Verifies that every durable
+`EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED` SystemEvent C3.10B ever wrote
+is internally consistent with the candidate's current `StateProjector`
+state, its own linked lifecycle transition, `CandidateProjection`
+lineage, and the terminal-observation evidence the SAME `atomReport`
+instance C3.10B consumed resolves it to. Never appends, repairs,
+transitions state, or trips Safe Mode.
+
+**Central design point: distinguishing C2.2's synchronous rejection from
+C3.10B's async one.** `CANDIDATE_REJECTED_BY_BROKER` has two legitimate
+writers - C2.2's synchronous path (`BrokerSubmissionAdapter.mqh:237`,
+which always passes `extraJson=""`) and C3.10B's async path (which always
+writes a non-empty `confirmation_log_event_id`/`confirmation_sequence_
+number` pair). Reason codes can't cleanly separate them (`REASON_BROKER_
+REJECT` is plausibly reachable from both paths), so the audit uses the
+structural presence of a non-empty `confirmation_log_event_id` in the
+transition's own `extra_json` as the sole classification signal - a
+transition without one is definitionally C2.2's territory and never
+scanned or flagged, regardless of reason code. A non-empty event ID with
+a missing/zero/invalid `confirmation_sequence_number` is still treated as
+a malformed C3.10B link (`missing_confirmation_count`), never silently
+reclassified as C2.2 - no special-case code needed for this, since no
+real durable confirmation ever has `seq==0` (`EventStore_NextSequence`
+always starts at 1), so the identity lookup simply never finds a match.
+
+Two-pass traversal, never short-circuits (always tallies every finding
+across the whole store): a forward chronological pass over confirmation
+events checks `CandidateProjection` lineage, current-state + linked-
+transition existence (`missing_transition_count`), and source evidence
+against `atomReport.matches[]` (`source_evidence_missing_count` /
+`source_evidence_ambiguous_count` / `provenance_mismatch_count`), while
+tallying duplicate `candidate_id`s (`duplicate_confirmation_count`,
+counted once per distinct candidate - broader than C3.10B's own 6-field
+write-time idempotency key, since a candidate's terminal transition can
+only legitimately happen once ever). A backward pass over C3.10B-linked
+`REJECTED_BY_BROKER` transitions checks each against the confirmations
+already collected in pass 1 (`missing_confirmation_count`). `first_error`
+records only the first finding in that ordering.
+
+`MLQuantAI.mq5` integration is purely additive: the call is inserted
+strictly *after* the existing, byte-for-byte-unchanged C3.10B/C3.7/
+`BrokerReconciliation` control-flow block (verified via `git diff` against
+`feat/c3-10b-async-terminal-rejection-authority@ff717b9` - zero lines of
+that block touched). `ok==false` only `LogError`s the full counter
+summary; it never returns `INIT_FAILED` and never alters `rejAuth`/C3.7/
+`BrokerReconciliation` outcomes - an earlier draft of the integration
+snippet would have made a C3.10B `ok==false` scan fail EA initialization
+entirely, which was caught and corrected before implementation: the
+already-locked C3.10B contract only skips C3.7/reconciliation for that
+session, and this audit slice must never change that.
+
+Sealed files untouched: `Enums.mqh`, `ReasonCodes.mqh`,
+`AsyncTerminalOrderObservationMatcher.mqh`,
+`AsyncTerminalRejectionAuthority.mqh`, `EventSerializer.mqh`,
+`StateProjector.mqh`, `CandidateProjection.mqh`. No `OnTick`/
+`OnTradeTransaction` change, no forbidden broker API, no durable write or
+`SafeMode_Trip` call anywhere in the new file.
+
 ## [Unreleased] - C3.10B implementation: async terminal rejection authority (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
 
 `Include/MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionAuthority.mqh`
