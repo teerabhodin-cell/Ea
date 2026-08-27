@@ -4,6 +4,52 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.10D implementation: async terminal rejection startup diagnostics (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
+
+`Include/MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionStartupDiagnostics.mqh`
+(new) + `Tests/MLQuantAI_Test_C3_10D_AsyncTerminalRejectionStartupDiagnostics.mq5`
+(new). Operator-facing startup diagnostic summary - turns the already-built
+C3.10A/C3.10B/C3.10C report objects into one six-line log block. Reads
+nothing (no `EventStore_ReadAllLines`, no `StateProjector`, no
+`CandidateProjection`), appends nothing, and never fails EA initialization
+on its own.
+
+**Pure/logging split, settling the Checkpoint 1 design question directly:**
+MQL5's `Print()` (which `LogInfo`/`LogWarn`/`LogError` wrap) writes to the
+Expert Journal with no corresponding read-back API anywhere in the
+standard library, so "capture log text and assert on it" isn't a testable
+strategy from inside a `Tests/*.mq5` script. The module therefore splits
+into `AsyncTerminalRejectionStartupDiagnostics_Build` (pure - no I/O
+beyond the one read-only `SafeMode_IsActive()` call, never mutates its
+inputs, exhaustively unit-tested field-by-field) and
+`AsyncTerminalRejectionStartupDiagnostics_Log` (thin - calls `_Build`
+then emits the frozen six-line block, tested only by structural proof and
+a no-crash/no-mutation smoke check, never by exact log text).
+
+`lifecycle_and_reconciliation_ran` is never re-derived from
+`authorityReport.ok` - it is exactly the caller-supplied signal
+(`rejAuth.ok` at the real `MLQuantAI.mq5` call site), since that is the
+one value that actually gated the C3.7/`BrokerReconciliation` control
+flow; a dedicated test proves `_Build` reflects the passed value even
+when it diverges from what `authorityReport.ok` alone would imply.
+`audit_findings_total` is computed as the sum of `AsyncTerminalRejection
+AuditReport`'s 6 finding counters here only - never written back into the
+audit report itself.
+
+`MLQuantAI.mq5` integration is purely additive: the call is inserted
+strictly *after* the existing C3.10C block (verified via `git diff`
+against `feat/c3-10c-async-terminal-rejection-audit@68d21c9` - zero lines
+of the prior C3.10B/C3.7/`BrokerReconciliation`/C3.10C control flow
+touched, one new `#include` plus one new call block only).
+
+Sealed files untouched: `Enums.mqh`, `ReasonCodes.mqh`,
+`AsyncTerminalOrderObservationMatcher.mqh`,
+`AsyncTerminalRejectionAuthority.mqh`, `AsyncTerminalRejectionAudit.mqh`,
+`EventSerializer.mqh`, `StateProjector.mqh`, `CandidateProjection.mqh`. No
+new `ENUM_EVENT_TYPE`/`ENUM_REASON_CODE`/persistent schema, no
+`OnTick`/`OnTradeTransaction` change, no `SafeMode_Trip` call, no forbidden
+broker/terminal API anywhere in the new file.
+
 ## [Unreleased] - C3.10C implementation: async terminal rejection audit (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
 
 `Include/MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionAudit.mqh`

@@ -29,6 +29,7 @@
 #include <MLQuantAI/Execution/MLQuantAI_AsyncTerminalOrderObservationMatcher.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionAuthority.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionAudit.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionStartupDiagnostics.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_LifecycleAuthorityProcessor.mqh>
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_Contract.mqh>
 
@@ -467,6 +468,18 @@ int OnInit()
          c310cReport.source_evidence_missing_count,
          c310cReport.source_evidence_ambiguous_count));
      }
+
+   // C3.10D operator-facing startup diagnostics (Checkpoint 1, locked):
+   // log-only, read-only summary of the C3.10A/B/C pipeline - never
+   // decides whether C3.7/BrokerReconciliation ran, only records the
+   // already-determined rejAuth.ok signal. Runs unconditionally after
+   // the C3.10C block above, never alters any prior control flow, never
+   // fails EA initialization on its own.
+   AsyncTerminalRejectionStartupDiagnostics_Log(
+      atomReport,
+      rejAuth,
+      c310cReport,
+      rejAuth.ok);
 
    // Step 8.5: prove a candidate this exact EA wrote gets replayed
    // correctly on the next restart - not just candidates written by the
