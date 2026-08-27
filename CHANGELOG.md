@@ -4,6 +4,45 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.10F implementation: stacked integration audit (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
+
+`Tests/MLQuantAI_Test_C3_10F_StackedIntegrationAudit.mq5` (new). Test-only,
+read-only integration audit of the combined C3.10B->C3.10E1 head
+(`de929f0`) - not a new runtime feature. Proves that C3.10A/B/C/D/E1
+compose correctly as a stack using hand-built, in-memory report fixtures
+only: no event-store file, no broker/terminal API, no `OnInit`, no Safe
+Mode mutation, no durable write of any kind.
+
+Verifies A->B->C->D report propagation faithfully preserves upstream truth
+(`atom_ok`, `authority_ok`, `audit_ok`, `lifecycle_and_reconciliation_ran`,
+`confirmations_written`, `authority_stop_reason`, `audit_findings_total`
+all traced through `AsyncTerminalRejectionStartupDiagnostics_Build`
+unaltered); that a C3.10B authority hold never causes C3.10C's own audit
+signal to be skipped or misreported - C3.10C runs unconditionally per its
+own frozen integration contract, and D reports both signals independently;
+a fully clean composition path; and that C3.10E1's comparator accepts two
+diagnostics values built entirely from this composition with no EA/`OnInit`
+dependency at all.
+
+Also proves, by inspection (a `Tests/*.mq5` script's `FileOpen` is
+sandboxed to `MQL5\Files` and cannot read `MLQuantAI.mq5`'s own source
+from the Experts tree, so this is backed by an external offset-based
+`grep` token comparison reported separately as Checkpoint 3 evidence, not
+runtime file I/O): that C3.10E1 remains unwired (`MLQuantAI.mq5` neither
+includes `MLQuantAI_AsyncTerminalRejectionHealthTrend.mqh` nor calls
+`AsyncTerminalRejectionHealthTrend_Compare` anywhere), and that the
+locked startup order - A scan -> B authority -> the existing
+C3.7/`BrokerReconciliation` block -> C audit scan -> D log - is unchanged
+since C3.10B first established it.
+
+Sealed files untouched: `MLQuantAI.mq5`; all C3.10A/B/C/D/E1 headers and
+their existing test suites; `Enums.mqh`/`ReasonCodes.mqh`;
+`EventSerializer.mqh`/`StateProjector.mqh`/`CandidateProjection.mqh`/
+`EventStore.mqh`/`EventStoreHealth.mqh`. No new event type, reason code,
+serialization schema, state machine, projection, event-store, or Safe Mode
+change; no `OnTick`/`OnTradeTransaction` change; no new include or startup
+call added to the EA.
+
 ## [Unreleased] - C3.10E1 implementation: async terminal rejection health trend (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
 
 `Include/MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionHealthTrend.mqh`
