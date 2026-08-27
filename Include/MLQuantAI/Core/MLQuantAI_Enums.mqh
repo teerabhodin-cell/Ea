@@ -305,7 +305,16 @@ enum ENUM_EVENT_TYPE
    // raw callback is authorized to emit. Carries no matching-hierarchy
    // verdict and drives no lifecycle transition on its own; C3.2's own
    // deferred processor (not yet built) is the sole future consumer.
-   EVENT_TYPE_BROKER_TRANSACTION_OBSERVED
+   EVENT_TYPE_BROKER_TRANSACTION_OBSERVED,
+
+   // C3.10B (per the Async Terminal Rejection Authority Checkpoint 2
+   // contract): a durable SystemEvent audit fact confirming C3.10A's
+   // matcher resolved one broker-side terminal order-observation
+   // (REJECTED/CANCELED/EXPIRED) to one specific SUBMITTED candidate.
+   // Written immediately before the corresponding
+   // CANDIDATE_REJECTED_BY_BROKER lifecycle transition - never on its
+   // own. Same append-at-end rule as every entry above.
+   EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -347,6 +356,7 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_EXECUTION_SUBMISSION_UNKNOWN:       return "EXECUTION_SUBMISSION_UNKNOWN";
       case EVENT_TYPE_EXECUTION_MANUAL_APPROVAL_GRANTED:  return "EXECUTION_MANUAL_APPROVAL_GRANTED";
       case EVENT_TYPE_BROKER_TRANSACTION_OBSERVED:        return "BROKER_TRANSACTION_OBSERVED";
+      case EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED:    return "TRANSACTION_REJECTION_CONFIRMED";
    }
    return "UNKNOWN";
 }
@@ -388,6 +398,7 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "EXECUTION_SUBMISSION_UNKNOWN")      return EVENT_TYPE_EXECUTION_SUBMISSION_UNKNOWN;
    if(s == "EXECUTION_MANUAL_APPROVAL_GRANTED") return EVENT_TYPE_EXECUTION_MANUAL_APPROVAL_GRANTED;
    if(s == "BROKER_TRANSACTION_OBSERVED")       return EVENT_TYPE_BROKER_TRANSACTION_OBSERVED;
+   if(s == "TRANSACTION_REJECTION_CONFIRMED")   return EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED;
    return EVENT_TYPE_UNKNOWN;
 }
 

@@ -114,6 +114,15 @@ enum ENUM_REASON_CODE
    // all" - never conflated with this one.
    REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED,
 
+   // C3.10B: an async-confirmed broker-side order cancellation
+   // (ORDER_STATE_CANCELED via TRADE_TRANSACTION_ORDER_DELETE, per
+   // C3.10A's locked classification). Distinct from REASON_EXPIRED
+   // (broker-side expiry, reused as-is) and REASON_BROKER_REJECT
+   // (reused as-is - already live via C2.2, BrokerSubmissionAdapter.
+   // mqh:237). Appended at the tail, before REASON_COUNT, per this
+   // enum's append-only discipline.
+   REASON_ORDER_CANCELLED,
+
    REASON_COUNT
 };
 
@@ -169,6 +178,7 @@ string ReasonCodeToString(ENUM_REASON_CODE r)
       case REASON_EXECUTION_EXPERT_TRADE_DISABLED:      return "EXECUTION_EXPERT_TRADE_DISABLED";
       case REASON_EXECUTION_VOLUME_BELOW_MINIMUM:       return "EXECUTION_VOLUME_BELOW_MINIMUM";
       case REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED: return "EXECUTION_MANUAL_APPROVAL_NOT_GRANTED";
+      case REASON_ORDER_CANCELLED:                       return "ORDER_CANCELLED";
    }
    return "UNKNOWN";
 }
@@ -233,6 +243,7 @@ ENUM_REASON_CODE ReasonCodeFromString(string s)
    if(s == "EXECUTION_EXPERT_TRADE_DISABLED")     return REASON_EXECUTION_EXPERT_TRADE_DISABLED;
    if(s == "EXECUTION_VOLUME_BELOW_MINIMUM")      return REASON_EXECUTION_VOLUME_BELOW_MINIMUM;
    if(s == "EXECUTION_MANUAL_APPROVAL_NOT_GRANTED") return REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED;
+   if(s == "ORDER_CANCELLED")                     return REASON_ORDER_CANCELLED;
    return REASON_NONE;
 }
 

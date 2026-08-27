@@ -4,6 +4,115 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.10B implementation: async terminal rejection authority (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
+
+`Include/MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionAuthority.mqh`
+(new) + `Tests/MLQuantAI_Test_C3_10B_AsyncTerminalRejectionAuthority.mq5`
+(new). The write-side authority C3.10A deliberately stopped short of: the
+sole component authorized to turn a C3.10A `ATOM_MATCHED` async
+terminal-order observation into a durable
+`EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED` SystemEvent followed by a
+real `CANDIDATE_SUBMITTED` -> `CANDIDATE_REJECTED_BY_BROKER` lifecycle
+transition, via the same production write paths (`EventStore_LogSystem`
+then `EventStore_LogTransition`) C2.2's own synchronous-rejection path
+already uses live. One new `ENUM_EVENT_TYPE` member
+(`EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED`) and one new
+`ENUM_REASON_CODE` member (`REASON_ORDER_CANCELLED`); `REASON_BROKER_REJECT`
+and `REASON_EXPIRED` are reused as-is for the other two observed kinds.
+
+**Two fail-closed gates locked ahead of any durable write, both correcting
+an earlier draft of this design:**
+1. Any `ATOM_AMBIGUOUS` entry anywhere in a scan's `AsyncTerminalOrderMatchReport`
+   (i.e. `atomReport.ok==false`) stops the ENTIRE authority pass before any
+   write, not just the directly-implicated entry. Unlike C3.6's
+   `RECOMMEND_BLOCKED` rows (a pure, side-effect-free, freely-recomputed
+   read model skip on already-trusted evidence), C3.10A ambiguity means
+   the raw broker evidence itself is contradictory - C3.10B performs
+   irreversible durable writes, so it cannot write confidently for "clean"
+   entries in a batch known to contain unresolved evidentiary
+   contradictions elsewhere. Deliberately does NOT trip Safe Mode - an
+   upstream data-quality signal, not proof the durable event store itself
+   is inconsistent.
+2. Every `ATOM_MATCHED` entry must carry a non-empty `source_log_event_id`
+   and a positive `source_sequence_number` before any write - C3.10A
+   permits an empty `source_log_event_id` as a non-fatal read-only
+   diagnostic, but C3.10B, which creates durable identity and lifecycle
+   effect from it, cannot. Trips Safe Mode and stops the whole scan
+   immediately.
+
+**Idempotency requires a durable full-log lookup, not just a fresh-state
+recheck.** A fresh `StateProjector_TryGetState()` recheck alone (C3.7's own
+pattern) prevents a duplicate LIFECYCLE transition but not a duplicate
+CONFIRMATION write in a partial-write/restart scenario (confirmation
+write succeeds, transition write fails, state stays `SUBMITTED`; a naive
+restart would re-attempt and write a second confirmation).
+`C310B_FindMatchingRejectionConfirmation` (real reference shape: C3.7's own
+`C37_FindMatchingExecutedLine` - backward scan, caller-supplied `lines[]`/`n`,
+returns match count directly) closes this gap: filters on
+`category==SYSTEM`, `type=="TRANSACTION_REJECTION_CONFIRMED"` (the real
+serialized value strips the `EVENT_TYPE_` prefix - `EventTypeToString`,
+every case), and `c3_10b_schema_version=="C310B_V1"`, then compares 6
+typed fields directly (never a concatenated string - `confirmation_key` in
+the written JSON is display-only). 0 matches -> proceed; 1 match -> Safe
+Mode (partial write, refuse to auto-complete); >1 matches -> Safe Mode
+(duplicate confirmations). The SAME lookup, called again after a
+successful confirmation write, recovers the real just-written evidence
+(never fabricated) - the transition's own `extra_json` carries
+`confirmation_log_event_id`/`confirmation_sequence_number` naming the
+confirmation event's OWN identity, kept unambiguously distinct from the
+confirmation event's own `source_log_event_id`/`source_sequence_number`
+(which reference the original `BROKER_TRANSACTION_OBSERVED` line one level
+further back).
+
+`MLQuantAI.mq5` OnInit wiring: `AsyncTerminalOrderMatcher_ScanFile` (C3.10A
+is a pure function with no global registry, so it is called directly
+rather than through a `*_StartupScan`-populated one) then
+`AsyncTerminalRejectionAuthority_StartupApply`, slotted between C3.6's
+`DeferredTransactionProcessor_StartupScan` and C3.7's
+`LifecycleAuthority_StartupApply`. On `ok==false`, both C3.7 and
+`BrokerReconciliation_CheckAll` are skipped for the session (the existing
+`lar`/`brr` block is nested one level deeper, inside `if(rejAuth.ok)`) -
+same "reconciling/transitioning against a provably-uncertain state would
+be worse than skipping it" rationale C3.7's own cascade to
+`BrokerReconciliation_CheckAll` already established.
+
+Mutual exclusivity against C2.2's synchronous rejection and C3.7's
+`CANDIDATE_EXECUTED` needs no new conflict-detection code: the same fresh
+`StateProjector_TryGetState()`-immediately-before-every-write discipline
+C3.7 already established, reused a third time, is sufficient - any
+candidate already moved to a terminal state by another writer is excluded
+via `skipped_not_submitted` before any lookup or write is attempted.
+
+**Real bug found via the first real MetaEditor test run, fixed before
+Checkpoint 3 sign-off.** All three happy-path tests
+(`Test_HappyPath_Rejected/Canceled/Expired`) failed on
+`StateProjector reports REJECTED_BY_BROKER immediately after C3.10B` -
+the durable transition line was written correctly every time, but
+`EventStore_LogTransition`'s own `c.state = to` mutation only updates the
+LOCAL `TradeCandidate` variable, never the global `StateProjector`
+registry `StateProjector_TryGetState()` reads from. C3.7's own real
+production code (`LifecycleAuthorityProcessor.mqh`) already does the
+correct thing after every successful transition write - re-read the
+store, recover the REAL just-appended line (never fabricate), and call
+`StateProjector_Apply` on it - and this file simply omitted that step.
+Fixed by adding `C310B_FindMatchingRejectionTransition` (same backward-
+scan shape as `C310B_FindMatchingRejectionConfirmation`/
+`C37_FindMatchingExecutedLine`) plus the same 0/>1/apply-failure Safe
+Mode branches C3.7 already established
+(`transition_evidence_not_recovered`/`transition_evidence_ambiguous`/
+`projector_apply_failed`), run immediately after every successful
+`EventStore_LogTransition`.
+
+Sealed files untouched:
+`AsyncTerminalOrderObservationMatcher.mqh`, `BrokerTransactionObservation.mqh`,
+`TransactionMatchingProjection.mqh`, `BrokerSubmissionAuditProjection.mqh`,
+`BrokerSubmissionAuditReadiness.mqh`, `ExecutionAuditProjection.mqh`,
+`LifecycleAuthorityProcessor.mqh`, `BrokerSubmissionAdapter.mqh`,
+`DeferredTransactionProcessor.mqh`, `EventSerializer.mqh`, `EventStore.mqh`,
+`EventStoreValidator.mqh`, `StateProjector.mqh`, `CandidateProjection.mqh`,
+`BrokerReconciliation.mqh`, `StateMachine.mqh`. No `OnTick`/`OnTradeTransaction`
+change, no forbidden broker API anywhere in the new file.
+
 ## [Unreleased] - C3.10A implementation: async terminal order observation matcher (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
 
 `Include/MLQuantAI/Execution/MLQuantAI_AsyncTerminalOrderObservationMatcher.mqh`

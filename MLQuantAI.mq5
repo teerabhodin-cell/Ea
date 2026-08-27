@@ -26,6 +26,8 @@
 #include <MLQuantAI/Execution/MLQuantAI_BrokerTransactionObservation.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_TransactionMatchingReadiness.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_DeferredTransactionProcessor.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_AsyncTerminalOrderObservationMatcher.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionAuthority.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_LifecycleAuthorityProcessor.mqh>
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_Contract.mqh>
 
@@ -380,6 +382,22 @@ int OnInit()
    // a row-level BLOCKED) and does NOT trip SafeMode or block EA init.
    DeferredTransactionProcessor_StartupScan(g_EventStoreFileName);
 
+   // C3.10B async terminal rejection authority (Checkpoint 2, locked):
+   // the SOLE component authorized to turn a C3.10A ATOM_MATCHED async
+   // terminal-order observation into a durable
+   // EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED SystemEvent followed by
+   // a CANDIDATE_SUBMITTED -> CANDIDATE_REJECTED_BY_BROKER transition.
+   // Slots between C3.6 (above) and C3.7 (below). AsyncTerminalOrder
+   // ObservationMatcher (C3.10A) is a pure function with no global
+   // registry, so it is scanned here directly rather than through a
+   // *_StartupScan-populated registry. On ok=false, skips both C3.7 and
+   // BrokerReconciliation_CheckAll this session - transitioning/
+   // reconciling against a provably-uncertain rejection-confirmation
+   // state would be worse than skipping it, same rationale as C3.7's
+   // own cascade to BrokerReconciliation below.
+   AsyncTerminalOrderMatchReport atomReport = AsyncTerminalOrderMatcher_ScanFile(g_EventStoreFileName);
+   AsyncTerminalRejectionAuthorityReport rejAuth = AsyncTerminalRejectionAuthority_StartupApply(g_EventStoreFileName, atomReport);
+
    // C3.7 lifecycle authority processor (per
    // Docs/PhaseC_C3_7_BoundedLifecycleAuthorityContract.md, FROZEN): the
    // SOLE component authorized to turn a C3.6 RECOMMEND_EXECUTED row into
@@ -395,18 +413,28 @@ int OnInit()
    // scan stops immediately and BrokerReconciliation_CheckAll is
    // skipped entirely this session - reconciling against a
    // provably-diverged read model would be worse than skipping it.
-   LifecycleAuthorityReport lar = LifecycleAuthority_StartupApply(g_EventStoreFileName);
-
+   LifecycleAuthorityReport lar;
    BrokerReconciliationReport brr;
-   if(lar.ok)
+   if(rejAuth.ok)
    {
-      brr = BrokerReconciliation_CheckAll();
+      lar = LifecycleAuthority_StartupApply(g_EventStoreFileName);
+      if(lar.ok)
+      {
+         brr = BrokerReconciliation_CheckAll();
+      }
+      else
+      {
+         BrokerReconciliationReport_Init(brr);
+         LogWarn(StringFormat("C3.7 lifecycle authority: skipping BrokerReconciliation_CheckAll this session - "
+                 "scan stopped early (%s): %s", lar.stop_reason, lar.first_error));
+      }
    }
    else
    {
+      LifecycleAuthorityReport_Init(lar);
       BrokerReconciliationReport_Init(brr);
-      LogWarn(StringFormat("C3.7 lifecycle authority: skipping BrokerReconciliation_CheckAll this session - "
-              "scan stopped early (%s): %s", lar.stop_reason, lar.first_error));
+      LogWarn(StringFormat("C3.10B async terminal rejection authority: skipping C3.7/BrokerReconciliation_CheckAll "
+              "this session - scan stopped early (%s): %s", rejAuth.stop_reason, rejAuth.first_error));
    }
 
    // Step 8.5: prove a candidate this exact EA wrote gets replayed
