@@ -4,7 +4,7 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - C3.8.0 implementation: StateProjector enumeration accessors (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
+## [Unreleased] - C3.8.0 implementation: StateProjector enumeration accessors (PASSED 928/928, real MetaEditor run, 2026-08-27)
 
 `Include/MLQuantAI/Infrastructure/EventStore/MLQuantAI_StateProjector.mqh`
 (amended) + `Tests/MLQuantAI_Test_C3_8_0_StateProjectorEnumeration.mq5`
@@ -68,6 +68,30 @@ Sealed files untouched (confirmed via `git diff --check`/`git diff
 `Core/MLQuantAI_StateMachine.mqh`; `BrokerReconciliation.mqh`,
 `DeferredTransactionProcessor.mqh`, `LifecycleAuthorityProcessor.mqh`,
 `ExecutionProvenanceConflictAuditor.mqh`; every C3.10 A/B/C/D/E1 module.
+
+**C3.8.0 verification complete.** Real MetaEditor run:
+
+- 14 suites passed
+- 928/928 assertions passed
+- `MLQuantAI.mq5` compiled with 0 errors and 0 warnings
+
+The 14 suites: `MLQuantAI_Test_C3_8_0_StateProjectorEnumeration` (43/43,
+the new suite itself) plus the full transitive-consumer regression set -
+`MLQuantAI_Test_ReplayIntegrity` (16/16), `MLQuantAI_Test_EventStoreRecovery`
+(14/14), `MLQuantAI_Test_BrokerReconciliation` (5/5),
+`MLQuantAI_Test_C3_7_LifecycleAuthorityProcessor` (125/125),
+`MLQuantAI_Test_C3_9_ExecutionProvenanceConflictAuditor` (101/101),
+`MLQuantAI_Test_C3_10F_StackedIntegrationAudit` (33/33),
+`MLQuantAI_Test_C3_10E_AsyncTerminalRejectionHealthTrend` (28/28),
+`MLQuantAI_Test_C3_10D_AsyncTerminalRejectionStartupDiagnostics` (49/49),
+`MLQuantAI_Test_C3_10C_AsyncTerminalRejectionAudit` (95/95),
+`MLQuantAI_Test_C3_10B_AsyncTerminalRejectionAuthority` (177/177),
+`MLQuantAI_Test_C3_10A_AsyncTerminalOrderObservationMatcher` (79/79),
+`MLQuantAI_Test_B9_Commit2_EligibilityEvent` (84/84), and
+`MLQuantAI_Test_B9_Commit3_IntegrationRegression` (79/79) - zero
+failures anywhere. This entry records verification results only; it
+does not claim a PR review, merge, release, production deployment, or
+C3.8.1 authorization.
 
 ## [Unreleased] - C3.10E2 implementation: terminal rejection audit acknowledgement (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
 
