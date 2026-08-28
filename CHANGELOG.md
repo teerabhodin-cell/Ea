@@ -577,6 +577,37 @@ failures anywhere. This entry records verification results only; it
 does not claim a PR review, merge, release, production deployment, or
 C3.8.1 authorization.
 
+## [Unreleased] - C3.8.1 lineage-resolution amendment proposal (PROPOSED, docs-only, not yet adopted, 2026-08-27)
+
+Docs-only amendment proposal on baseline `mlquantai@9903267` (C3.8.0
+merged - `StateProjector_Count()`/`_GetAt()` now the sole sanctioned
+candidate-enumeration surface). Adds §§14-18 to
+`Docs/PhaseC_C3_8_ReconciliationIntegrationContract.md`, superseding the
+old nonbinding "Appendix A" notes. **Every new section is explicitly
+labeled "proposed for adoption... not effective until this docs-only
+amendment is reviewed and committed"** - this entry records a proposal,
+not an adopted contract. No `.mqh`/`.mq5` file, no test file, no
+`MLQuantAI.mq5` change, no compile, no test run.
+
+Produced via C3.8.1 Contract-Reconciliation Checkpoint 1 (baseline/
+ownership-map/algorithm proposal) and Docs-Only Checkpoint 2 (wording,
+formatting, and precision review), both conducted as read-only analysis
+before any repository write.
+
+Freezes-if-adopted: `ENUM_LINEAGE_ANOMALY` (NONE/NONPOSITIVE_TICKET/
+DUPLICATE_TRIPLE/MULTIPLE_EXECUTION_REQUESTS/AMBIGUOUS_TICKETS) as the
+qualifying-outcome classification, strictly separating "no evidence"
+from "malformed evidence"; a six-outcome deterministic resolution
+algorithm scoped to `SUBMISSION_STATUS_SUBMITTED` records only; a
+monotonic `report.ok`/`first_error` aggregation rule tied to final
+report-row order; `TX_MATCH_VOLUME_REACHED` as the sole terminal-
+evidence status (with `TX_MATCH_ORDER_TERMINAL` explicitly excluded as
+reserved/unassigned); explicit exclusion of C3.10A from the evidence
+graph (its scan functions return a report by value with no persistent
+`_Count`/`_GetAt` registry to read); and a full ownership map excluding
+`BrokerReconciliation`, `EventStoreValidator`, `ReplayEngine`, and every
+History/broker-mutating API.
+
 ## [Unreleased] - C3.8 reconciliation integration design contract (DESIGN ONLY, docs-only, 2026-08-27)
 
 Docs-only design contract on baseline `mlquantai@ef6b934` (C1–C3.7, C3.9,

@@ -446,3 +446,305 @@ C5   - controlled execution rollout (unchanged scope from C3.5 §14) -
 C6   - position/exit lifecycle (unchanged scope from C3.5 §14).
 C7   - operational hardening (unchanged scope from C3.5 §14).
 ```
+
+---
+
+## 14. Ticket and execution-request lineage resolution
+
+**Status**: proposed for adoption following C3.8.1 Contract-
+Reconciliation Checkpoint 1; not effective until this docs-only
+amendment is reviewed and committed. Intended to supersede the old,
+nonbinding "Appendix A.1" notes once adopted.
+
+### Row fields and anomaly enum
+
+```cpp
+enum ENUM_LINEAGE_ANOMALY
+{
+   LINEAGE_ANOMALY_NONE = 0,
+   LINEAGE_ANOMALY_NONPOSITIVE_TICKET,
+   LINEAGE_ANOMALY_DUPLICATE_TRIPLE,
+   LINEAGE_ANOMALY_MULTIPLE_EXECUTION_REQUESTS,
+   LINEAGE_ANOMALY_AMBIGUOUS_TICKETS
+};
+```
+
+```cpp
+bool  order_ticket_known;
+
+bool  order_ticket_ambiguous;
+
+ulong order_ticket;
+// semantically undefined unless order_ticket_known == true
+
+ENUM_LINEAGE_ANOMALY lineage_anomaly;
+```
+
+### Qualifying submitted outcome
+
+A **qualifying submitted outcome**, for `row.candidate_id`, is exactly:
+
+```text
+ExecutionRequestProjection.candidate_id == row.candidate_id
+AND SubmissionOutcomeProjection.execution_request_id ==
+    ExecutionRequestProjection.execution_request_id
+AND SubmissionOutcomeProjection.submission_status ==
+    SUBMISSION_STATUS_SUBMITTED
+```
+
+Resolved by reading two already-sealed registries, read-only: scan
+`ExecutionRequestProjection_Count()`/`_GetAt()` filtered by
+`candidate_id`, then scan `SubmissionOutcomeProjection_Count()`/
+`_GetAt()` filtered by `execution_request_id`, both in ascending index
+order. This scan order is the source of determinism for `first_error`
+selection, both within one candidate (below) and across the whole
+report (this section's final subsection).
+
+### Non-`SUBMITTED` exclusion
+
+`SUBMISSION_STATUS_NONE`, `_ERROR`, `_REJECTED`, and `_UNKNOWN` records
+are excluded before the qualifying set is even built - never entered,
+never filtered afterward. C3.8.1 forms no opinion on why a candidate
+lacks a submitted outcome, only that it lacks one.
+
+### Six resolution outcomes
+
+Evaluated in this exact precedence order; the first matching outcome
+wins for that candidate.
+
+| # | Outcome | Condition |
+|---|---|---|
+| 1 | `NONPOSITIVE_TICKET` | At least one qualifying outcome has `order_ticket <= 0` |
+| 2 | `DUPLICATE_TRIPLE` | A positive `(execution_request_id, order_ticket)` pair occurs 2+ times among qualifying outcomes (`candidate_id` is already fixed for the whole scan) |
+| 3 | `MULTIPLE_EXECUTION_REQUESTS` | 2+ distinct `execution_request_id` values each have at least one qualifying, positive-ticket (`order_ticket > 0`) outcome |
+| 4 | `AMBIGUOUS_TICKETS` | Reachable only once outcome 3 is excluded (exactly one `execution_request_id` has qualifying-positive outcomes); 2+ distinct positive `order_ticket` values exist under that one request |
+| 5 | No qualifying submitted outcome (not an anomaly) | No candidate-correlated record with `submission_status == SUBMISSION_STATUS_SUBMITTED` was collected - i.e. **qualifying is empty** |
+| 6 | Exactly one clean usable positive ticket | After outcomes 1-4 have been excluded, exactly one correlated `execution_request_id` has exactly one non-duplicated positive ticket |
+
+**Outcome 5, frozen wording:**
+
+```text
+No qualifying submitted outcome
+
+No candidate-correlated record with:
+  submission_status == SUBMISSION_STATUS_SUBMITTED
+was collected.
+
+This is not a lineage anomaly:
+
+  order_ticket_known     = false
+  order_ticket_ambiguous = false
+  order_ticket           = semantically undefined
+  lineage_anomaly         = LINEAGE_ANOMALY_NONE
+```
+
+**Outcome 6, frozen wording:**
+
+```text
+Exactly one clean usable positive ticket
+
+After outcomes 1-4 have been excluded, exactly one correlated
+execution_request_id has exactly one non-duplicated positive ticket.
+
+  order_ticket_known     = true
+  order_ticket_ambiguous = false
+  order_ticket            = that one ticket value
+  lineage_anomaly         = LINEAGE_ANOMALY_NONE
+```
+
+### Per-row invariants
+
+```text
+order_ticket_known == true
+  =>  order_ticket_ambiguous == false
+  AND lineage_anomaly == LINEAGE_ANOMALY_NONE
+
+order_ticket_ambiguous == true
+  =>  order_ticket_known == false
+  AND lineage_anomaly == LINEAGE_ANOMALY_AMBIGUOUS_TICKETS
+
+lineage_anomaly != LINEAGE_ANOMALY_NONE
+  =>  order_ticket_known == false
+  AND order_ticket_ambiguous ==
+        (lineage_anomaly == LINEAGE_ANOMALY_AMBIGUOUS_TICKETS)
+```
+
+`lineage_anomaly == LINEAGE_ANOMALY_NONE` does **not** imply
+`order_ticket_known == true` - `NONE` also covers outcome 5, a normal
+absence, not a resolved ticket.
+
+`order_ticket` carries meaning only when `order_ticket_known == true`;
+same undefined-value discipline as `age_seconds` (§6, already frozen).
+
+### Per-row error selection
+
+For a candidate whose outcome is 1-4, `first_error` for that row is
+built from the earliest `(i, j)` scan-index pair - `i` over
+`ExecutionRequestProjection`, `j` over `SubmissionOutcomeProjection`,
+both ascending - whose outcome triggered that specific anomaly
+category.
+
+### Report aggregation and first_error ordering
+
+```text
+Report aggregation is monotonic for this component:
+
+report.ok begins true for a completed scan.
+
+If any emitted row has:
+  lineage_anomaly != LINEAGE_ANOMALY_NONE
+
+then:
+  report.ok = false
+
+A row with:
+  lineage_anomaly == LINEAGE_ANOMALY_NONE
+
+does not change report.ok.
+
+report.first_error is set once only: it is the deterministic error
+from the first emitted anomalous row, in FINAL REPORT-ROW ORDER (per
+§16's frozen ordering: known-timestamp rows ascending by
+submitted_sequence_number, then unknown-timestamp rows by candidate_id
+ascending). Later anomalous rows do not replace it.
+```
+
+This ties `first_error` determinism to two nested, both-deterministic
+orderings: within a candidate, the `(i, j)` projection-scan order
+(above); across candidates, the row emission order (§16). Neither
+depends on file iteration order beyond what those two already-frozen
+orderings define, and neither depends on wall-clock or session state.
+
+---
+
+## 15. Downstream evidence gating and terminal-evidence rule
+
+**Status**: proposed for adoption following C3.8.1 Contract-
+Reconciliation Checkpoint 1; not effective until this docs-only
+amendment is reviewed and committed. Intended to supersede the old,
+nonbinding "Appendix A.2" notes once adopted.
+
+```text
+match_status_known == TransactionMatching_TryGetOrderStatus(order_ticket, out)
+                       (called only when order_ticket_known == true;
+                        the bool return value, nothing more)
+
+match_status        == out.match_status
+                       (semantically undefined unless match_status_known)
+
+terminal_evidence_observed ==
+   match_status_known AND match_status == TX_MATCH_VOLUME_REACHED
+
+unresolved == NOT terminal_evidence_observed
+```
+
+| Ticket state | Matching result | Terminal evidence | `unresolved` |
+|---|---|---:|---:|
+| unknown / anomalous | not looked up | false | true |
+| known | `TryGetOrderStatus()` returns false | false | true |
+| known | `TX_MATCH_UNMATCHED` | false | true |
+| known | `TX_MATCH_PARTIAL` | false | true |
+| known | `TX_MATCH_VOLUME_REACHED` | true | false |
+
+`TX_MATCH_ORDER_TERMINAL` is reserved and never assigned by C3.3 in the
+frozen baseline; C3.8.1 MUST NOT treat it as terminal evidence. A
+`false` return from `TransactionMatching_TryGetOrderStatus()` means
+matching status is **unknown**, not a non-terminal conclusion and not a
+rejection.
+
+`OrderAggregateRecord` (the struct behind this lookup) carries no
+timestamp or sequence field of any kind - there is no data to support a
+staleness determination, and none is attempted. `match_status` reflects
+whatever the matcher's registry currently holds as of its last
+`TransactionMatching_StartupRebuild()` in this session; C3.8.1 reports
+that value as-is.
+
+`recommendation`/`recommendation_known` (via
+`DeferredTransactionProcessor_TryGet(candidate_id, ...)`) remain fully
+independent of every ticket-resolution outcome in §14, including every
+`lineage_anomaly` value - never suppressed, never gated by ticket state.
+
+---
+
+## 16. Submission identity and row ordering
+
+**Status**: proposed for adoption following C3.8.1 Contract-
+Reconciliation Checkpoint 1; not effective until this docs-only
+amendment is reviewed and committed. Intended to supersede the old,
+nonbinding "Appendix A.3" notes once adopted. Unchanged in substance
+from the prior draft round.
+
+```cpp
+long submitted_sequence_number;
+// semantically undefined unless submitted_at_known
+```
+
+```text
+submitted_at_known == true   =>  submitted_sequence_number > 0
+submitted_at_known == false  =>  submitted_sequence_number is undefined
+```
+
+Recovered from the same unique `CANDIDATE_SUBMITTED` durable lifecycle
+line the §1 timestamp scan already locates - never a second, separate
+scan.
+
+Row ordering, frozen:
+
+```text
+1. Rows with submitted_at_known == true, sorted ascending by
+   submitted_sequence_number.
+
+2. Rows with submitted_at_known == false, after all of group 1,
+   sorted ascending by candidate_id.
+```
+
+---
+
+## 17. C3.10A excluded from the C3.8.1 evidence graph
+
+**Status**: proposed for adoption following C3.8.1 Contract-
+Reconciliation Checkpoint 1; not effective until this docs-only
+amendment is reviewed and committed. New this checkpoint.
+
+`AsyncTerminalOrderMatcher_ScanLines()`/`_ScanFile()` (C3.10A) return an
+`AsyncTerminalOrderMatchReport` by value from a fresh scan - there is no
+`_Count()`/`_GetAt()` pair and no persistent registry, so there is
+nothing already built for C3.8.1 to passively read. Without a stable
+public read accessor, C3.10A is not part of C3.8.1's evidence graph.
+
+`terminal_rejection_observed` does not appear as a field on
+`SubmittedCandidateVisibilityRow`. `terminal_evidence_observed` is
+defined solely by §15's `TX_MATCH_VOLUME_REACHED` rule.
+
+---
+
+## 18. Ownership map and explicit scope exclusions
+
+**Status**: proposed for adoption following C3.8.1 Contract-
+Reconciliation Checkpoint 1; not effective until this docs-only
+amendment is reviewed and committed. New this checkpoint.
+
+**Permitted sources (read-only):**
+
+| Source | Access | Key |
+|---|---|---|
+| `StateProjector` | `_Count()`/`_GetAt()` | candidate enumeration |
+| `StateProjector` | `_TryGetState()` | optional cross-check only |
+| Durable lifecycle log | direct `lines[]` scan via `EventSerializer` | `submitted_at`/`_sequence` recovery |
+| `ExecutionRequestProjection` | `_Count()`/`_GetAt()` | filtered by `candidate_id` |
+| `SubmissionOutcomeProjection` | `_Count()`/`_GetAt()` | filtered by `execution_request_id` |
+| `TransactionMatchingProjection` | `TransactionMatching_TryGetOrderStatus()` | ticket-keyed only |
+| `DeferredTransactionProcessor` | `_TryGet()` | candidate-keyed only |
+| `SafeModeState` | `SafeMode_IsActive()` | read-only status |
+
+**Explicitly excluded:**
+
+```text
+BrokerReconciliation_CheckAll()            - full-scan report, out of scope
+BrokerReconciliation_HasMatchingPosition() - live-position query, out of scope
+EventStoreValidator_ValidateLines/_ValidateFile - upstream OnInit concern
+ReplayEngine_Run()                         - upstream OnInit concern
+Any History*/OrderSend/CTrade/PositionSelect/PositionGetTicket call
+AsyncTerminalOrderMatcher_ScanLines()/_ScanFile()  (see §17)
+SafeMode_Trip()/SafeMode_Clear()
+```
