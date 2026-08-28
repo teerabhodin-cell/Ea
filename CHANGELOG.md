@@ -4,6 +4,136 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.8.1 implementation: submitted-candidate visibility diagnostic (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-28)
+
+`Include/MLQuantAI/Execution/MLQuantAI_SubmittedCandidateVisibility.mqh`
+(new) + `Tests/MLQuantAI_Test_C3_8_1_SubmittedCandidateVisibility.mq5`
+(new). Baseline `mlquantai@9903267ae2d50da239d5fec8bc45656e7d09199c`
+(the C3.8.0 merge commit). Implements the lineage-resolution/evidence-
+gating contract frozen at Docs/PhaseC_C3_8_ReconciliationIntegrationContract.md
+§§14-18 (on `docs/c3-8-reconciliation-integration-contract`, committed
+`b6b298e`, not yet merged to `mlquantai`).
+
+A pure, read-only diagnostic: for every candidate currently at
+`CANDIDATE_SUBMITTED` (enumerated via C3.8.0's own
+`StateProjector_Count()`/`_GetAt()` - the only sanctioned path into that
+registry per §18), reports whatever real, already-durable evidence
+exists - submission timing/sequence, ticket lineage, C3.3 terminal match
+status, and C3.6 recommendation visibility - as a
+`SubmittedCandidateVisibilityRow`/`Report` pair via
+`SubmittedCandidateVisibility_ScanLines()`/`_ScanFile()`.
+
+Absence of qualifying evidence is never an anomaly (§14 outcome 5,
+`LINEAGE_ANOMALY_NONE`). A malformed/ambiguous ticket lineage is reported
+as an integrity finding (`report.ok=false`, `lineage_anomaly` set) in a
+frozen six-outcome precedence order (`NONPOSITIVE_TICKET` >
+`DUPLICATE_TRIPLE` > `MULTIPLE_EXECUTION_REQUESTS` > `AMBIGUOUS_TICKETS`
+> no-qualifying-outcome > clean resolution), never silently dropped or
+guessed at. `terminal_evidence_observed` is true only for
+`TX_MATCH_VOLUME_REACHED` (§15) - `TX_MATCH_ORDER_TERMINAL` is never
+terminal evidence here, matching C3.3's own reservation of that status.
+Row ordering is known-sequence-number-ascending, then unknown rows by
+`candidate_id` ascending (§16); `report.first_error` follows that same
+final row order, not insertion order.
+
+Reads only via `StateProjector_Count/_GetAt`,
+`ExecutionRequestProjection_Count/_GetAt`,
+`SubmissionOutcomeProjection_Count/_GetAt`,
+`TransactionMatching_TryGetOrderStatus`,
+`DeferredTransactionProcessor_TryGet`,
+`EventSerializer_PeekCategory/_ParseLifecycle`, `EventStore_ReadAllLines`,
+and `TimeCurrent()` - the exact permitted-sources table at §18. No
+`BrokerReconciliation_CheckAll`/`_HasMatchingPosition`,
+`EventStoreValidator`, `ReplayEngine`, `History*`/`OrderSend`/`CTrade`/
+`PositionSelect`, `AsyncTerminalOrderMatcher` scan, or
+`SafeMode_Trip`/`_Clear` call anywhere - C3.10A is excluded from this
+evidence graph entirely (§17, it returns its report by value with no
+persistent registry). No lifecycle authority, no event append, no
+broker/terminal query, no write of any kind.
+
+Test suite (`MLQuantAI_Test_C3_8_1_SubmittedCandidateVisibility.mq5`, 26
+test functions + 1 structural-proof check) seeds every upstream
+projection directly via the real, already-public
+`*_Reset()`/`StateProjector_Apply()`/`*_AppendRecord()`/`C36_AppendRow()`
+functions those sealed modules already expose - same precedent
+`MLQuantAI_Test_C3_10A_AsyncTerminalOrderObservationMatcher.mq5` already
+established - never a direct internal-array write. The one raw JSONL
+fixture line hand-built is the `CANDIDATE_SUBMITTED` lifecycle line
+`SCV_FindSubmittedLine()` itself parses. Covers: non-SUBMITTED exclusion,
+zero-qualifying-outcome non-anomaly, non-SUBMITTED-outcome exclusion,
+clean single-ticket resolution, all four anomaly types individually, the
+NONPOSITIVE_TICKET-precedes-others precedence collision, first_error
+following final sorted row order (not insertion order), full row
+ordering, VOLUME_REACHED/PARTIAL/unknown terminal-evidence gating,
+recommendation-visibility independence from lineage/evidence state,
+unresolved-beyond-threshold flagging and its negative-threshold input-
+validation error path, future-dated and duplicate CANDIDATE_SUBMITTED
+lines failing closed, `_ScanFile`/`_ScanLines` parity, missing-file and
+`n`-clamping safety, cross-run determinism, and no-silent-omission
+row-count fidelity.
+
+**Corrective revision (Implementation Checkpoint 3, QA finding A)**: the
+initial draft's `report.first_error` cited only `candidate_id` and the
+anomaly type name, with no source attribution - §14's "Per-row error
+selection" specifies `first_error` is "built from the earliest `(i, j)`
+scan-index pair... whose outcome triggered that specific anomaly
+category," implying the triggering tuple itself should be attributable.
+Added `SCV_AnomalyTrigger` (`execution_request_id` + raw `order_ticket`,
+local scratch state only - not part of the frozen row/report shape) to
+capture the trigger tuple for each of outcomes 1-4, and
+`SCV_RowWithTrigger` to carry it through the existing `§16` sort in
+lockstep. `report.first_error` now reads `"candidate %s: lineage anomaly
+%s (execution_request_id=%s, order_ticket=%s)"`, citing the real source
+tuple - never derived from `row.order_ticket`, which stays semantically
+undefined on every anomalous row.
+
+**Second corrective pass (same checkpoint, QA re-review)**: the first
+pass above selected outcomes 3/4's trigger from the entry whose scan
+position first made the anomaly *detectable* (the second distinct
+`execution_request_id`/ticket observed) - a detection witness, not
+necessarily the earliest `(i, j)` pair the contract specifies. Corrected:
+for `NONPOSITIVE_TICKET` and `DUPLICATE_TRIPLE` (unchanged, already
+correct), and now for `MULTIPLE_EXECUTION_REQUESTS`/`AMBIGUOUS_TICKETS`
+too, the attributed tuple is the earliest category-relevant source tuple
+by ascending `(i,j)` - `positive[0]`, the first positive qualifying entry
+across the whole candidate, regardless of which distinct
+request/ticket it happens to belong to.
+
+**Third corrective pass (same checkpoint, QA re-review)**: the ulong
+ticket formatting from the first pass, `IntegerToString((long)
+trigger.order_ticket)`, was not full-domain safe - the `(long)` cast
+reinterprets any raw `ulong` value above `LONG_MAX`
+(9223372036854775807) as negative before it is ever stringified,
+corrupting the attributed ticket for that range. Replaced with
+`StringFormat("%I64u", trigger.order_ticket)` applied directly to the
+raw `ulong`, no narrowing cast at all - the same `%I64u`-on-a-raw-`ulong`
+idiom `MLQuantAI_AsyncTerminalRejectionAuthority.mqh` (sealed) already
+uses for its own `order_ticket` field. The resulting text is still a
+genuine `string` by the time it reaches the outer `first_error`
+`StringFormat()` call's `%s` placeholder - no raw `ulong` is ever passed
+to a `%s` placeholder at any point.
+
+Precedence and determinism hold under the corrected selection too: a
+higher-precedence anomaly's trigger always wins over a lower one's, and
+the same fixture reproduces the identical `first_error` string every
+run. Test suite extended across these passes with: two dedicated
+fixtures proving "earliest tuple" differs from "detection witness" for
+`MULTIPLE_EXECUTION_REQUESTS`/`AMBIGUOUS_TICKETS`, an exact-decimal-value
+formatting proof cross-checked against `%I64u` on the same raw value, and
+a full-domain proof using a ticket one past `LONG_MAX`
+(9223372036854775808) asserting the exact positive decimal string
+appears with no negative sign - plus corrected assertions (to the new
+earliest-tuple values) on every existing anomaly-type test, the
+precedence-collision test, the final-row-order test, and the
+attribution-determinism test. 32 `Test_*` functions total in the file
+now (27 before Checkpoint 3's corrective passes began). Still docs-only-
+adjacent code: no compile, no test run, no stage, no commit.
+
+Status: implementation staged on branch
+`c3-8-1-submitted-candidate-visibility`, awaiting a real MetaEditor
+compile/run before any PASSED claim - matching the exact verification
+discipline C3.8.0 followed.
+
 ## [Unreleased] - C3.8.0 implementation: StateProjector enumeration accessors (PASSED 928/928, real MetaEditor run, 2026-08-27)
 
 `Include/MLQuantAI/Infrastructure/EventStore/MLQuantAI_StateProjector.mqh`
