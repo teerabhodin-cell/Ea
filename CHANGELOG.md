@@ -4,6 +4,49 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C3.8 phase CLOSED (2026-08-28)
+
+C3.8 (reconciliation integration / submitted-candidate visibility) is
+closed. Its implementation components are merged on `mlquantai`; its
+authoritative contract is adopted and retained on its dedicated docs
+lineage.
+
+Closure record:
+
+```
+Contract (§§1-13 + §§14-18 amendment)
+  Adopted on its dedicated docs lineage
+  (docs/c3-8-reconciliation-integration-contract, commit b6b298e)
+  - per the governance model this phase established, contract
+    adoption is a docs-lineage event, not a merge-to-mlquantai event.
+
+C3.8.0 - StateProjector enumeration accessors
+  Merged: PR #3, merge commit 9903267ae2d50da239d5fec8bc45656e7d09199c
+
+C3.8.1 - Submitted candidate visibility projection
+  Merged: PR #5, merge commit d311d875366d0ef7645ceecdf6a5410365c41774
+  Real MetaEditor run: 32/32 test functions executed, 107/107
+  assertions passed, 0 failures, 0 skipped - including deterministic
+  source-tuple attribution (contract §14 "Per-row error selection"),
+  anomaly-precedence, full row ordering (§16), and full-domain `ulong`
+  ticket formatting (`%I64u`, no narrowing cast) coverage.
+```
+
+`origin/mlquantai` now contains both C3.8.0 and C3.8.1 in full. Both
+feature branches (`c3-8-0-stateprojector-enumeration`,
+`c3-8-1-submitted-candidate-visibility`) are retained after their
+respective merges, preserving the feature-branch history. The C3.8.1
+implementation went through three corrective
+passes at Implementation Checkpoint 3 (QA re-review) before the real
+MetaEditor run: (1) added per-row lineage-anomaly attribution to
+`report.first_error`, initially missing; (2) corrected the
+`MULTIPLE_EXECUTION_REQUESTS`/`AMBIGUOUS_TICKETS` attribution from a
+detection-witness tuple to the contract-required earliest positive
+qualifying tuple; (3) replaced a `(long)`-narrowing ulong-to-string
+conversion with `%I64u` for full-domain-safe ticket formatting. All
+three are captured in the merged commit history, not left as
+uncommitted worktree state.
+
 ## [Unreleased] - C3.8.1 implementation: submitted-candidate visibility diagnostic (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-28)
 
 `Include/MLQuantAI/Execution/MLQuantAI_SubmittedCandidateVisibility.mqh`
