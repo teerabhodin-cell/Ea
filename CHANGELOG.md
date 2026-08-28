@@ -4,6 +4,78 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C4.0 recovery/broker-history policy contract (PROPOSED, docs-only, not yet adopted, 2026-08-28)
+
+`Docs/PhaseC_C4_RecoveryHistoryPolicy.md` (new), on
+`docs/c4-recovery-history-policy-contract`. Baseline
+`mlquantai@81a000b583661099d077225be99d030cea65eff5` (the C3.8
+phase-close merge commit). Predecessor:
+`Docs/PhaseC_C3_8_ReconciliationIntegrationContract.md`.
+
+This is a design-contract document only - no `.mqh`/`.mq5` source, no
+`HistorySelect()` code, no `HistoryDeal*`/`HistoryOrder*` code, and no
+implementation of any kind accompanies it. It defines, ahead of any C4
+implementation work, the policy for reconciling durable local
+event-store evidence against recovered MT5 broker order/deal history:
+
+- A four-record evidence model (C3.2 live-submission fact; recovered
+  order-history fact; recovered deal-history fact; derived
+  reconciliation finding), each recovered record carrying a frozen
+  minimum provenance field set (`provenance_kind`,
+  `history_select_from`, `history_select_to`,
+  `history_query_server_time`, `source_order_ticket`,
+  `source_deal_ticket`, `recovery_session_identity`) and a frozen
+  non-overwrite invariant against existing durable local evidence.
+- A three-state `HistorySelect()` query policy (query fails /
+  query succeeds empty / query succeeds with an evidentially-adequate
+  but still-empty window), so absence of history is never conflated
+  with query failure.
+- A ten-value `ENUM_RECOVERY_FINDING` reconciliation-finding vocabulary
+  covering evidence-unavailable, window-insufficient,
+  no-corroborating-history, fact-corroborated, fact-conflict, orphan
+  history order/deal, duplicate history record, and unmappable history
+  record outcomes.
+- An explicit statement that findings are read-only recommendations,
+  never actions, via a separate `ENUM_RECOVERY_POSTURE`
+  (`INFORMATIONAL`/`DEGRADED`/`BLOCK_RECOMMENDED`) that a finding may
+  carry but that never itself triggers a write, a SafeMode trip, or any
+  other side effect from within C4.0's scope.
+- A matching-key hierarchy (primary/secondary) and a conflict-category
+  taxonomy governing when a recovered record is treated as
+  corroborating versus conflicting versus unmappable.
+- An explicit ownership map and write-authorization freeze: C4.0
+  authorizes no writes of any kind; the first implementation gate
+  (C4.1) it anticipates is read-only and may emit only an in-memory
+  report, never a durable write, a lifecycle transition, or an
+  EventStore/StateProjector mutation.
+
+Amended after Checkpoint 2 QA re-review (still pre-adoption, same
+draft): (1) baseline wording corrected so it no longer implies every
+C3 docs artifact was merged - the adopted C3.8 contract's docs-lineage
+authority is unaffected by C3's implementation merges; (2)
+`HistorySelect()` window construction and its adequacy predicate are
+now frozen in §3 (start = earliest relevant local timestamp minus a
+named overlap-allowance constant, end = `TimeCurrent()`, both bounds
+inclusive) - only the constant's numeric default is deferred, to a
+required C4.1 addendum; (3) §6 now explicitly gates
+`RECOVERY_FACT_CORROBORATED`/`RECOVERY_FACT_CONFLICT` emission behind
+an adopted C4.1 comparison-semantics addendum - a matched identity
+alone yields only an informational finding until that addendum exists;
+(4) `RECOVERY_DUPLICATE_HISTORY_RECORD`'s scope is now frozen to one
+normalized snapshot within a single query, explicitly not a ticket
+recurring across separate `recovery_session_identity` scans; (5) §7
+now carries an explicit C4.1 implementation-authorization checklist
+tying together all of the above gates.
+
+Status: proposed for adoption. Per the governance model this project
+already follows (established at C3.8's closure), adoption of this
+contract will be a docs-lineage event on
+`docs/c4-recovery-history-policy-contract` and does not require merging
+this branch into `mlquantai`. No C4 implementation work (including any
+`HistorySelect()` call) is authorized until this contract is reviewed
+and adopted, and no C4.1 code may be written until the further,
+separately-adopted C4.1 addendum(s) required by §7 exist.
+
 ## [Unreleased] - C3.8 phase CLOSED (2026-08-28)
 
 C3.8 (reconciliation integration / submitted-candidate visibility) is
