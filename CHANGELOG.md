@@ -4,10 +4,50 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - C4.1 Contract-Reconciliation Checkpoint 1 (PROPOSED, docs-only, non-authoritative, not adopted, 2026-08-28)
+## [Unreleased] - C4.2.1 Recovery-Anchor Provenance Addendum (PROPOSED, docs-only, not adopted, 2026-08-29)
+
+C4.2.1 Recovery-Anchor Provenance Addendum
+PROPOSED — docs-only — not adopted.
+
+Proposes surfacing the existing `EXECUTION_REQUEST_CREATED`
+base-envelope timestamp into `ExecutionRequestProjectionRecord` as
+read-only recovery-window provenance. No event format, EventStore
+write, serializer, hash, identity, lifecycle, SafeMode, trade, or C4.2
+implementation change is included.
+
+Adds §10 "C4.2.1 Recovery-Anchor Provenance Addendum (PROPOSED)" to
+`Docs/PhaseC_C4_RecoveryHistoryPolicy.md`, on
+`docs/c4-2-1-recovery-anchor-provenance-addendum`. Baseline
+`mlquantai@7315bdc1f08186133c1e6e2c3665716280fdd7de` (the C4.1
+Checkpoint 1 adoption merge commit, PR #8).
+
+Found during C4.2 Contract-Reconciliation Implementation Checkpoint 1
+research: C4.2 cannot construct the C4.1-frozen per-fact recovery
+window without a durable local anchor timestamp, and
+`ExecutionRequestProjectionRecord` - the only local-fact source C4.2's
+design may depend on - carries no such field. Research confirmed the
+data already exists: `EventStore_AppendSystem` stamps
+`e.base.ts = TimeCurrent()` on every `EXECUTION_REQUEST_CREATED`
+event, and `ExecutionRequestProjection_ApplyLine` already parses it
+back via `EventSerializer_ParseSystem` - it is simply never copied
+into the projection record. This addendum proposes copying that
+already-durable, already-parsed value forward as two new read-only
+fields (`recovery_anchor_time`/`recovery_anchor_time_known`), with an
+explicit no-overwrite rule and a defensive unknown-on-corruption rule.
+Zero event/wire/hash/serializer impact - `execution_request_hash` is
+computed from a separate struct that never sees these fields.
+
+`ExecutionRequestProjectionRecord`, its `_Init` function, and
+`ExecutionRequestProjection_ApplyLine` remain unmodified until this
+addendum is reviewed and adopted. Adopting this addendum alone does
+not reinstate C4.2's separately-paused implementation authorization -
+a revised code/test allowlist authorization is still required before
+any C4.2 file may be touched.
+
+## [Unreleased] - C4.1 Contract-Reconciliation Checkpoint 1 (ADOPTED, docs-only, non-authoritative, merged to mlquantai via PR #8, 2026-08-29)
 
 C4.1 Contract-Reconciliation Checkpoint 1
-PROPOSED — docs-only — non-authoritative — not adopted
+ADOPTED — docs-only — non-authoritative — merged to mlquantai via PR #8, 2026-08-29
 No broker-history acquisition or C4 implementation authorized.
 
 Adds §9 "C4.1 Design Addendum (PROPOSED)" to
