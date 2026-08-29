@@ -977,3 +977,140 @@ implementation, still zero-write per §7, exercising exactly the
 schemas, window rule, comparison units, equality rules, and report
 shape frozen above - not a re-opening of any decision this section
 freezes.
+
+---
+
+## 10. C4.2.1 Recovery-Anchor Provenance Addendum (PROPOSED)
+
+**Status**: proposed following C4.2 Contract-Reconciliation
+Implementation Checkpoint 1 research, which found that C4.2 cannot
+construct the §9.2-required per-fact recovery window without a durable
+local anchor timestamp, and that `ExecutionRequestProjectionRecord`
+(the only local-fact source C4.2's design is authorized to depend on)
+carries no such field. Docs-only, non-authoritative. This addendum does
+not itself authorize any code change - it exists to satisfy that gate
+before `ExecutionRequestProjectionRecord`, its apply function, or any
+C4.2 file may be touched.
+
+```
+Purpose:
+  Surface an already-durable execution-request creation timestamp into
+  the execution-request read model solely as recovery-window
+  provenance for C4.2.
+
+Authoritative event:
+  EVENT_TYPE_EXECUTION_REQUEST_CREATED only.
+
+Authoritative source field:
+  the parsed SystemEvent.base.ts from the existing base-envelope "ts"
+  field - already durably written by EventStore_AppendSystem via
+  TimeCurrent() at emission time, and already parsed back by
+  EventSerializer_ParseSystem on every rebuild. This addendum
+  introduces no new event, no new clock, no new wire field. For events
+  emitted by the supported EventStore writer path,
+  EVENT_TYPE_EXECUTION_REQUEST_CREATED carries the base-envelope "ts"
+  field; it is merely never copied from the already-parsed SystemEvent
+  into the projection's own record today. This addendum makes no claim
+  that every retained historical/imported event line satisfies the
+  supported-writer invariant - see the unsupported/corrupt timestamp
+  rule below.
+
+Projection fields:
+  datetime recovery_anchor_time;
+  bool     recovery_anchor_time_known;
+
+Set rule (first-known-timestamp, frozen):
+  For one execution_request_id, the projection may set
+  recovery_anchor_time only when recovery_anchor_time_known is
+  currently false AND the currently replayed supported
+  EXECUTION_REQUEST_CREATED event has a non-zero parsed base.ts.
+
+  When replay processes an EVENT_TYPE_EXECUTION_REQUEST_CREATED line that
+  has successfully parsed as a SystemEvent:
+  - If recovery_anchor_time_known is false and e.base.ts != 0:
+    set recovery_anchor_time=e.base.ts and
+    recovery_anchor_time_known=true.
+  - If recovery_anchor_time_known is false and e.base.ts == 0:
+    retain recovery_anchor_time=0 and
+    recovery_anchor_time_known=false.
+  - If recovery_anchor_time_known is true:
+    make no change regardless of e.base.ts.
+  - A line that cannot parse as a SystemEvent continues to follow the
+    projection's pre-existing parse/error behavior; C4.2.1 does not alter
+    that behavior.
+
+No-overwrite rule (frozen, both directions):
+  Once recovery_anchor_time_known becomes true for an execution-request
+  record, it is immutable for the remainder of the rebuild and across
+  subsequent replayed events. Specifically:
+  - A later event with base.ts == 0 does NOT clear an already-known
+    anchor.
+  - A later event with a different non-zero base.ts does NOT overwrite
+    an already-known anchor and must not create a new recovery-anchor
+    value - the first known value stands.
+  - No later replayed event, duplicate request event, broker
+    observation, order aggregate, deal record, runtime clock, or
+    terminal clock may replace an already-known stored value.
+  - If the first encountered request event for that execution_request_id
+    has unknown time (base.ts == 0) and a later duplicate has a
+    non-zero time, that later non-zero time becomes the first known
+    anchor - "first known", not "first encountered", is what the
+    no-overwrite rule protects.
+
+Unsupported/corrupt timestamp:
+  A missing, empty, malformed, unparsable, or zero-valued "ts" is
+  handled as unknown recovery-anchor provenance
+  (recovery_anchor_time = 0, recovery_anchor_time_known = false). This
+  condition does not reject the projection rebuild. It preserves
+  honest unknownness for legacy, imported, manually edited, corrupted,
+  or otherwise unsupported event lines. This is a defensive
+  compatibility path - C4.2.1 makes no claim that all retained
+  historical/imported event lines satisfy the supported-writer
+  invariant.
+
+C4.2 use:
+  LocalOrderRecoveryFact copies these two fields unchanged. C4.2 uses
+  the anchor only to construct the §9.2 window:
+  [recovery_anchor_time - effective_overlap_minutes, scan_server_time].
+  It does not use the anchor to infer identity, symbol, volume, fill
+  state, lifecycle authority, or trading authority - it remains pure
+  provenance, exactly as C4.0 §2's "distinguishes one recovery scan
+  from another" provenance fields already are.
+
+Compatibility (frozen, zero-impact):
+  No event format change.
+  No EventStore write-path change.
+  No serializer change.
+  No hash input/output change - execution_request_hash is computed
+    from a separate ExecutionRequest struct, never from
+    ExecutionRequestProjectionRecord; the new fields never enter any
+    hashed payload.
+  No execution_request_id change.
+  No C4 schema constant or version bump required - this is a read-model
+    addition over an already-durable field, not a wire-format change.
+```
+
+### 10.1 Required implementation tests (obligation only - not created by this addendum)
+
+| Test obligation | Expected behavior |
+|---|---|
+| Valid timestamp | `recovery_anchor_time_known=true`; stored time exactly equals the parsed event's `base.ts` |
+| Invalid/empty timestamp | knownness false; stored time `0`; rebuild still succeeds |
+| Replay repeatability | Two rebuilds from identical input yield the same anchor and knownness |
+| Known then later known/different | First known value remains unchanged |
+| Known then later unknown | Known value remains unchanged |
+| Unknown then later known | Later first-known timestamp is accepted |
+| Unknown then later unknown | Anchor stays `0`, knownness stays false |
+| Existing fields unchanged | `candidate_id`, `side`, `lot_size`, `execution_request_hash`, `execution_request_id` are unchanged by provenance surfacing |
+| C4.2 propagation | The local DTO copies the anchor unchanged; the constructed query window's start obeys `anchor - effective_overlap` |
+| Safety | No new event append, serializer mutation, lifecycle/SafeMode/trade behavior, or EventStore state change results from this addendum |
+
+### 10.2 Gate restated
+
+`ExecutionRequestProjectionRecord`, its `_Init` function, and
+`ExecutionRequestProjection_ApplyLine` remain unmodified until this
+addendum is reviewed and adopted. C4.2's own implementation
+authorization (paused per §9.12) remains separately gated behind both
+this addendum's adoption and a revised code/test authorization for the
+C4.2 allowlist itself - adopting this addendum alone does not
+reinstate C4.2's implementation authorization.
