@@ -355,3 +355,625 @@ C5   - controlled execution rollout: environment ladder (TEST FIXTURE ->
 C6   - position / exit lifecycle (unchanged scope from prior contracts).
 C7   - operational hardening (unchanged scope from prior contracts).
 ```
+
+---
+
+## 9. C4.1 Design Addendum (PROPOSED - not yet adopted)
+
+**Status**: proposed following C4.1 Contract-Reconciliation Checkpoint 1
+(QA re-review, second pass); docs-only, non-authoritative. This
+addendum does not itself authorize any C4.1 code. It exists to satisfy
+the gates §3, §6, and §7 (above) require before any `HistorySelect()`
+call, comparison logic, or report struct may be written. Every
+identifier, `#define`, and `struct` shown in this section is **planned
+pseudocode**, not implemented source: the future C4.2 implementation
+SHALL expose these identifiers and shapes; this addendum does not
+create any of them in source code, and no header, macro, input
+declaration, report struct, or test exists as a result of this
+section.
+
+### 9.1 Deliberate boundary: execution-completion semantics vs. recovery-evidence corroboration
+
+C3.3's `running_filled_volume >= execReq.lot_size` rule (`TX_MATCH_VOLUME_REACHED`)
+answers a different question than C4.1 asks. C3.3 asks whether the
+*local* projection regards a requested quantity as reached. C4.1 asks
+whether *locally recorded* recovery facts equal *broker-history*
+evidence. These are not the same question and C4.1 SHALL NOT reuse
+C3.3's threshold rule for corroboration. A broker-recovered deal-volume
+total of `1.25` against a local `running_filled_volume` of `1.00` is a
+`RECOVERY_FACT_CONFLICT`, in full, even though `1.00` may already
+satisfy C3.3's own volume-reached threshold for unrelated local
+purposes. The two rules are frozen as independent and are never merged.
+
+### 9.2 Recovery-anchor time and window construction
+
+```
+Scan-time snapshot:
+  history_query_server_time is captured exactly once per reconciliation
+  scan (one TimeCurrent() call). Every recovered fact emitted from that
+  same scan carries that identical captured value - never a fresh
+  TimeCurrent() call per record.
+
+Window:
+  query_from = recovery_anchor_time - effective_overlap_minutes
+  query_to   = the single captured history_query_server_time for this scan
+  Both endpoints are inclusive (restates §3's existing inclusive-bounds rule).
+
+Effective overlap:
+  effective_overlap_minutes = the future implementation's operator
+  override, when validly supplied; otherwise the planned
+  MLQUANTAI_C4_RECOVERY_OVERLAP_MINUTES_DEFAULT identifier's frozen
+  value of 60, for v1.
+
+Invalid override:
+  An explicitly supplied override value <= 0 is invalid. It SHALL NOT be
+  silently replaced with the 60-minute default or any other fallback.
+  This is a whole-scan failure, evaluated once, before any per-row
+  finding is computed: the report is fail-closed with zero rows -
+  report.ok = false, first_error identifies the invalid-override
+  condition, and no ENUM_RECOVERY_FINDING value (including
+  RECOVERY_NO_CORROBORATING_HISTORY) is emitted for any individual
+  fact as a result of this failure - mirroring the existing
+  unresolvedThresholdSeconds < 0 precedent (C3.8.1).
+```
+
+The future C4.2 implementation SHALL expose the following identifier
+and frozen value; this addendum does not create the identifier in
+source code:
+
+```cpp
+// planned identifier - not yet implemented
+#define MLQUANTAI_C4_RECOVERY_OVERLAP_MINUTES_DEFAULT 60
+```
+
+`recovery_anchor_time` itself (the local timestamp a given fact's
+window is anchored to) is not fixed by this addendum - it is whichever
+local fact's own durable timestamp is under review, per §3's existing
+"earliest durable local timestamp relevant to the fact" rule. This
+addendum only freezes how the window is *built* from that anchor, not
+which anchor a given comparison uses.
+
+### 9.3 Knownness discipline
+
+```
+A zero numeric value (0, 0.0, empty string) is never an implicit
+"unknown" sentinel. Every broker-derived comparable field that may be
+unavailable from a given history record carries its own explicit
+"<field>_known" boolean. A field is compared only when its knownness
+flag is true on both sides of a comparison; an unknown field never
+participates in a CORROBORATED or CONFLICT determination by silently
+defaulting to a zero/empty value.
+
+Local-side knownness:
+  A local comparable value is known only when its source fact exists,
+  its schema version is supported, and the contract-defined field was
+  actually recorded on that fact. Absence of the local fact itself, or
+  absence of a required local field on an otherwise-existing fact,
+  produces RECOVERY_LOCAL_EVIDENCE_UNAVAILABLE (§9.7) for that
+  comparison - it is never defaulted to a zero/empty value and treated
+  as "known."
+```
+
+### 9.4 Recovered fact schemas
+
+The future C4.2 implementation SHALL expose the following identifiers;
+this addendum does not create them in source code:
+
+```cpp
+// planned identifiers - not yet implemented
+#define MLQUANTAI_RECOVERED_ORDER_HISTORY_SCHEMA_C4_V1 \
+   "RECOVERED_ORDER_HISTORY_C4_V1"
+#define MLQUANTAI_RECOVERED_DEAL_HISTORY_SCHEMA_C4_V1 \
+   "RECOVERED_DEAL_HISTORY_C4_V1"
+#define MLQUANTAI_RECOVERY_RECONCILIATION_SCHEMA_C4_V1 \
+   "RECOVERY_RECONCILIATION_C4_V1"
+```
+
+The future C4.2 implementation SHALL expose recovered-fact structs of
+the following planned shape; this addendum freezes the observable
+schema semantics, not concrete MQL source:
+
+```cpp
+// planned shape - not yet implemented
+struct RecoveredOrderHistoryFact
+{
+   string   schema_version;              // MLQUANTAI_RECOVERED_ORDER_HISTORY_SCHEMA_C4_V1
+   string   provenance_kind;              // "RECOVERED_ORDER_HISTORY"
+   datetime history_select_from;
+   datetime history_select_to;
+   datetime history_query_server_time;    // one capture per scan, see §9.2
+   string   recovery_session_identity;
+   ulong    source_order_ticket;
+   bool     source_order_ticket_known;
+   string   symbol;
+   bool     symbol_known;
+   string   order_type;
+   bool     order_type_known;
+   string   order_state;
+   bool     order_state_known;
+   double   volume_initial;
+   bool     volume_initial_known;
+   double   volume_current;
+   bool     volume_current_known;
+   double   price_open;
+   bool     price_open_known;
+   double   price_sl;
+   bool     price_sl_known;
+   double   price_tp;
+   bool     price_tp_known;
+};
+
+struct RecoveredDealHistoryFact
+{
+   string   schema_version;              // MLQUANTAI_RECOVERED_DEAL_HISTORY_SCHEMA_C4_V1
+   string   provenance_kind;              // "RECOVERED_DEAL_HISTORY"
+   datetime history_select_from;
+   datetime history_select_to;
+   datetime history_query_server_time;
+   string   recovery_session_identity;
+   ulong    source_deal_ticket;
+   bool     source_deal_ticket_known;
+   ulong    source_order_ticket;          // parent order, per §9.8
+   bool     source_order_ticket_known;
+   string   symbol;
+   bool     symbol_known;
+   string   deal_type;
+   bool     deal_type_known;
+   double   price;
+   bool     price_known;
+   double   volume;
+   bool     volume_known;
+};
+```
+
+A recovered-fact struct without its declared `schema_version` field, or
+without a knownness flag for every comparable field, does not satisfy
+this addendum - both are frozen as part of the observable shape, not
+left to implementation-time discretion.
+
+### 9.5 Compared field sets, equality rules, and aggregate eligibility
+
+```
+No numeric or string tolerance/epsilon is introduced in v1. Every
+compared field - symbol, order_type, price, volume - is exact equality
+only. This is a deliberate absence: no rounding-tolerance convention
+exists anywhere in this codebase to justify inventing one here, and
+introducing one silently would weaken corroboration without a
+documented reason.
+
+Order vs. local:      symbol, order_type, volume_initial - exact equality
+Partial-fill volume:   sum(recovered deal volumes for one
+                        source_order_ticket, all volume_known=true)
+                        == local running_filled_volume - EXACT equality
+                        (not C3.3's >= threshold rule - see §9.1)
+
+No standalone deal-vs-local comparison exists in C4.1 v1. C4.1 defines
+no durable local deal-level identity and no comparable local deal
+fields - only local order-level facts and the aggregate deal-volume
+total are ever compared (see §9.6's ORDER and AGGREGATE_DEAL_VOLUME
+comparison units). A recovered deal's symbol/deal_type/price/volume are
+carried on RecoveredDealHistoryFact for provenance, aggregation, and
+orphan/duplicate detection only - they are never compared directly
+against a local fact of their own.
+
+Aggregate eligibility:
+  If any recovered deal that maps to the same source_order_ticket has
+  volume_known=false, the aggregate volume for that order_ticket group
+  is indeterminate - it SHALL NOT be computed by silently summing only
+  the known-volume deals. An indeterminate aggregate cannot produce
+  RECOVERY_FACT_CORROBORATED or RECOVERY_FACT_CONFLICT for that group
+  (see §9.7's finding table).
+
+Duplicate recovered evidence is a terminal normalization failure for
+the affected identity group:
+
+  If two or more recovered order facts share the same known
+  source_order_ticket, no recovered order fact in that ticket group is
+  eligible for corroboration/conflict comparison in that scan.
+
+  If two or more recovered deal facts share the same known
+  source_deal_ticket, no deal in that duplicate-ticket group is
+  eligible for aggregate-volume corroboration/conflict comparison in
+  that scan.
+
+  The implementation SHALL emit RECOVERY_DUPLICATE_HISTORY_RECORD with
+  BLOCK_RECOMMENDED posture for the affected group and SHALL NOT
+  select, retain, sum, or treat any arbitrary duplicate copy as
+  canonical.
+
+  The duplicate finding takes precedence over subsequent
+  aggregate-volume, CORROBORATED, or CONFLICT evaluation for the
+  affected group (see §9.7's precedence rule).
+```
+
+### 9.6 Comparison units and row cardinality
+
+```
+C4.1 v1 emits findings by comparison unit, not by arbitrary source
+enumeration order.
+
+- ORDER unit:
+  One eligible recovered order-history fact paired with one uniquely
+  mapped local order fact. At most one order-level finding row is
+  emitted per known source_order_ticket.
+
+- DEAL unit:
+  A recovered deal is not independently compared to a local fact unless
+  a future adopted schema defines a durable local deal-level identity
+  and comparable local deal fields. C4.1 v1 defines no such local
+  deal-level mapping (see §9.5).
+
+- AGGREGATE_DEAL_VOLUME unit:
+  At most one aggregate-volume finding row is emitted per known
+  source_order_ticket. It compares the sum of all eligible,
+  non-duplicate, known-volume recovered deals for that ticket with the
+  mapped local fact's running_filled_volume.
+
+A RecoveryReconciliationRow SHALL identify its comparison unit
+explicitly via a planned `comparison_scope` field whose frozen v1
+values are `ORDER` and `AGGREGATE_DEAL_VOLUME` (see §9.9).
+
+A recovered source_deal_ticket may be included for provenance in an
+individual duplicate/orphan-deal finding, but it does not create a
+standalone deal-versus-local corroboration/conflict row in C4.1 v1.
+
+Diagnostic row cardinality:
+
+  The one-row-per-ticket cardinality above governs only a *successful*
+  ORDER or AGGREGATE_DEAL_VOLUME comparison outcome (RECOVERY_FACT_
+  CORROBORATED, RECOVERY_FACT_CONFLICT, or RECOVERY_NO_CORROBORATING_
+  HISTORY). The four terminal diagnostic findings below have their own
+  frozen, independent cardinality rule, since they are not comparisons
+  against a uniquely resolved local fact:
+
+  - RECOVERY_UNMAPPABLE_HISTORY_RECORD:
+    one row per recovered record whose source_order_ticket is
+    unavailable or ambiguous. The row carries the recovered record's
+    known source_deal_ticket where present; otherwise its known
+    source_order_ticket where present.
+
+  - RECOVERY_ORPHAN_HISTORY_ORDER:
+    one row per recovered order-history record whose known
+    source_order_ticket maps to zero eligible local facts.
+
+  - RECOVERY_ORPHAN_HISTORY_DEAL:
+    one row per recovered deal-history record that cannot attach to
+    its required recovered order-history group under §9.8.
+
+  - RECOVERY_DUPLICATE_HISTORY_RECORD:
+    exactly one row per duplicate identity group: source_order_ticket
+    for duplicate recovered order records; and source_deal_ticket for
+    duplicate recovered deal records.
+
+  These diagnostic rows use comparison_scope `ORDER` for order-record
+  diagnostics and `AGGREGATE_DEAL_VOLUME` for deal-record diagnostics.
+  They are not additionally constrained by the one-row-per-ticket
+  cardinality of a successful ORDER or AGGREGATE_DEAL_VOLUME
+  comparison - a single order_ticket group may legitimately produce
+  multiple diagnostic rows (e.g. two distinct orphan deals attached to
+  the same order ticket each get their own row), while at most one
+  successful-comparison row (rows 8-10 of §9.7's table) is ever emitted
+  for that same group.
+
+  A diagnostic record/group that produces one of the four terminal
+  diagnostic findings above is excluded from all later comparison-unit
+  (ORDER/AGGREGATE_DEAL_VOLUME) evaluation for that record/group -
+  matching §9.7's precedence rule, which already stops evaluation at
+  the first qualifying finding.
+```
+
+### 9.7 Finding taxonomy, precedence, and posture
+
+Every v1 `ENUM_RECOVERY_FINDING` value is given an explicit trigger and
+posture below. This addendum does not add, remove, or rename enum
+values - it only freezes how the 10 values apply to C4.1's specific
+comparisons. Verified by direct inspection against this same document's
+adopted §4 enum declaration (lines 151-181): all 10 names, in the same
+order, with the same comments, are reproduced in the table below
+exactly - no discrepancy exists between §4 and this table.
+
+**Orphan vs. unmappable distinction (frozen)**, resolving an overlap in
+an earlier draft of this table where an ambiguous condition could
+satisfy both rows:
+
+```
+RECOVERY_UNMAPPABLE_HISTORY_RECORD:
+  source_order_ticket is unknown/unavailable; OR
+  the known ticket maps to more than one eligible local fact.
+
+RECOVERY_ORPHAN_HISTORY_ORDER:
+  source_order_ticket is known; and
+  it maps to zero eligible local facts.
+
+RECOVERY_ORPHAN_HISTORY_DEAL:
+  source_order_ticket is known; and
+  the recovered deal cannot be attached to a recovered order-history
+  record for that ticket in the same normalized scan, while the
+  applicable local order aggregate is otherwise resolvable.
+```
+
+| # | Finding | Comparison unit | Trigger | Posture |
+|---|---|---|---|---|
+| 1 | `RECOVERY_HISTORY_EVIDENCE_UNAVAILABLE` | ORDER / AGGREGATE_DEAL_VOLUME | The required `HistorySelect()` query itself failed (returned `false`) for the relevant window | `DEGRADED` |
+| 2 | `RECOVERY_WINDOW_INSUFFICIENT` | ORDER / AGGREGATE_DEAL_VOLUME | Window adequacy (§3/§9.2) cannot be proven - invalid bounds, coverage gap, or retention-limit truncation | `DEGRADED` |
+| 3 | `RECOVERY_LOCAL_EVIDENCE_UNAVAILABLE` | ORDER / AGGREGATE_DEAL_VOLUME | A required local fact or local field is unavailable (§9.3's local-side knownness rule) | `DEGRADED` |
+| 4 | `RECOVERY_UNMAPPABLE_HISTORY_RECORD` | recovered-evidence-driven, no row-owning unit yet resolved | `source_order_ticket_known=false`, OR the known ticket resolves ambiguously to more than one eligible local fact | `BLOCK_RECOMMENDED` |
+| 5 | `RECOVERY_DUPLICATE_HISTORY_RECORD` | ORDER (duplicate order tickets) / AGGREGATE_DEAL_VOLUME (duplicate deal tickets) | More than one recovered order or deal record shares the same known ticket within one scan's normalized snapshot (§9.5) | `BLOCK_RECOMMENDED` |
+| 6 | `RECOVERY_ORPHAN_HISTORY_ORDER` | recovered-evidence-driven, ORDER | `source_order_ticket_known=true`, a valid key exists, and it maps to zero eligible local facts | `BLOCK_RECOMMENDED` |
+| 7 | `RECOVERY_ORPHAN_HISTORY_DEAL` | recovered-deal-driven, AGGREGATE_DEAL_VOLUME | `source_order_ticket` is known but the deal cannot be attached to a recovered order-history record for that ticket in the same scan, while the local order aggregate is otherwise resolvable | `BLOCK_RECOMMENDED` |
+| 8 | `RECOVERY_NO_CORROBORATING_HISTORY` | local-fact-driven, ORDER / AGGREGATE_DEAL_VOLUME | Local fact exists and mapping would resolve uniquely, window is adequate, local evidence is available, but no recovered evidence exists to compare - OR every applicable compared field is unknown on the recovered side (all-unknown), OR the aggregate-volume group is indeterminate per §9.5 | `DEGRADED` |
+| 9 | `RECOVERY_FACT_CONFLICT` | ORDER / AGGREGATE_DEAL_VOLUME | Mapping resolved uniquely, all applicable compared fields are known on both sides, and one or more are unequal | `BLOCK_RECOMMENDED` |
+| 10 | `RECOVERY_FACT_CORROBORATED` | ORDER / AGGREGATE_DEAL_VOLUME | Mapping resolved uniquely, all applicable compared fields are known on both sides, window is adequate, and every applicable field is exactly equal | `INFORMATIONAL` |
+
+**Precedence rule (frozen)**: for a given comparison unit (§9.6),
+findings are evaluated in the numbered order above; the first condition
+that applies is the finding emitted, and evaluation stops - a
+comparison unit is never assigned more than one finding. The
+invalid-override condition in §9.2 is evaluated once, before this
+per-unit table runs at all, and short-circuits the entire scan; it is
+never itself one of the 10 per-row findings above.
+
+**Reconciliation population (frozen)**: C4.1 v1 SHALL evaluate both
+directions, and no single discrepancy SHALL produce more than one row:
+
+```
+Local-fact-driven evaluation:
+  Every eligible local fact within the proven recovery scope is
+  evaluated for a uniquely mapped recovered order-history fact. If none
+  exists after a successful query and proven adequate window, emit
+  RECOVERY_NO_CORROBORATING_HISTORY for that local fact's known broker
+  order ticket. A local-fact-driven missing-evidence result owns
+  RECOVERY_NO_CORROBORATING_HISTORY.
+
+Recovered-evidence-driven evaluation:
+  Every normalized recovered order-history fact is evaluated for a
+  unique eligible local fact. A known ticket with zero eligible local
+  matches emits RECOVERY_ORPHAN_HISTORY_ORDER; an unknown ticket or
+  multiple eligible local matches emits
+  RECOVERY_UNMAPPABLE_HISTORY_RECORD. A recovered-evidence-driven
+  unmatched record owns an orphan or unmappable finding.
+
+Recovered-deal-driven evaluation:
+  Every normalized recovered deal is attached to its recovered order
+  group by known source_order_ticket. Failure of that attachment under
+  the stated preconditions emits RECOVERY_ORPHAN_HISTORY_DEAL.
+
+These three directions apply to distinct directional facts (a local
+fact with no recovered match; a recovered order with no local match; a
+recovered deal that cannot attach to its order) and SHALL NOT both be
+emitted for the same discrepancy - each finding in the §9.7 table is
+owned by exactly one of the three directions above, never by more than
+one, and an implementation SHALL NOT emit a duplicate row from the
+other direction for the same comparison unit.
+```
+
+**Two mapping decisions, adopted as part of this addendum** (both
+reviewed and approved; the second carries an added limiting condition):
+
+```
+1. Ambiguous multi-match (a known source_order_ticket resolves to more
+   than one eligible local fact) is classified as RECOVERY_UNMAPPABLE_
+   HISTORY_RECORD, distinct from RECOVERY_ORPHAN_HISTORY_ORDER (which
+   requires zero matches, not multiple) - see the orphan-vs-unmappable
+   distinction above. Reasoning: §6's "never a silent best-effort
+   match" rule means a non-unique resolution is not a resolution at
+   all - it is exactly the "cannot be resolved to any matching key"
+   case UNMAPPABLE covers.
+
+2. A recovered record whose every applicable compared field is unknown
+   (e.g. all deal_type/price/volume fields unavailable) is classified
+   as RECOVERY_NO_CORROBORATING_HISTORY, not RECOVERY_HISTORY_EVIDENCE_
+   UNAVAILABLE (reserved specifically for HistorySelect() itself
+   failing, per row 1 above). This classification applies only after a
+   successful query and a proven adequate window: if window adequacy is
+   not proven, RECOVERY_WINDOW_INSUFFICIENT wins by precedence (row 2);
+   if required local-side evidence is unavailable,
+   RECOVERY_LOCAL_EVIDENCE_UNAVAILABLE wins by precedence (row 3). This
+   ordering is already enforced by the numbered precedence rule above -
+   stated here explicitly so RECOVERY_NO_CORROBORATING_HISTORY never
+   masks a stronger diagnostic.
+```
+
+`RECOVERY_FACT_CORROBORATED`/`RECOVERY_FACT_CONFLICT` remain gated by
+C4.0 §6's existing rule: neither may be emitted until this addendum
+(satisfying that gate) is itself adopted.
+
+### 9.8 Identity mapping restriction (v1: `source_order_ticket`-only)
+
+```
+C4.1 v1 identity mapping is source_order_ticket-only. A recovered order
+or deal may be reconciled only where its source_order_ticket is known
+and maps uniquely to a local fact's recorded broker order ticket.
+source_deal_ticket identifies a recovered deal record but is not an
+alternate local-fact mapping key - a deal is always matched to its own
+order-history fact first, by source_order_ticket, per §9.4/§9.5, never
+directly to a local fact on its own.
+
+No secondary matching key is authorized in C4.1 v1. No correlation ID,
+magic number, symbol, order/deal type, volume, price, time, or any
+field-similarity fallback may establish identity. A future secondary
+key requires a separately adopted schema, provenance, uniqueness, and
+comparison-rule amendment - it is not authorized by this document.
+```
+
+### 9.9 Report shape, ordering, and `ok` computation
+
+The future C4.2 implementation SHALL expose report/row structs of the
+following planned shape; this addendum does not create them in source
+code:
+
+```cpp
+// planned shape - not yet implemented
+struct RecoveryReconciliationRow
+{
+   string                 candidate_id;      // when resolvable; else empty
+   ulong                  order_ticket;
+   bool                   order_ticket_known;
+   ulong                  deal_ticket;
+   bool                   deal_ticket_known;
+   string                 comparison_scope;   // "ORDER" | "AGGREGATE_DEAL_VOLUME" - see §9.6
+   ENUM_RECOVERY_FINDING  finding;
+   ENUM_RECOVERY_POSTURE  posture;
+   string                 source_record_discriminator; // ordering tiebreaker only - see below; NOT an id/hash/durable trace
+   string                 detail;             // human-readable, never parsed
+};
+
+struct RecoveryReconciliationReport
+{
+   string                    schema_version;  // MLQUANTAI_RECOVERY_RECONCILIATION_SCHEMA_C4_V1
+   bool                      ok;
+   int                       local_facts_scanned;
+   int                       recovered_orders_scanned;
+   int                       recovered_deals_scanned;
+   RecoveryReconciliationRow rows[];
+   string                    first_error;
+};
+```
+
+```
+source_record_discriminator:
+
+  A deterministic, non-durable provenance discriminator for ordering
+  diagnostic rows only. It is derived solely from frozen recovered-fact
+  fields, in canonical field order, and is not a hash or a durable
+  identity - it authorizes no persistence and is used only as an
+  in-memory deterministic ordering tiebreaker (§9.10/§9.11's zero-write,
+  no-row-hash decisions are unaffected).
+
+  For recovered order diagnostics, the discriminator is the canonical
+  serialization of: schema_version, provenance_kind,
+  history_select_from, history_select_to, history_query_server_time,
+  recovery_session_identity, source_order_ticket_known,
+  source_order_ticket, symbol_known, symbol, order_type_known,
+  order_type, order_state_known, order_state.
+
+  For recovered deal diagnostics, it is the canonical serialization of:
+  schema_version, provenance_kind, history_select_from,
+  history_select_to, history_query_server_time,
+  recovery_session_identity, source_deal_ticket_known,
+  source_deal_ticket, source_order_ticket_known, source_order_ticket,
+  symbol_known, symbol, deal_type_known, deal_type, price_known, price,
+  volume_known, volume.
+
+  A row not produced by one of the four terminal diagnostic findings
+  (§9.6's diagnostic-row-cardinality rule) carries an empty
+  source_record_discriminator - it is needed only where sort keys 1-5
+  can collide, which happens only among diagnostic rows lacking a known
+  ticket or candidate_id.
+
+Canonical duplicate collapse:
+
+  Two recovered records are the same normalized evidence item when
+  their applicable canonical serialization (as defined above) is
+  byte-for-byte identical. C4.1 v1 intentionally does not preserve raw
+  API occurrence multiplicity for such identical records, because no
+  separately frozen durable broker occurrence identity exists for that
+  purpose.
+
+  The implementation SHALL normalize identical records to one
+  canonical evidence item before diagnostic and comparison-row
+  construction. This collapse is distinct from
+  RECOVERY_DUPLICATE_HISTORY_RECORD, which applies when two records
+  share a known broker ticket but are not the same canonical
+  normalized evidence item.
+
+  No API enumeration position, array index, or discovery order may be
+  used as an occurrence discriminator.
+```
+
+```
+Sort order (final, deterministic):
+  1. order_ticket ascending, among rows where order_ticket_known=true -
+     these sort before all rows where order_ticket_known=false.
+  2. deal_ticket ascending, among rows where deal_ticket_known=true -
+     these sort before all rows where deal_ticket_known=false, applied
+     as the tiebreaker within equal order_ticket groups.
+  3. comparison_scope ascending in its frozen canonical order: ORDER
+     before AGGREGATE_DEAL_VOLUME, applied as the tiebreaker within
+     equal order_ticket/deal_ticket groups.
+  4. candidate_id ascending.
+  5. finding enum ordinal ascending (§4's declared enum order), as a
+     final defensive tiebreaker.
+  6. source_record_discriminator ascending, as the final tiebreaker for
+     diagnostic rows that remain identical on all of keys 1-5.
+  A ticket value of 0 is never itself evidence that a row is
+  unticketed - only the paired *_known flag decides sort-group
+  membership. No two emitted rows may remain indistinguishable after
+  all six keys, because identical recovered records are normalized and
+  collapsed before row construction under the canonical-duplicate-
+  collapse rule above.
+
+first_error selection:
+  Taken from the first row, in the final sorted order above, whose
+  posture is RECOVERY_POSTURE_DEGRADED or RECOVERY_POSTURE_BLOCK_
+  RECOMMENDED (i.e. makes report.ok=false per the rule below). Never
+  taken from discovery order, API enumeration order, or any
+  intermediate detection-witness position - matching the C3.8.1
+  earliest-qualifying-tuple precedent, not the detection-witness bug
+  corrected there.
+
+Posture-to-ok rule (frozen disposition model):
+  Each finding's posture is exactly one of RECOVERY_POSTURE_
+  INFORMATIONAL, RECOVERY_POSTURE_DEGRADED, or RECOVERY_POSTURE_
+  BLOCK_RECOMMENDED, per the §9.7 table (RECOVERY_FACT_CORROBORATED is
+  always INFORMATIONAL; RECOVERY_FACT_CONFLICT is always
+  BLOCK_RECOMMENDED; every other v1 finding has its own frozen posture
+  in that same table - none is left undefined).
+
+  report.ok = true only when ALL of:
+    - invocation/configuration is valid (including a valid effective
+      overlap per §9.2 - an invalid override fails the scan before any
+      row exists, per §9.2/§9.7's precedence rule);
+    - all required history-query steps succeeded;
+    - window adequacy is proven where required (§3); and
+    - no final sorted row carries posture RECOVERY_POSTURE_DEGRADED or
+      RECOVERY_POSTURE_BLOCK_RECOMMENDED.
+
+  A report with zero rows is NOT automatically ok=true - its status
+  still depends on whether the expected/local fact set was itself
+  empty and whether adequate evidence coverage was proven for that
+  empty result; an empty row set produced by a failed or unproven scan
+  is not informational.
+```
+
+### 9.10 Boundary (restated, unchanged from C4.0 §5/§7)
+
+```
+The C4.1 report remains: read-only, non-durable, non-authoritative.
+No EventStore append. No StateProjector mutation. No lifecycle
+transition. No SafeMode action. No trade action (OrderSend/CTrade).
+```
+
+### 9.11 Deferred items
+
+```
+Row identity hash:
+  A RecoveryReconciliationRow identity hash (analogous to
+  Ids_ExecutionRequestId) is explicitly NOT minted in C4.1. Findings
+  are non-durable per C4.0 §2; a hash is deferred to whichever future,
+  separately adopted amendment first proposes any durable trace of a
+  recovery finding.
+
+Operator override input:
+  The concrete input declaration (name, EA/script placement, validity
+  wiring) for the overlap-minutes override is left to the
+  implementation-authorizing checkpoint (C4.2) that actually writes
+  code. This addendum freezes only the override's semantics (§9.2),
+  not its declaration.
+
+Standalone deal-vs-local comparison:
+  Deferred, per §9.5/§9.6, to a future amendment that would need to
+  define a durable local deal-level identity and comparable local deal
+  fields before any DEAL comparison unit could exist.
+```
+
+### 9.12 C4.2 gate (restated)
+
+Per §7's existing checklist, C4.1's own code (including any
+`HistorySelect()`/`HistoryDealGet*`/`HistoryOrderGet*` call) remains
+unauthorized until this addendum itself is adopted. Once adopted, the
+next gate is C4.2: read-only broker-history acquisition and report
+implementation, still zero-write per §7, exercising exactly the
+schemas, window rule, comparison units, equality rules, and report
+shape frozen above - not a re-opening of any decision this section
+freezes.

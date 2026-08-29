@@ -4,7 +4,128 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - C4.0 recovery/broker-history policy contract (PROPOSED, docs-only, not yet adopted, 2026-08-28)
+## [Unreleased] - C4.1 Contract-Reconciliation Checkpoint 1 (PROPOSED, docs-only, non-authoritative, not adopted, 2026-08-28)
+
+C4.1 Contract-Reconciliation Checkpoint 1
+PROPOSED — docs-only — non-authoritative — not adopted
+No broker-history acquisition or C4 implementation authorized.
+
+Adds §9 "C4.1 Design Addendum (PROPOSED)" to
+`Docs/PhaseC_C4_RecoveryHistoryPolicy.md`, on
+`docs/c4-1-recovery-reconciliation-addendum`. Baseline
+`mlquantai@168d3316a4e1d926fd85d92d0f051df40b1b2aa3` (the C4.0
+adoption merge commit, PR #7).
+
+This proposed addendum freezes the comparison, evidence-window,
+knownness, identity, disposition, ordering, and non-authoritative
+reporting semantics required before C4.2 read-only implementation may
+be considered:
+
+- A 60-minute frozen default overlap allowance (planned identifier
+  `MLQUANTAI_C4_RECOVERY_OVERLAP_MINUTES_DEFAULT`, not yet implemented
+  in source), an implementation-phase operator override whose
+  semantics (not declaration) are frozen here, and a fail-closed rule
+  for an invalid (`<= 0`) override - a whole-scan failure evaluated
+  once, before any per-row finding, never silently replaced with the
+  default and never producing a per-row finding of its own.
+- A scan-time-snapshot rule: `history_query_server_time` is captured
+  once per reconciliation scan, not once per record.
+- A knownness discipline covering both sides of every comparison:
+  every broker-derived comparable field carries its own `<field>_known`
+  flag, and an explicit local-side knownness rule (a local value is
+  known only when its source fact exists, its schema is supported, and
+  the field was actually recorded) - a zero/empty value is never an
+  implicit "unknown" sentinel on either side.
+- Full recovered order/deal fact schemas
+  (`RecoveredOrderHistoryFact`/`RecoveredDealHistoryFact`, planned
+  shapes, not yet implemented), each carrying an explicit
+  `schema_version` and a knownness flag per comparable field.
+- Exact-equality-only comparison rules for v1 (no tolerance/epsilon),
+  including a deliberate split from C3.3's
+  `running_filled_volume >= lot_size` threshold rule; an indeterminate
+  aggregate-volume group (any contributing deal with
+  `volume_known=false`) cannot produce CORROBORATED or CONFLICT; and
+  duplicate recovered order or deal evidence (same known ticket within
+  one scan) is a terminal normalization failure for that group -
+  `RECOVERY_DUPLICATE_HISTORY_RECORD`/`BLOCK_RECOMMENDED`, with no
+  arbitrary duplicate ever treated as canonical.
+- An identity-mapping rule: C4.1 v1 is `source_order_ticket`-only, with
+  no secondary key (no correlation ID, magic number, symbol,
+  order/deal type, volume, price, time, or field-similarity fallback).
+- Explicit comparison-unit cardinality and diagnostic-row cardinality
+  (§9.6): ORDER (one recovered order fact vs. one local order fact)
+  and AGGREGATE_DEAL_VOLUME (the summed recovered-deal volume for one
+  order ticket vs. local `running_filled_volume`) are the only two
+  comparison units in v1, each emitting at most one *successful-
+  comparison* row (CORROBORATED/CONFLICT/NO_CORROBORATING_HISTORY) per
+  known order ticket. No standalone DEAL comparison unit exists in v1
+  - C4.1 defines no durable local deal-level identity to compare
+  against, so a recovered deal's fields are carried for
+  provenance/aggregation/orphan detection only, never as their own
+  corroboration/conflict row (§9.5 revised accordingly - the prior
+  draft's "deal vs. local" line is removed). The four terminal
+  diagnostic findings (`RECOVERY_UNMAPPABLE_HISTORY_RECORD`,
+  `RECOVERY_ORPHAN_HISTORY_ORDER`, `RECOVERY_ORPHAN_HISTORY_DEAL`,
+  `RECOVERY_DUPLICATE_HISTORY_RECORD`) have their own independent,
+  explicitly frozen row-cardinality rule (one row per recovered
+  record, or per duplicate-ticket group, as applicable) - a single
+  order-ticket group may legitimately produce multiple diagnostic
+  rows even though at most one successful-comparison row is ever
+  emitted for that group.
+- A full 10-row finding-taxonomy table covering every adopted C4.0 §4
+  `ENUM_RECOVERY_FINDING` value with its trigger, comparison unit, and
+  posture (verified by direct inspection against §4's enum
+  declaration, exact name and order match), a frozen per-unit
+  precedence rule (first matching condition wins, evaluated in a fixed
+  order), and an explicit orphan-vs-unmappable distinction (ambiguous
+  multi-match → `RECOVERY_UNMAPPABLE_HISTORY_RECORD`; zero eligible
+  matches → `RECOVERY_ORPHAN_HISTORY_ORDER`; all-fields-unknown
+  recovered record → `RECOVERY_NO_CORROBORATING_HISTORY`, always
+  outranked by
+  `RECOVERY_WINDOW_INSUFFICIENT`/`RECOVERY_LOCAL_EVIDENCE_UNAVAILABLE`
+  where applicable).
+- An explicit reconciliation-population rule (§9.7): C4.1 v1 evaluates
+  three directions - local-fact-driven (an eligible local fact with no
+  recovered match owns `RECOVERY_NO_CORROBORATING_HISTORY`),
+  recovered-order-driven (an unmatched recovered order owns an orphan
+  or unmappable finding), and recovered-deal-driven (a deal that can't
+  attach to its order owns `RECOVERY_ORPHAN_HISTORY_DEAL`) - with an
+  explicit rule that no single discrepancy may be emitted as more than
+  one row across directions.
+- A frozen disposition model for `report.ok`: every finding has an
+  explicit posture (`INFORMATIONAL`/`DEGRADED`/`BLOCK_RECOMMENDED`)
+  from the taxonomy table - `RECOVERY_FACT_CORROBORATED` is always
+  `INFORMATIONAL`, `RECOVERY_FACT_CONFLICT` is always
+  `BLOCK_RECOMMENDED` - and `report.ok=true` requires no final row
+  carrying `DEGRADED` or `BLOCK_RECOMMENDED`.
+- A six-key deterministic sort order (order ticket, then deal ticket,
+  then a new `comparison_scope` field - `ORDER` before
+  `AGGREGATE_DEAL_VOLUME` - then candidate id, then finding enum
+  ordinal, then a deterministic non-durable provenance discriminator
+  as the last ordering tiebreaker) guaranteeing no two rows remain
+  indistinguishable, and `first_error` selection from that final
+  order. The discriminator is derived solely from frozen recovered-fact
+  fields in canonical order and is explicitly not an id, hash,
+  persistence key, or durable trace - it exists only to break ties
+  among diagnostic rows that share every other sort key (e.g. two
+  unmappable records with no known ticket and no candidate id); if two
+  rows remain identical after all six keys, they represent the same
+  canonical diagnostic record and only one row is emitted.
+- An explicit deferral: no `RecoveryReconciliationRow` identity hash is
+  minted in C4.1; that is left to any future, separately adopted
+  durable-trace amendment. Standalone deal-vs-local comparison is
+  likewise deferred to a future amendment that would define a durable
+  local deal-level identity.
+
+Every identifier, `#define`, and `struct` in §9 is labeled planned
+pseudocode ("the future C4.2 implementation SHALL expose... this
+addendum does not create it in source code"). No `.mqh`/`.mq5` header,
+macro, input declaration, report struct, or test exists as a result of
+this entry. C4.1 remains unauthorized until this addendum itself is
+reviewed and adopted; C4.2 (read-only broker-history
+acquisition/report implementation) remains gated behind that adoption.
+
+## [Unreleased] - C4.0 recovery/broker-history policy contract (ADOPTED, docs-only, merged to mlquantai via PR #7, 2026-08-28)
 
 `Docs/PhaseC_C4_RecoveryHistoryPolicy.md` (new), on
 `docs/c4-recovery-history-policy-contract`. Baseline
