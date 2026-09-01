@@ -129,4 +129,13 @@
 // stamp. See Docs/PhaseC_C2_ManualApprovalContract.md.
 #define MLQUANTAI_MANUAL_APPROVAL_SCHEMA_C2_V1 "MANUAL_APPROVAL_C2_V1"
 
+// C4.2: recovered-fact and reconciliation-report schema stamps, frozen
+// by Docs/PhaseC_C4_RecoveryHistoryPolicy.md §9.4 as planned identifiers
+// - this is their first appearance in source. Zero-write, non-durable:
+// these version a read-only, in-memory report shape only (§7), never a
+// wire/event format.
+#define MLQUANTAI_RECOVERED_ORDER_HISTORY_SCHEMA_C4_V1 "RECOVERED_ORDER_HISTORY_C4_V1"
+#define MLQUANTAI_RECOVERED_DEAL_HISTORY_SCHEMA_C4_V1   "RECOVERED_DEAL_HISTORY_C4_V1"
+#define MLQUANTAI_RECOVERY_RECONCILIATION_SCHEMA_C4_V1  "RECOVERY_RECONCILIATION_C4_V1"
+
 #endif // __MLQUANTAI_CONTRACTVERSIONS_MQH__

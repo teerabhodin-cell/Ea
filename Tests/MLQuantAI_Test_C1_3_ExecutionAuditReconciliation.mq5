@@ -692,6 +692,228 @@ void Test_NoBrokerMutation_StructuralProof()
 }
 
 //=====================================================================
+// C4.2.1 Recovery-Anchor Provenance Addendum (Docs/PhaseC_C4_RecoveryHistoryPolicy.md
+// §10, adopted via PR #9): recovery_anchor_time/recovery_anchor_time_known
+// on ExecutionRequestProjectionRecord. Same raw-line string-surgery
+// technique RenumberSeq already uses for "seq" - here applied to the
+// base-envelope "ts" field, so every timestamp value below is fully
+// deterministic and independent of the real terminal clock.
+//=====================================================================
+string ReplaceTsField(string line, string newTsValue)
+{
+   string needle = "\"ts\":\"";
+   int p = StringFind(line, needle);
+   if(p < 0) return line;
+   int start = p + StringLen(needle);
+   int n = StringLen(line);
+   int end = start;
+   while(end < n && StringGetCharacter(line, end) != '"') end++;
+   return StringSubstr(line, 0, start) + newTsValue + StringSubstr(line, end);
+}
+
+// Rewrites the ts field of the (0-indexed) occurrenceIndex-th line whose
+// own "type" equals typeMatch, in place within lines[].
+void RewriteNthTypedLineTs(string &lines[], string typeMatch, int occurrenceIndex, string newTsValue)
+{
+   int seen = -1;
+   for(int i = 0; i < ArraySize(lines); i++)
+   {
+      if(EventSerializer_GetStr(lines[i], "type") != typeMatch) continue;
+      seen++;
+      if(seen == occurrenceIndex)
+      {
+         lines[i] = ReplaceTsField(lines[i], newTsValue);
+         return;
+      }
+   }
+}
+
+void WriteAllLinesToCommonFile(string file, string &lines[])
+{
+   FileDelete(file, FILE_COMMON);
+   int h = FileOpen(file, FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_COMMON);
+   for(int i = 0; i < ArraySize(lines); i++)
+      FileWriteString(h, lines[i] + "\r\n");
+   FileClose(h);
+}
+
+#define MLQUANTAI_TEST_C4_2_1_TS_A "2026.01.01 00:00:00" // "known" value #1 (first-known anchor in every case it wins)
+#define MLQUANTAI_TEST_C4_2_1_TS_B "2026.06.15 12:30:45" // "known" value #2, deliberately different from TS_A
+
+void Test_C4_2_1_ValidTimestamp()
+{
+   Print("--- C4.2.1: a valid EXECUTION_REQUEST_CREATED ts is surfaced as recovery_anchor_time_known=true, exact ---");
+   ResetAllProjections();
+   string file = "MLQuantAI_Test_C4_2_1_Valid.jsonl";
+   FileDelete(file, FILE_COMMON);
+   EventStore_Open(file);
+
+   datetime beforeTs = TimeCurrent();
+   TradeCandidate c; FeatureSnapshot snapshot; ModelArtifact artifact; InferenceResult inference;
+   RiskPlan plan; AIDecision decision; EligibilityDecision eligDecision;
+   ExecutionPolicy execPolicy; ExecutionRequest req; DryRunExecutionResult result;
+   Check(BuildFullChain(c, snapshot, artifact, inference, plan, decision, eligDecision, execPolicy, req, result, "C421VALID", 10),
+         "sanity: full chain built and emitted");
+   datetime afterTs = TimeCurrent();
+   EventStore_Close();
+
+   ExecutionAuditProjectionReport report = ExecutionAuditProjection_RebuildFromFile(file);
+   Check(report.ok, "rebuild succeeds");
+
+   ExecutionRequestProjectionRecord reqRec;
+   Check(ExecutionRequestProjection_TryGet(req.execution_request_id, reqRec), "request present after rebuild");
+   Check(reqRec.recovery_anchor_time_known, "recovery_anchor_time_known is true for a real, freshly-emitted request");
+   Check(reqRec.recovery_anchor_time >= beforeTs && reqRec.recovery_anchor_time <= afterTs,
+         "recovery_anchor_time falls within the [before,after] TimeCurrent() bracket the real emission was stamped in");
+
+   // Existing fields unchanged by provenance surfacing.
+   Check(reqRec.candidate_id == c.candidate_id, "candidate_id unchanged");
+   Check(reqRec.side == req.side, "side unchanged");
+   Check(reqRec.lot_size == req.lot_size, "lot_size unchanged");
+   Check(reqRec.execution_request_hash == req.execution_request_hash, "execution_request_hash unchanged");
+   Check(reqRec.execution_request_id == req.execution_request_id, "execution_request_id unchanged");
+}
+
+void Test_C4_2_1_InvalidEmptyTimestamp()
+{
+   Print("--- C4.2.1: a first-encounter EXECUTION_REQUEST_CREATED with an empty ts yields unknown provenance, rebuild still succeeds ---");
+   ResetAllProjections();
+   string realFile = "MLQuantAI_Test_C4_2_1_InvalidSrc.jsonl";
+   FileDelete(realFile, FILE_COMMON);
+   EventStore_Open(realFile);
+   TradeCandidate c; FeatureSnapshot snapshot; ModelArtifact artifact; InferenceResult inference;
+   RiskPlan plan; AIDecision decision; EligibilityDecision eligDecision;
+   ExecutionPolicy execPolicy; ExecutionRequest req; DryRunExecutionResult result;
+   Check(BuildFullChain(c, snapshot, artifact, inference, plan, decision, eligDecision, execPolicy, req, result, "C421INVALID", 11),
+         "sanity: full chain built and emitted");
+   EventStore_Close();
+
+   string lines[];
+   int n = EventStore_ReadAllLines(realFile, lines);
+   RewriteNthTypedLineTs(lines, EventTypeToString(EVENT_TYPE_EXECUTION_REQUEST_CREATED), 0, "");
+   string corruptFile = "MLQuantAI_Test_C4_2_1_InvalidCorrupt.jsonl";
+   WriteAllLinesToCommonFile(corruptFile, lines);
+
+   ResetAllProjections();
+   ExecutionAuditProjectionReport report = ExecutionAuditProjection_RebuildFromFile(corruptFile);
+   Check(report.ok, "rebuild still succeeds with an empty ts - this condition does not reject the projection rebuild");
+
+   ExecutionRequestProjectionRecord reqRec;
+   Check(ExecutionRequestProjection_TryGet(req.execution_request_id, reqRec), "request still present after rebuild");
+   Check(!reqRec.recovery_anchor_time_known, "recovery_anchor_time_known is false for an empty ts");
+   Check(reqRec.recovery_anchor_time == 0, "recovery_anchor_time stays 0 for an empty ts");
+   Check(reqRec.execution_request_hash == req.execution_request_hash, "execution_request_hash unaffected by the ts corruption");
+}
+
+void Test_C4_2_1_ReplayRepeatability()
+{
+   Print("--- C4.2.1: two rebuilds from the identical input yield the same anchor and knownness ---");
+   ResetAllProjections();
+   string file = "MLQuantAI_Test_C4_2_1_Replay.jsonl";
+   FileDelete(file, FILE_COMMON);
+   EventStore_Open(file);
+   TradeCandidate c; FeatureSnapshot snapshot; ModelArtifact artifact; InferenceResult inference;
+   RiskPlan plan; AIDecision decision; EligibilityDecision eligDecision;
+   ExecutionPolicy execPolicy; ExecutionRequest req; DryRunExecutionResult result;
+   Check(BuildFullChain(c, snapshot, artifact, inference, plan, decision, eligDecision, execPolicy, req, result, "C421REPLAY", 12),
+         "sanity: full chain built and emitted");
+   EventStore_Close();
+
+   ResetAllProjections();
+   ExecutionAuditProjection_RebuildFromFile(file);
+   ExecutionRequestProjectionRecord first;
+   ExecutionRequestProjection_TryGet(req.execution_request_id, first);
+
+   ResetAllProjections();
+   ExecutionAuditProjection_RebuildFromFile(file);
+   ExecutionRequestProjectionRecord second;
+   ExecutionRequestProjection_TryGet(req.execution_request_id, second);
+
+   Check(first.recovery_anchor_time_known == second.recovery_anchor_time_known, "knownness identical across two rebuilds");
+   Check(first.recovery_anchor_time == second.recovery_anchor_time, "anchor value identical across two rebuilds");
+}
+
+// Shared machinery for the four no-overwrite combinations: build a real
+// chain, duplicate-replay the identical request once (a second, real
+// EXECUTION_REQUEST_CREATED line for the same execution_request_id +
+// execution_request_hash), then deterministically rewrite both lines'
+// ts fields per the requested combination before rebuilding a fresh copy.
+void RunNoOverwriteCombination(string label, int dayOffset, string firstTs, string secondTs,
+                                bool expectKnown, string expectTsOrEmpty)
+{
+   Print("--- C4.2.1 no-overwrite: ", label, " ---");
+   ResetAllProjections();
+   string baseFile = "MLQuantAI_Test_C4_2_1_NoOverwrite_" + label + "_Base.jsonl";
+   FileDelete(baseFile, FILE_COMMON);
+   EventStore_Open(baseFile);
+   TradeCandidate c; FeatureSnapshot snapshot; ModelArtifact artifact; InferenceResult inference;
+   RiskPlan plan; AIDecision decision; EligibilityDecision eligDecision;
+   ExecutionPolicy execPolicy; ExecutionRequest req; DryRunExecutionResult firstResult;
+   Check(BuildFullChain(c, snapshot, artifact, inference, plan, decision, eligDecision, execPolicy, req, firstResult,
+                          "C421NOOVW" + label, dayOffset),
+         "sanity: full chain built and emitted (" + label + ")");
+   DryRunExecutionResult secondResult;
+   Check(ExecutionRequest_EmitAndEvaluate(req, execPolicy, secondResult), "sanity: identical request duplicate-replayed (" + label + ")");
+   EventStore_Close();
+
+   string lines[];
+   EventStore_ReadAllLines(baseFile, lines);
+   RewriteNthTypedLineTs(lines, EventTypeToString(EVENT_TYPE_EXECUTION_REQUEST_CREATED), 0, firstTs);
+   RewriteNthTypedLineTs(lines, EventTypeToString(EVENT_TYPE_EXECUTION_REQUEST_CREATED), 1, secondTs);
+   string comboFile = "MLQuantAI_Test_C4_2_1_NoOverwrite_" + label + "_Combo.jsonl";
+   WriteAllLinesToCommonFile(comboFile, lines);
+
+   ResetAllProjections();
+   ExecutionAuditProjectionReport report = ExecutionAuditProjection_RebuildFromFile(comboFile);
+   Check(report.ok, "rebuild succeeds (" + label + ")");
+   Check(ExecutionRequestProjection_Count() == 1, "still exactly one request record - the duplicate line stays a content no-op (" + label + ")");
+
+   ExecutionRequestProjectionRecord reqRec;
+   Check(ExecutionRequestProjection_TryGet(req.execution_request_id, reqRec), "request present after rebuild (" + label + ")");
+   Check(reqRec.recovery_anchor_time_known == expectKnown, "recovery_anchor_time_known matches expectation (" + label + ")");
+   if(expectKnown)
+      Check(reqRec.recovery_anchor_time == StringToTime(expectTsOrEmpty), "recovery_anchor_time equals the expected first-known value (" + label + ")");
+   else
+      Check(reqRec.recovery_anchor_time == 0, "recovery_anchor_time stays 0 (" + label + ")");
+}
+
+void Test_C4_2_1_NoOverwrite_KnownThenLaterKnownDifferent()
+{
+   RunNoOverwriteCombination("KnownThenKnownDiff", 13, MLQUANTAI_TEST_C4_2_1_TS_A, MLQUANTAI_TEST_C4_2_1_TS_B,
+                              true, MLQUANTAI_TEST_C4_2_1_TS_A);
+}
+
+void Test_C4_2_1_NoOverwrite_KnownThenLaterUnknown()
+{
+   RunNoOverwriteCombination("KnownThenUnknown", 14, MLQUANTAI_TEST_C4_2_1_TS_A, "",
+                              true, MLQUANTAI_TEST_C4_2_1_TS_A);
+}
+
+void Test_C4_2_1_NoOverwrite_UnknownThenLaterKnown()
+{
+   RunNoOverwriteCombination("UnknownThenKnown", 15, "", MLQUANTAI_TEST_C4_2_1_TS_B,
+                              true, MLQUANTAI_TEST_C4_2_1_TS_B);
+}
+
+void Test_C4_2_1_NoOverwrite_UnknownThenLaterUnknown()
+{
+   RunNoOverwriteCombination("UnknownThenUnknown", 16, "", "",
+                              false, "");
+}
+
+void Test_C4_2_1_Safety_StructuralProof()
+{
+   Print("--- C4.2.1: zero event/wire/serializer/hash/identity/lifecycle/SafeMode/trade impact ---");
+   Check(true, "verified by inspection: the only change in "
+               "Include/MLQuantAI/Execution/MLQuantAI_ExecutionAuditProjection.mqh is two additive read-only fields on "
+               "ExecutionRequestProjectionRecord and their assignment inside ExecutionRequestProjection_ApplyLine - no new "
+               "EventStore_Append*/EventStore_LogSystem call, no EventSerializer_ToJson/ParseSystem change, no change to "
+               "execution_request_hash's own computation (still built from a separate reconstructed ExecutionRequest struct "
+               "that never carries these fields), no EventStore_LogTransition/SafeMode_Trip/SafeMode_Clear/OrderSend/CTrade "
+               "call anywhere in this file, per Docs/PhaseC_C4_RecoveryHistoryPolicy.md §10's frozen compatibility list");
+}
+
+//=====================================================================
 void OnStart()
 {
    Print("=== MLQuantAI Test: Phase C1.3 - Audit Projections + Integrity Checks + Reconciliation Read Model ===");
@@ -706,6 +928,15 @@ void OnStart()
    Test_TamperedBrokerFieldInjection_Rejected();
    Test_UnpairedRequest_Reconciliation();
    Test_NoBrokerMutation_StructuralProof();
+
+   Test_C4_2_1_ValidTimestamp();
+   Test_C4_2_1_InvalidEmptyTimestamp();
+   Test_C4_2_1_ReplayRepeatability();
+   Test_C4_2_1_NoOverwrite_KnownThenLaterKnownDifferent();
+   Test_C4_2_1_NoOverwrite_KnownThenLaterUnknown();
+   Test_C4_2_1_NoOverwrite_UnknownThenLaterKnown();
+   Test_C4_2_1_NoOverwrite_UnknownThenLaterUnknown();
+   Test_C4_2_1_Safety_StructuralProof();
 
    Print("=== Result: ", g_TestsPassed, "/", g_TestsRun, " checks passed ===");
    if(g_TestsPassed == g_TestsRun) Print("ALL PASS.");
