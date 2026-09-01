@@ -68,6 +68,15 @@ struct ExecutionRequestProjectionRecord
 
    long   source_sequence_number;
    string source_log_event_id;
+
+   // C4.2.1 (Docs/PhaseC_C4_RecoveryHistoryPolicy.md §10): read-only
+   // recovery-window provenance surfaced from the already-durable,
+   // already-parsed EXECUTION_REQUEST_CREATED base-envelope "ts" field.
+   // Additive only - never enters execution_request_hash (computed from
+   // a separate ExecutionRequest struct, see ApplyLine below), never
+   // affects identity, lifecycle, or any existing field's meaning.
+   datetime recovery_anchor_time;
+   bool     recovery_anchor_time_known;
 };
 
 void ExecutionRequestProjectionRecord_Init(ExecutionRequestProjectionRecord &r)
@@ -94,6 +103,8 @@ void ExecutionRequestProjectionRecord_Init(ExecutionRequestProjectionRecord &r)
    r.risk_amount = 0;
    r.source_sequence_number = 0;
    r.source_log_event_id = "";
+   r.recovery_anchor_time = 0;
+   r.recovery_anchor_time_known = false;
 }
 
 ExecutionRequestProjectionRecord g_ExecReqProj_Records[];
@@ -354,6 +365,21 @@ bool ExecutionRequestProjection_ApplyLine(string line, string &outReason)
    {
       if(g_ExecReqProj_Records[existingIdx].execution_request_hash == requestHash)
       {
+         // C4.2.1 first-known-timestamp rule (§10): a duplicate replay of
+         // an already-registered request is still a no-op for every
+         // request-content field, but the recovery-anchor provenance
+         // fields are a distinct exception - if the FIRST encountered
+         // event for this execution_request_id had unknown time
+         // (recovery_anchor_time_known still false) and THIS duplicate
+         // carries a non-zero base.ts, that later non-zero time becomes
+         // the first known anchor. Once recovery_anchor_time_known is
+         // already true, this branch makes no change, regardless of
+         // e.base.ts - the no-overwrite rule (both directions).
+         if(!g_ExecReqProj_Records[existingIdx].recovery_anchor_time_known && e.base.ts != 0)
+         {
+            g_ExecReqProj_Records[existingIdx].recovery_anchor_time = e.base.ts;
+            g_ExecReqProj_Records[existingIdx].recovery_anchor_time_known = true;
+         }
          outReason = "duplicate execution_request_id - already registered with an identical execution_request_hash, not re-applied";
          return true;
       }
@@ -365,6 +391,17 @@ bool ExecutionRequestProjection_ApplyLine(string line, string &outReason)
 
    candidate.source_sequence_number = e.base.sequence_number;
    candidate.source_log_event_id    = e.base.log_event_id;
+
+   // C4.2.1 set rule (§10): first-known-timestamp on initial registration.
+   // recovery_anchor_time_known is false on a freshly-Init'd candidate, so
+   // this is exactly the "recovery_anchor_time_known is false" branch of
+   // the frozen set rule - a zero e.base.ts leaves it unknown (0/false),
+   // a non-zero e.base.ts sets it known, matching §10's set-rule table.
+   if(e.base.ts != 0)
+   {
+      candidate.recovery_anchor_time = e.base.ts;
+      candidate.recovery_anchor_time_known = true;
+   }
 
    ExecutionRequestProjection_AppendRecord(candidate);
    outReason = "applied - new execution request registered";
