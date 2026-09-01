@@ -4,6 +4,48 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
+## [Unreleased] - C4.3 Recovery Window-Adequacy Evidence Contract (PROPOSED, docs-only, not adopted, 2026-09-01)
+
+C4.3 Recovery Window-Adequacy Evidence Contract
+PROPOSED — docs-only — not adopted.
+
+Proposes a deterministic, fail-closed contract for resolving
+`RECOVERY_WINDOW_ADEQUACY_UNASSESSED` to `PROVEN` or `INSUFFICIENT`
+per local fact, using a locally supplied (never live-fetched)
+coverage attestation compared against the broker-history query window
+actually used for that fact. No source file, test file, live
+broker/history call, network activity, EventStore write, serializer
+change, or C4.2/C4.2.1 implementation change is included. This
+checkpoint is documentation only.
+
+Adds §11 "C4.3 Recovery Window-Adequacy Evidence Contract (PROPOSED -
+not yet adopted)" to `Docs/PhaseC_C4_RecoveryHistoryPolicy.md`,
+defining: the `RecoveryCoverageAttestation` schema and its
+byte-exact identity/time-basis/integrity-marker comparison rules; the
+non-live `ICoverageAttestationSource` boundary (authorized v1 sources
+are static-file/parameter-only; any live or network implementation is
+explicitly forbidden); the two pure evaluator functions
+`RecoveryCoverage_ClassifyEvidence` and `RecoveryCoverage_Evaluate`
+and their frozen decision orders; the per-local-fact (never
+scan-wide) evaluation rule with a worked two-fact example;
+compatibility/non-mutation guarantees against the existing
+`ENUM_RECOVERY_FINDING` taxonomy, §9.4 schema, and §9.9 collapse
+rule; a 25-case required test matrix; and explicit v1 exclusions
+(symbol-scoped coverage, any live attestation source, terminal-only
+retention inference, scan-level aggregation, cryptographic
+attestation integrity).
+
+Baseline `mlquantai@c997c63b71543f18754bfb020e87b5e4115eddef` (the
+C4.2 Recovery Reconciliation merge commit, PR #10).
+
+No `RecoveryCoverageAttestation`, `ICoverageAttestationSource`,
+`RecoveryCoverage_ClassifyEvidence`, `RecoveryCoverage_Evaluate`, or
+`ENUM_RECOVERY_COVERAGE_EVIDENCE_STATUS` symbol exists anywhere in
+the codebase yet - this addendum defines the contract those symbols
+must satisfy once a separate, future C4.3 code/test authorization is
+granted. Adopting this addendum alone authorizes no implementation
+work.
+
 ## [Unreleased] - C4.2.1 Recovery-Anchor Provenance Addendum (PROPOSED, docs-only, not adopted, 2026-08-29)
 
 C4.2.1 Recovery-Anchor Provenance Addendum

@@ -1114,3 +1114,347 @@ authorization (paused per §9.12) remains separately gated behind both
 this addendum's adoption and a revised code/test authorization for the
 C4.2 allowlist itself - adopting this addendum alone does not
 reinstate C4.2's implementation authorization.
+
+## 11. C4.3 Recovery Window-Adequacy Evidence Contract (PROPOSED - not yet adopted)
+
+This section is a documentation-only proposal. No code, test, or
+schema in the merged C4.2 implementation is changed by this section.
+It defines the contract that a future, separately authorized C4.3
+implementation checkpoint must satisfy before
+`RECOVERY_WINDOW_ADEQUACY_UNASSESSED` may ever be resolved to
+`RECOVERY_WINDOW_ADEQUACY_PROVEN` or
+`RECOVERY_WINDOW_ADEQUACY_INSUFFICIENT` by `RecoveryReconciliation_ScanLive`.
+In C4.2 v1, `ScanLive` never sets `PROVEN` - no retention-proof
+mechanism exists yet. This is exactly the gap C4.3 closes.
+
+### 11.1 Purpose and non-goals
+
+Purpose: define a deterministic, fail-closed contract by which a
+locally supplied, non-live coverage attestation may be compared
+against the broker-history query window actually used for a given
+local fact, producing a tri-state adequacy verdict
+(`UNASSESSED`/`PROVEN`/`INSUFFICIENT`) for that fact's ORDER/DEAL
+comparison units.
+
+Non-goals, explicitly out of scope for this contract:
+  It does not claim that MQL5 `HistorySelect()` returning `true` proves
+    broker-side history completeness or retention. `HistorySelect()`
+    success proves only that the selection request itself succeeded,
+    including for a legitimately empty result - never a retention or
+    completeness certificate.
+  It does not add any live broker-retention query, live calendar-style
+    fetch, or network call of any kind. All coverage evidence is
+    supplied, never fetched, by design (see §11.5).
+  It does not modify the frozen §9.4 provenance-field schema, the
+    §9.9 canonical duplicate-collapse rule, or the existing
+    `ENUM_RECOVERY_FINDING` taxonomy.
+  It does not add symbol-scoped coverage. Per C4.2 v1 Option B, the
+    local symbol is architecturally always unknown, so the ORDER
+    comparison unit already always resolves to
+    `RECOVERY_LOCAL_EVIDENCE_UNAVAILABLE`; symbol-scoped attestation
+    would have no comparison unit to inform in v1 and is deferred
+    (§11.11).
+  It does not make any cryptographic integrity claim about a supplied
+    attestation. The `integrity_identifier` field (§11.3) is a
+    schema-recognition marker only, not a signature or hash guarantee.
+
+### 11.2 Definitions
+
+Required window: the broker-history query window that was actually
+  used to evaluate one specific local fact, i.e. the per-fact window
+  derived from that fact's own recovery anchor and the effective
+  overlap (per §9.2/§10), not a scan-wide aggregate. Adequacy is
+  always evaluated per local fact, never once per scan (§11.7).
+
+Attestation: a locally supplied, static
+  `RecoveryCoverageAttestation` record (§11.3) asserting that a named
+  broker/account/time-basis combination's history is retained and
+  queryable across a stated `[coverage_from, coverage_to]` interval,
+  valid through a stated `valid_until` time.
+
+Attestation usability: an attestation is usable for a given scan only
+  if it classifies as `RECOVERY_COVERAGE_EVIDENCE_VALID` under
+  `RecoveryCoverage_ClassifyEvidence` (§11.8) - present, well-formed,
+  matching broker/account/time-basis identity exactly, and not stale
+  as of the caller-supplied evaluation time.
+
+Tri-state semantics:
+  `RECOVERY_WINDOW_ADEQUACY_UNASSESSED` remains the fail-closed
+    default. It is returned whenever usable coverage evidence is
+    absent, invalid, mismatched, or stale, or whenever the underlying
+    `HistorySelect()` query itself did not succeed - never inferred as
+    a pass.
+  `RECOVERY_WINDOW_ADEQUACY_PROVEN` is returned only when a usable
+    attestation's `[coverage_from, coverage_to]` interval fully
+    contains the fact's required window AND the underlying history
+    query for that fact succeeded.
+  `RECOVERY_WINDOW_ADEQUACY_INSUFFICIENT` is returned when a usable
+    attestation exists but its interval does not fully contain the
+    required window, regardless of whether the history query
+    succeeded (§11.8 step 3 is evaluated before step 4).
+
+### 11.3 Attestation schema
+
+```cpp
+struct RecoveryCoverageAttestation
+{
+   string   broker_identity;
+   string   account_identity;
+   string   server_time_basis;
+   datetime coverage_from;
+   datetime coverage_to;
+   datetime valid_until;
+   string   issuer_identity;
+   string   evidence_reference;
+   string   integrity_identifier;
+};
+```
+
+`broker_identity`/`account_identity`/`server_time_basis` identify the
+scope the attestation applies to. `coverage_from`/`coverage_to` state
+the interval the issuer asserts is retained and queryable.
+`valid_until` states the time after which the attestation must no
+longer be trusted. `issuer_identity` and `evidence_reference` are
+free-form provenance/audit fields, not compared by the evaluator.
+`integrity_identifier` is a fixed schema-recognition marker (§11.4).
+
+### 11.4 Identity, time-basis, and integrity-marker comparison rules
+
+All identity and time-basis comparisons performed by
+`RecoveryCoverage_ClassifyEvidence` (§11.8) are byte-for-byte exact
+string comparisons. No case-folding, whitespace-trimming, alias
+resolution, locale-aware conversion, or default-value substitution is
+permitted at any step. An empty `broker_identity`,
+`account_identity`, or `server_time_basis` field on either the scan
+side or the attestation side fails classification at Tier 1 (treated
+as a mismatch, never as a wildcard or "unspecified" match).
+
+`integrity_identifier` must equal exactly the literal string
+`"RECOVERY_COVERAGE_ATTESTATION_C4_V1"`. Any other value, including a
+case-variant or trimmed variant, classifies the attestation as
+`RECOVERY_COVERAGE_EVIDENCE_INVALID`. This marker is a
+schema-recognition check only - it identifies that the record was
+constructed against this contract's schema version. It is explicitly
+NOT a cryptographic integrity guarantee; verifying that an
+attestation has not been tampered with or forged is out of scope for
+C4.3 v1 and is deferred to a hypothetical future trust/credential
+contract (§11.11).
+
+### 11.5 ICoverageAttestationSource boundary
+
+```cpp
+class ICoverageAttestationSource
+{
+public:
+   virtual bool TryGet(
+      string broker_identity,
+      string account_identity,
+      RecoveryCoverageAttestation &out_attestation,
+      string &out_reason
+   ) = 0;
+};
+```
+
+No `ICoverageAttestationSource` implementation may perform a network
+call, live broker query, terminal-history query, or any external live
+fetch in C4.3 v1. Implementations may read only operator/system-supplied
+static inputs, including configured parameters or a locally supplied
+static file, and must not mutate state.
+
+Authorized v1 implementations: `CsvStaticCoverageAttestationSource`
+(reads a locally supplied static file) and
+`ParameterCoverageAttestationSource` (reads configured EA input
+parameters). Explicitly forbidden in v1: `LiveBrokerCoverageAttestationSource`
+or any other implementation that performs a live or network fetch -
+this is a hard boundary, not a default.
+
+This mirrors the Phase B `INewsSource`/`CsvStaticNewsSource`/
+`LiveCalendarNewsSource` precedent, restricted here to only the
+static side of that split.
+
+| Responsibility | Component |
+|---|---|
+| Broker-history query execution | `IHistorySource` (frozen, C4.2) |
+| Coverage-attestation retrieval | `ICoverageAttestationSource` (new, C4.3) |
+| Deterministic adequacy computation | `RecoveryCoverage_Evaluate` / `RecoveryCoverage_ClassifyEvidence` (new, pure) |
+| Sequencing, single attestation fetch per scan, per-fact evaluation calls | `RecoveryReconciliation_ScanLive` (existing orchestrator, extended) |
+
+### 11.6 Pure evaluator functions
+
+```cpp
+enum ENUM_RECOVERY_COVERAGE_EVIDENCE_STATUS
+{
+   RECOVERY_COVERAGE_EVIDENCE_ABSENT = 0,
+   RECOVERY_COVERAGE_EVIDENCE_VALID,
+   RECOVERY_COVERAGE_EVIDENCE_INVALID,
+   RECOVERY_COVERAGE_EVIDENCE_STALE,
+   RECOVERY_COVERAGE_EVIDENCE_BROKER_MISMATCH,
+   RECOVERY_COVERAGE_EVIDENCE_ACCOUNT_MISMATCH,
+   RECOVERY_COVERAGE_EVIDENCE_TIME_BASIS_MISMATCH
+};
+
+ENUM_RECOVERY_COVERAGE_EVIDENCE_STATUS RecoveryCoverage_ClassifyEvidence(
+   bool     attestation_present,
+   const RecoveryCoverageAttestation &attestation,
+   string   scan_broker_identity,
+   string   scan_account_identity,
+   string   scan_server_time_basis,
+   datetime evaluation_time
+);
+
+ENUM_RECOVERY_WINDOW_ADEQUACY RecoveryCoverage_Evaluate(
+   datetime required_from,
+   datetime required_to,
+   datetime evaluation_time,
+   bool     history_select_succeeded,
+   const RecoveryCoverageAttestation &attestation,
+   ENUM_RECOVERY_COVERAGE_EVIDENCE_STATUS evidence_status
+);
+```
+
+Both functions are pure. Neither may call `TimeCurrent()`,
+`TimeLocal()`, `GetTickCount()`, `MathRand()`, or read any global or
+static state. `evaluation_time` is always supplied by the caller
+(the orchestrator's single §9.2/§10 capture point), never read
+internally. `RecoveryCoverage_Evaluate` takes `evidence_status` as an
+input rather than re-deriving it or taking a redundant
+`attestation_present` flag - evidence classification and adequacy
+evaluation are two separate pure steps, each independently testable.
+
+### 11.7 Per-local-fact evaluation rule and orchestrator sequencing
+
+`RecoveryCoverage_Evaluate` is called once per local fact, using that
+fact's own required window (§11.2) - never once per scan against an
+aggregate window. Two local facts in the same scan, evaluated against
+the same attestation, may legitimately receive different verdicts.
+
+Worked example: a scan holds two local facts, Order A (recovery
+anchor 09:00) and Order B (recovery anchor 06:00), both evaluated
+against the same supplied attestation with
+`coverage_from=07:00, coverage_to=12:00`. Order A's required window
+(anchor 09:00 minus overlap, forward) falls entirely inside
+`[07:00, 12:00]` and its history query succeeded, so Order A resolves
+to `PROVEN`. Order B's required window extends back to before 07:00,
+outside the attestation's covered interval, so Order B resolves to
+`INSUFFICIENT` - in the same scan, against the same attestation.
+
+Orchestrator sequencing (extends the existing `ScanLive` orchestrator,
+does not replace it):
+  1. Capture `scan_server_time` once, at the existing C4.2/§9.2 capture
+     point (after local-registry validation, per the fail-closed-boundary
+     fix already merged in C4.2).
+  2. Fetch the coverage attestation once per scan (not once per fact)
+     via the configured `ICoverageAttestationSource`, and classify it
+     once via `RecoveryCoverage_ClassifyEvidence` using
+     `scan_server_time` as `evaluation_time`.
+  3. For each local fact, using its own required window and its own
+     `history_select_succeeded` outcome, call `RecoveryCoverage_Evaluate`
+     with the single shared attestation and the single shared
+     evidence-classification result.
+
+### 11.8 Evidence classification decision table
+
+`RecoveryCoverage_ClassifyEvidence` evaluates the following conditions
+in the stated order. The first matching non-`VALID` status wins - no
+later condition in the table may overwrite a classification already
+made by an earlier one.
+
+| Order | Condition | Result |
+|---|---|---|
+| 1 | `attestation_present == false` | `ABSENT` |
+| 2 | Malformed interval (e.g. `coverage_from > coverage_to`) or `integrity_identifier` is not exactly `"RECOVERY_COVERAGE_ATTESTATION_C4_V1"` | `INVALID` |
+| 3 | `broker_identity` empty or not byte-exact equal to `scan_broker_identity` | `BROKER_MISMATCH` |
+| 4 | `account_identity` empty or not byte-exact equal to `scan_account_identity` | `ACCOUNT_MISMATCH` |
+| 5 | `server_time_basis` empty or not byte-exact equal to `scan_server_time_basis` | `TIME_BASIS_MISMATCH` |
+| 6 | `valid_until == 0` or `evaluation_time > valid_until` | `STALE` |
+| 7 | none of the above | `VALID` |
+
+`RecoveryCoverage_Evaluate`'s decision order (frozen):
+
+```
+1. Required window (required_from/required_to) unavailable or invalid
+   -> INSUFFICIENT
+2. evidence_status != RECOVERY_COVERAGE_EVIDENCE_VALID
+   -> UNASSESSED
+3. attestation.coverage_from > required_from OR
+   attestation.coverage_to   < required_to
+   -> INSUFFICIENT
+   (checked BEFORE step 4, regardless of history_select_succeeded)
+4. history_select_succeeded == false
+   -> UNASSESSED
+5. otherwise
+   -> PROVEN
+```
+
+### 11.9 Compatibility and non-mutation guarantees
+
+C4.3 MUST NOT change:
+  The 10 `ENUM_RECOVERY_FINDING` values, their order, or their
+    severity/posture mapping.
+  `RecoveryReconciliation_BuildReport`'s existing gate structure,
+    beyond supplying real (non-`UNASSESSED`) adequacy values where the
+    contract in this section allows it.
+  `IHistorySource`'s existing getter-knownness discipline.
+  The §9.9 canonical full-serialization duplicate-collapse rule or the
+    §9.4 frozen provenance-field schema.
+  C4.2.1's recovery-anchor semantics (§10).
+  Any EventStore, serializer, lifecycle, SafeMode, or trade-execution
+    behavior.
+
+C4.3 MAY additively add: the `RecoveryCoverageAttestation` DTO, the
+`ENUM_RECOVERY_COVERAGE_EVIDENCE_STATUS` enum, the
+`ICoverageAttestationSource` seam and its authorized static
+implementations, the two pure evaluator functions, and new
+diagnostic-only fields or detail text on the existing report -
+without adding any new `ENUM_RECOVERY_FINDING` value.
+
+### 11.10 Required test matrix (obligation only - not created by this addendum)
+
+The following 25 cases are the minimum obligation for a future C4.3
+implementation checkpoint; none are created by this docs-only
+addendum.
+
+| # | Case |
+|---|---|
+| 1 | No attestation supplied -> `ABSENT` -> `UNASSESSED` |
+| 2 | Attestation fully covers required window, query succeeded -> `PROVEN` |
+| 3 | Attestation covers required window exactly at both boundaries -> `PROVEN` |
+| 4 | Attestation partially covers required window (missing tail) -> `INSUFFICIENT` |
+| 5 | Attestation partially covers required window (missing head) -> `INSUFFICIENT` |
+| 6 | Attestation fully covers required window but query failed -> `UNASSESSED` |
+| 7 | Attestation does not cover required window AND query failed -> `INSUFFICIENT` (step 3 precedes step 4) |
+| 8 | `integrity_identifier` absent/empty -> `INVALID` -> `UNASSESSED` |
+| 9 | `integrity_identifier` wrong literal value -> `INVALID` -> `UNASSESSED` |
+| 10 | `integrity_identifier` case-variant of correct literal -> `INVALID` -> `UNASSESSED` |
+| 11 | `broker_identity` empty on attestation -> `BROKER_MISMATCH` -> `UNASSESSED` |
+| 12 | `broker_identity` mismatched (non-empty, different) -> `BROKER_MISMATCH` -> `UNASSESSED` |
+| 13 | `broker_identity` differs only by case/whitespace -> still `BROKER_MISMATCH` (no folding/trimming) |
+| 14 | `account_identity` empty -> `ACCOUNT_MISMATCH` -> `UNASSESSED` |
+| 15 | `account_identity` mismatched -> `ACCOUNT_MISMATCH` -> `UNASSESSED` |
+| 16 | `server_time_basis` empty -> `TIME_BASIS_MISMATCH` -> `UNASSESSED` |
+| 17 | `server_time_basis` mismatched -> `TIME_BASIS_MISMATCH` -> `UNASSESSED` |
+| 18 | `valid_until == 0` -> `STALE` -> `UNASSESSED` |
+| 19 | `evaluation_time > valid_until` -> `STALE` -> `UNASSESSED` |
+| 20 | `evaluation_time == valid_until` -> not stale, proceeds to coverage check |
+| 21 | Required window unavailable/invalid for the fact -> `INSUFFICIENT` regardless of evidence status |
+| 22 | Determinism: identical inputs to `RecoveryCoverage_ClassifyEvidence` and `RecoveryCoverage_Evaluate` yield identical outputs across repeated calls |
+| 23 | Per-scan/per-fact independence: the §11.7 worked example (Order A `PROVEN`, Order B `INSUFFICIENT`, same scan, same attestation) |
+| 24 | Coverage-gap-precedes-query-failure ordering proof: attestation both fails to cover the window and the query failed, result is `INSUFFICIENT`, never `UNASSESSED` |
+| 25 | Structural proof: neither `RecoveryCoverage_ClassifyEvidence` nor `RecoveryCoverage_Evaluate` contains a call to `TimeCurrent()`, `TimeLocal()`, `GetTickCount()`, `MathRand()`, terminal/history APIs, file I/O, network APIs, EventStore write APIs, registry/projection mutation APIs, SafeMode APIs, or trade APIs; neither function reads global or static state |
+
+### 11.11 Explicit future exclusions (out of scope for C4.3 v1)
+
+  Symbol-scoped coverage attestation. Per C4.2 v1 Option B the local
+    symbol is architecturally always unknown, so there is no
+    comparison unit for symbol-scoped evidence to inform yet.
+  Any live or network-fetching `ICoverageAttestationSource`
+    implementation.
+  Terminal-only retention inference (e.g. treating the oldest visible
+    ticket as a completeness boundary) - rejected as unreliable and
+    unimplementable safely (evidence Model B, rejected during C4.3
+    research).
+  A scan-level adequacy aggregate beyond diagnostic-only counts -
+    adequacy remains strictly per local fact (§11.7).
+  Cryptographic integrity/authenticity verification of a supplied
+    attestation - deferred to a hypothetical future C4.4-style
+    trust/credential contract.
