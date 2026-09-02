@@ -1,0 +1,2 @@
+account_identity,broker_identity,server_time_basis,coverage_from,coverage_to,valid_until,issuer_identity,evidence_reference,integrity_identifier
+1000001,ServerA,MT5_TRADE_SERVER_TIME,2026.09.01 00:00:00,2026.09.02 00:00:00,2026.09.02 00:00:00,OPS,Ref-A_01,RECOVERY_COVERAGE_ATTESTATION_C4_V1
