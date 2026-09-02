@@ -577,6 +577,98 @@ failures anywhere. This entry records verification results only; it
 does not claim a PR review, merge, release, production deployment, or
 C3.8.1 authorization.
 
+## [Unreleased] - C3.8.1 lineage-resolution amendment proposal (PROPOSED, docs-only, not yet adopted, 2026-08-27)
+
+Docs-only amendment proposal on baseline `mlquantai@9903267` (C3.8.0
+merged - `StateProjector_Count()`/`_GetAt()` now the sole sanctioned
+candidate-enumeration surface). Adds §§14-18 to
+`Docs/PhaseC_C3_8_ReconciliationIntegrationContract.md`, superseding the
+old nonbinding "Appendix A" notes. **Every new section is explicitly
+labeled "proposed for adoption... not effective until this docs-only
+amendment is reviewed and committed"** - this entry records a proposal,
+not an adopted contract. No `.mqh`/`.mq5` file, no test file, no
+`MLQuantAI.mq5` change, no compile, no test run.
+
+Produced via C3.8.1 Contract-Reconciliation Checkpoint 1 (baseline/
+ownership-map/algorithm proposal) and Docs-Only Checkpoint 2 (wording,
+formatting, and precision review), both conducted as read-only analysis
+before any repository write.
+
+Freezes-if-adopted: `ENUM_LINEAGE_ANOMALY` (NONE/NONPOSITIVE_TICKET/
+DUPLICATE_TRIPLE/MULTIPLE_EXECUTION_REQUESTS/AMBIGUOUS_TICKETS) as the
+qualifying-outcome classification, strictly separating "no evidence"
+from "malformed evidence"; a six-outcome deterministic resolution
+algorithm scoped to `SUBMISSION_STATUS_SUBMITTED` records only; a
+monotonic `report.ok`/`first_error` aggregation rule tied to final
+report-row order; `TX_MATCH_VOLUME_REACHED` as the sole terminal-
+evidence status (with `TX_MATCH_ORDER_TERMINAL` explicitly excluded as
+reserved/unassigned); explicit exclusion of C3.10A from the evidence
+graph (its scan functions return a report by value with no persistent
+`_Count`/`_GetAt` registry to read); and a full ownership map excluding
+`BrokerReconciliation`, `EventStoreValidator`, `ReplayEngine`, and every
+History/broker-mutating API.
+
+## [Unreleased] - C3.8 reconciliation integration design contract (DESIGN ONLY, docs-only, 2026-08-27)
+
+Docs-only design contract on baseline `mlquantai@ef6b934` (C1–C3.7, C3.9,
+C3.10 sealed). No `.mqh`/`.mq5` file, no test file, no `MLQuantAI.mq5`
+wiring, no new `ENUM_EVENT_TYPE`/`ENUM_REASON_CODE` value, no compile, no
+test run.
+
+Closes the gap `Docs/PhaseC_C3_TransactionReconciliationContract.md` §29
+explicitly named and left unresolved: `BrokerReconciliation` has zero
+visibility into `CANDIDATE_SUBMITTED` candidates. C3.9 (cross-candidate
+provenance conflict, `CANDIDATE_EXECUTED`-only) and C3.10 (delayed
+terminal rejection/cancel/expiry) each closed a narrower, adjacent gap
+instead - neither is a substitute for general submitted-candidate
+visibility.
+
+Freezes a pure, read-only `SubmittedCandidateVisibilityRow` diagnostic
+composition over `StateProjector` (sealed), `TransactionMatchingProjection`
+(C3.3, sealed), `DeferredTransactionProcessor` (C3.6, sealed), and a
+direct durable-log scan for this candidate's own `CANDIDATE_SUBMITTED`
+line (neither sealed projection carries a submission timestamp). No
+broker query, no lifecycle authority, no write of any kind.
+
+**User correction adopted as frozen policy**: `unresolved` is an
+evidence-only fact (`== !terminal_evidence_observed`, where
+`terminal_evidence_observed` is `TX_MATCH_VOLUME_REACHED` or a C3.10A-
+matched terminal rejection) - it is never a function of
+`DeferredTransactionProcessor`'s `recommendation`, since a missing/`NONE`/
+`BLOCKED` recommendation can reflect a policy/evidence-completeness
+outcome unrelated to whether the broker has produced any terminal
+evidence at all. An optional `unresolved_beyond_threshold` flag is frozen
+as strictly diagnostic - it can never trigger a lifecycle transition,
+broker action, recommendation override, Safe Mode trip, or future C5
+execution gate from within C3.8 itself.
+
+Also frozen: `TimeCurrent()`-only server-time age (never wall-clock/UTC);
+`age_known`/`submitted_at_known` fail closed to `false` (never a
+fabricated zero) on a missing, zero, future-dated, or unrecoverable
+submission timestamp; `NO_MATCH_YET` as a presentation-layer sentinel
+distinct from every real `ENUM_TX_MATCH_STATUS` value (`ENUM_TX_MATCH_
+STATUS` itself is not extended); a six-state observation/match ladder
+(no observation / unmatched / ambiguous / partial / full-fill / terminal
+rejection) the row must be able to express independently of the
+recommendation axis; an explicit caller-supplied file path for
+"archived/rotated store" test coverage (no discovery/search heuristic);
+and the restart-scenario fixture matrix from `Docs/PhaseC_C3_5_
+DeferredAuthorityContract.md` §14 (still unbuilt for the fill/general
+path - C3.10's own restart coverage is scoped to the rejection path
+only).
+
+Roadmap sequencing confirmed: C3.8 (this contract) closes before C4
+(recovery/history) and C5 (controlled execution, the `OnTick`/
+`OnTradeTransaction` wiring phase discussed under the working label
+"C5.0") - matching the original sequence frozen in `Docs/PhaseC_C3_5_
+DeferredAuthorityContract.md` §14, not the "C4 wiring" relabeling
+initially proposed in this round's chat and corrected before this
+document was written.
+
+Full frozen contract: `Docs/PhaseC_C3_8_ReconciliationIntegrationContract.md`.
+Implementation (C3.8 Commit 1+) remains a separately authorized future
+step.
+
 ## [Unreleased] - C3.10E2 implementation: terminal rejection audit acknowledgement (IMPLEMENTING, awaiting real MetaEditor run, 2026-08-27)
 
 New `EVENT_TYPE_TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED` (appended at the tail
