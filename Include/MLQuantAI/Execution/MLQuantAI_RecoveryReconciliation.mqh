@@ -23,23 +23,29 @@
 //|                                                                    |
 //| FROZEN LIMITATION (QA-mandated, explicit, not hidden; C4.2.2        |
 //| disposition path (a) - see ENUM_RECOVERY_WINDOW_ADEQUACY below):    |
-//| C4.2 v1 has no independently-verifiable window-adequacy proof       |
-//| mechanism (§3). RecoveryReconciliation_ScanLive() therefore NEVER   |
-//| sets adequacy=PROVEN, even when HistorySelect() itself succeeds -   |
-//| success only proves the terminal accepted the request, never that  |
-//| broker-side retention covered the full interval - a successful      |
-//| query is marked UNASSESSED, per §9.7 row 2's own frozen wording     |
-//| ("adequacy ... cannot be proven"). Consequence: every                |
-//| successfully-queried local fact still resolves to                  |
-//| RECOVERY_WINDOW_INSUFFICIENT/DEGRADED in production. C4.2 v1 is     |
-//| acquisition + normalization + deterministic diagnostics             |
-//| (UNMAPPABLE/DUPLICATE/ORPHAN, which are recovered-evidence-driven   |
-//| and independent of adequacy) only - it cannot yet emit an evidence- |
-//| sufficiency or corroboration/conflict conclusion. UNASSESSED never  |
-//| means "broker retention is known-insufficient" - it means C4.2      |
-//| cannot establish adequacy under the currently available API and    |
-//| contract mechanisms. See RecoveryReconciliation_ScanLive()'s own    |
-//| header comment below and Test_ScanLive_SuccessfulQuery_WindowNeverProvenAdequate.|
+//| C4.2 v1 alone has no independently-verifiable window-adequacy proof |
+//| mechanism (§3): HistorySelect() succeeding only proves the terminal |
+//| accepted the request, never that broker-side retention covered the |
+//| full interval. C4.3 v1 (§11, adopted) closes this gap for callers   |
+//| that supply an ICoverageAttestationSource via the five-argument     |
+//| RecoveryReconciliation_ScanLive() overload below: a successfully-   |
+//| queried local fact CAN now resolve to adequacy=PROVEN, but only     |
+//| when a usable, non-live coverage attestation fully covers that      |
+//| fact's own required window (§11.8's frozen decision order).         |
+//| The ORIGINAL four-argument C4.2 signature is UNCHANGED and          |
+//| preserves the original invariant exactly: it is a thin wrapper      |
+//| around NullCoverageAttestationSource (MLQuantAI_CoverageAttestation |
+//| .mqh), whose TryGet() always declines, so every C4.2-era caller     |
+//| still NEVER sets adequacy=PROVEN and every successfully-queried     |
+//| local fact still resolves to RECOVERY_WINDOW_INSUFFICIENT/DEGRADED, |
+//| exactly as before - see Test_ScanLive_SuccessfulQuery_             |
+//| WindowNeverProvenAdequate, which is unmodified by C4.3 and still    |
+//| calls only the four-argument form. UNASSESSED never means "broker  |
+//| retention is known-insufficient" - it means adequacy could not be   |
+//| established under the currently available evidence (no supplied    |
+//| attestation source, or a supplied one that is absent/invalid/stale/ |
+//| mismatched for this scan). See RecoveryReconciliation_ScanLive()'s  |
+//| own header comment below.                                          |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_RECOVERYRECONCILIATION_MQH__
 #define __MLQUANTAI_RECOVERYRECONCILIATION_MQH__
@@ -48,6 +54,8 @@
 #include "MLQuantAI_ExecutionAuditProjection.mqh"
 #include "MLQuantAI_TransactionMatchingProjection.mqh"
 #include "../Core/MLQuantAI_ContractVersions.mqh"
+#include "MLQuantAI_CoverageAttestation.mqh"
+#include "MLQuantAI_RecoveryCoverageEvaluator.mqh"
 
 // §9.2 planned identifier, first appearance in source.
 #define MLQUANTAI_C4_RECOVERY_OVERLAP_MINUTES_DEFAULT 60
@@ -246,6 +254,26 @@ enum ENUM_RECOVERY_WINDOW_ADEQUACY
 };
 
 //---------------------------------------------------------------------
+// C4.3 v1 addition (§11, adopted): maps the evaluator's private
+// ENUM_RECOVERY_COVERAGE_VERDICT (MLQuantAI_RecoveryCoverageEvaluator
+// .mqh) onto this module's own ENUM_RECOVERY_WINDOW_ADEQUACY above.
+// This is the only file authorized to see both enums - see
+// MLQuantAI_CoverageAttestation.mqh's header comment for why the
+// evaluator carries its own copy instead of depending on this one
+// (Case 25a's structural-review gate requires the evaluator include
+// only the attestation definition header).
+//---------------------------------------------------------------------
+ENUM_RECOVERY_WINDOW_ADEQUACY RecoveryCoverageVerdictToAdequacy(ENUM_RECOVERY_COVERAGE_VERDICT verdict)
+{
+   switch(verdict)
+   {
+      case RECOVERY_COVERAGE_VERDICT_PROVEN:       return RECOVERY_WINDOW_ADEQUACY_PROVEN;
+      case RECOVERY_COVERAGE_VERDICT_INSUFFICIENT: return RECOVERY_WINDOW_ADEQUACY_INSUFFICIENT;
+      default:                                      return RECOVERY_WINDOW_ADEQUACY_UNASSESSED;
+   }
+}
+
+//---------------------------------------------------------------------
 // RecoveryQueryOutcome - per local order_ticket's window-query provenance,
 // tri-state per the acquisition-contract QA round: query_attempted
 // (false only when bounds were invalid/anchor unknown - Select() never
@@ -264,6 +292,13 @@ struct RecoveryQueryOutcome
    ENUM_RECOVERY_WINDOW_ADEQUACY adequacy;
    ulong    order_ticket;
    bool     order_ticket_known;
+   // C4.3 v1 addition (§11, adopted) - private diagnostic state, not
+   // part of any frozen public schema. Left at its _Init default
+   // (ABSENT/"") whenever the per-fact coverage evaluator is never
+   // called for this outcome (anchor-unknown facts - see
+   // RecoveryReconciliation_ScanLive()'s per-fact loop).
+   ENUM_RECOVERY_COVERAGE_EVIDENCE_STATUS evidence_status;
+   string   evidence_detail;
 };
 
 void RecoveryQueryOutcome_Init(RecoveryQueryOutcome &r)
@@ -275,6 +310,8 @@ void RecoveryQueryOutcome_Init(RecoveryQueryOutcome &r)
    r.adequacy = RECOVERY_WINDOW_ADEQUACY_UNASSESSED;
    r.order_ticket = 0;
    r.order_ticket_known = false;
+   r.evidence_status = RECOVERY_COVERAGE_EVIDENCE_ABSENT;
+   r.evidence_detail = "";
 }
 
 //---------------------------------------------------------------------
@@ -479,8 +516,13 @@ void RRAppendRow(RecoveryReconciliationRow &rows[], int &count, const RecoveryRe
    count++;
 }
 
+// C4.3 v1 addition (§11, adopted): the optional `detail` parameter
+// defaults to "" - every pre-C4.3 call site is therefore unaffected
+// and still produces detail="" exactly as before. Only the Branch C
+// gating case below (query succeeded, adequacy not PROVEN) passes a
+// non-default value.
 void RRAppendLocalGatedRow(RecoveryReconciliationRow &rows[], int &count, const LocalOrderRecoveryFact &lf,
-                            string scope, ENUM_RECOVERY_FINDING finding)
+                            string scope, ENUM_RECOVERY_FINDING finding, string detail = "")
 {
    RecoveryReconciliationRow row;
    RecoveryReconciliationRow_Init(row);
@@ -490,6 +532,7 @@ void RRAppendLocalGatedRow(RecoveryReconciliationRow &rows[], int &count, const 
    row.comparison_scope = scope;
    row.finding = finding;
    row.posture = RecoveryFindingToPosture(finding);
+   row.detail = detail;
    RRAppendRow(rows, count, row);
 }
 
@@ -651,22 +694,36 @@ RecoveryReconciliationReport RecoveryReconciliation_BuildReport(
 
       bool gated = true;
       ENUM_RECOVERY_FINDING gateFinding = RECOVERY_WINDOW_INSUFFICIENT;
+      // C4.3 v1 addition (§11, adopted): row detail stays "" (the
+      // frozen default) in every branch except the one immediately
+      // below - see this function's Branch A/B/C/D freeze in the C4.3
+      // implementation-authorization design review. Branches A
+      // (anchor unknown) and B (query attempted but failed) preserve
+      // C4.2's exact empty-detail behavior; only Branch C (query
+      // succeeded, adequacy not PROVEN) surfaces the coverage
+      // evaluator's fixed canonical token, already computed onto the
+      // outcome by RecoveryReconciliation_ScanLive - never re-derived
+      // here, never containing a raw identity value or timestamp.
+      string gateDetail = "";
       if(!haveOutcome || !outcome.query_attempted)
          gateFinding = RECOVERY_WINDOW_INSUFFICIENT;
       else if(!outcome.query_succeeded)
          gateFinding = RECOVERY_HISTORY_EVIDENCE_UNAVAILABLE;
       else if(outcome.adequacy != RECOVERY_WINDOW_ADEQUACY_PROVEN)
+      {
          // Both UNASSESSED and INSUFFICIENT map to the same frozen
          // finding here (C4.2.2 disposition, path (a)) - only a PROVEN
          // adequacy unlocks full evidence evaluation below.
          gateFinding = RECOVERY_WINDOW_INSUFFICIENT;
+         gateDetail = outcome.evidence_detail;
+      }
       else
          gated = false;
 
       if(gated)
       {
-         RRAppendLocalGatedRow(rows, rowCount, lf, "ORDER", gateFinding);
-         RRAppendLocalGatedRow(rows, rowCount, lf, "AGGREGATE_DEAL_VOLUME", gateFinding);
+         RRAppendLocalGatedRow(rows, rowCount, lf, "ORDER", gateFinding, gateDetail);
+         RRAppendLocalGatedRow(rows, rowCount, lf, "AGGREGATE_DEAL_VOLUME", gateFinding, gateDetail);
          continue;
       }
 
@@ -1209,41 +1266,45 @@ string RecoveryReconciliation_BuildSessionIdentity(int effectiveOverlapMinutes, 
 // HistorySelect() call), then acquires per-local-fact window evidence
 // and hands everything to the pure builder above.
 //
-// FROZEN LIMITATION (QA-mandated, deliberate and explicit - not hidden;
-// C4.2.2 disposition, path (a) - no docs amendment required, since §9.7
-// row 2's own frozen wording already covers this: "adequacy ... cannot
-// be proven"): a successful Select() is marked
-// RECOVERY_WINDOW_ADEQUACY_UNASSESSED here, for every attempted query,
-// NEVER RECOVERY_WINDOW_ADEQUACY_PROVEN. §3's adequacy predicate
-// requires proof that the window covers the evidence interval a local
-// fact requires - a successful HistorySelect() only proves the terminal
-// ACCEPTED the selection request, never that broker-side history
-// retention actually covers the full requested interval or omitted
-// nothing. C4.2 v1 has no independently-verifiable adequacy-proof
-// mechanism (broker retention limits are not queryable from MQL5), so
-// this orchestrator can never legitimately claim PROVEN. UNASSESSED
+// TWO SIGNATURES (C4.3 v1 addition, §11, adopted):
+//  - The original four-argument C4.2 form below is a thin,
+//    behavior-preserving wrapper around the five-argument form -  it
+//    supplies a NullCoverageAttestationSource (MLQuantAI_
+//    CoverageAttestation.mqh), whose TryGet() always declines. Every
+//    existing C4.2 caller/test therefore keeps its exact original
+//    behavior with zero source changes required.
+//  - The five-argument form takes an ICoverageAttestationSource and is
+//    C4.3's real entry point: it fetches and classifies one coverage
+//    attestation per scan (§11.7 step 2), then calls
+//    RecoveryCoverage_Evaluate once per local fact, using that fact's
+//    own required window (§11.7 step 3), never a scan-wide aggregate.
+//
+// FROZEN LIMITATION, still true for the four-argument form only
+// (QA-mandated, deliberate and explicit - not hidden; C4.2.2
+// disposition, path (a)): with no attestation source supplied, a
+// successful Select() is marked RECOVERY_WINDOW_ADEQUACY_UNASSESSED,
+// for every attempted query, NEVER RECOVERY_WINDOW_ADEQUACY_PROVEN - a
+// successful HistorySelect() only proves the terminal ACCEPTED the
+// selection request, never that broker-side history retention actually
+// covers the full requested interval or omitted nothing. UNASSESSED
 // does NOT mean "broker retention is known-insufficient" - it means
-// adequacy cannot be established under the currently available API and
-// contract mechanisms. The practical consequence: RecoveryReconciliation_
-// BuildReport's per-local-fact gate (only RECOVERY_WINDOW_ADEQUACY_PROVEN
-// unlocks RECOVERY_LOCAL_EVIDENCE_UNAVAILABLE/RECOVERY_NO_CORROBORATING_
-// HISTORY/RECOVERY_FACT_CONFLICT/RECOVERY_FACT_CORROBORATED; both
-// UNASSESSED and INSUFFICIENT map to RECOVERY_WINDOW_INSUFFICIENT) means
-// EVERY successfully-queried local fact still resolves to
-// RECOVERY_WINDOW_INSUFFICIENT, DEGRADED, in this checkpoint - C4.2 v1
-// implements acquisition, normalization, and deterministic diagnostics
-// (RECOVERY_UNMAPPABLE_HISTORY_RECORD/RECOVERY_DUPLICATE_HISTORY_RECORD/
-// RECOVERY_ORPHAN_HISTORY_ORDER/RECOVERY_ORPHAN_HISTORY_DEAL, which are
-// recovered-evidence-driven and independent of adequacy), but it cannot
-// yet emit an evidence-sufficiency or corroboration/conflict conclusion.
-// That requires a future, separately adopted contract amendment or
-// mechanism that can set RECOVERY_WINDOW_ADEQUACY_PROVEN. See
-// Test_ScanLive_SuccessfulQuery_WindowNeverProvenAdequate in
-// Tests/MLQuantAI_Test_C4_2_RecoveryReconciliation.mq5 for the
-// deterministic proof of this limitation.
+// adequacy cannot be established under the currently available
+// evidence. See Test_ScanLive_SuccessfulQuery_WindowNeverProvenAdequate
+// in Tests/MLQuantAI_Test_C4_2_RecoveryReconciliation.mq5 (unmodified
+// by C4.3, still calling only the four-argument form) for the
+// deterministic proof that this invariant still holds there.
+//---------------------------------------------------------------------
+// Compile-order note: the five-argument overload is DEFINED FIRST,
+// deliberately - MQL5 compiles single-pass, so the four-argument
+// wrapper below (which calls the five-argument form) needs that
+// overload already declared/defined above it, not merely mentioned in
+// a comment. A forward declaration would have worked too; defining the
+// real implementation first and the thin wrapper second is the
+// simpler of the two and avoids a duplicate signature to keep in sync.
 //---------------------------------------------------------------------
 RecoveryReconciliationReport RecoveryReconciliation_ScanLive(
    IHistorySource &src,
+   ICoverageAttestationSource &attestationSrc,
    bool overrideSupplied, int overlapMinutesOverride,
    RecoveryScanDiagnostics &outDiag)
 {
@@ -1326,6 +1387,32 @@ RecoveryReconciliationReport RecoveryReconciliation_ScanLive(
    // sessionId.
    datetime scanServerTime = TimeCurrent();
 
+   // C4.3 v1 addition (§11, adopted): scan context, read exactly once
+   // per scan, at this same capture point - never per-fact (§11.7 step
+   // 1). Exact ordinal comparison only; no trim/case-fold/alias/
+   // wildcard/inference/fallback/default anywhere downstream (§11.4).
+   // ACCOUNT_SERVER (not ACCOUNT_COMPANY) is the frozen broker/venue
+   // identity - it names the trade server the account is connected to,
+   // narrower and more appropriate than the broker company name for
+   // distinguishing demo/live or cross-server attestation reuse.
+   string scanBrokerIdentity  = AccountInfoString(ACCOUNT_SERVER);
+   string scanAccountIdentity = IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
+   string scanServerTimeBasis = "MT5_TRADE_SERVER_TIME";
+
+   // §11.7 step 2: fetch and classify the coverage attestation once per
+   // scan (not once per fact). scanEvidenceStatus is then handed,
+   // unchanged, into every per-fact RecoveryCoverage_Evaluate call
+   // below.
+   RecoveryCoverageAttestation scanAttestation;
+   RecoveryCoverageAttestation_Init(scanAttestation);
+   string scanAttestationReason = "";
+   bool scanAttestationPresent = attestationSrc.TryGet(scanBrokerIdentity, scanAccountIdentity,
+                                                         scanAttestation, scanAttestationReason);
+   ENUM_RECOVERY_COVERAGE_EVIDENCE_STATUS scanEvidenceStatus = RecoveryCoverage_ClassifyEvidence(
+      scanAttestationPresent, scanAttestation,
+      scanBrokerIdentity, scanAccountIdentity, scanServerTimeBasis,
+      scanServerTime);
+
    // Deterministic, time-independent session identity - built only now
    // that localFacts[] is fully populated, since RecoveryReconciliation_
    // BuildSessionIdentity's whole point is to derive from the scan's
@@ -1368,17 +1455,26 @@ RecoveryReconciliationReport RecoveryReconciliation_ScanLive(
       outDiag.skipped_order_slots += skippedO;
       outDiag.skipped_deal_slots  += skippedD;
       outcomes[i].query_succeeded = succeeded;
-      // A successful query is marked UNASSESSED, never PROVEN - see this
-      // function's header comment (FROZEN LIMITATION / C4.2.2 disposition
-      // path (a)). A successful Select() proves only that the terminal
-      // accepted the request, never that broker-side history retention
-      // actually covered the full requested interval. C4.2 v1 has no
-      // independently-verifiable adequacy-proof mechanism, so it never
-      // claims PROVEN - deliberately and explicitly, not silently. A
-      // failed query (succeeded==false) leaves adequacy at its _Init
-      // default (UNASSESSED) too - it is not evaluated in that branch,
-      // since RECOVERY_HISTORY_EVIDENCE_UNAVAILABLE already governs.
-      outcomes[i].adequacy = RECOVERY_WINDOW_ADEQUACY_UNASSESSED;
+
+      // C4.3 v1 addition (§11, adopted): per-local-fact evaluation,
+      // using THIS fact's own required window (queryFrom/queryTo) -
+      // never a scan-wide aggregate (§11.7 step 3). With the
+      // four-argument wrapper's NullCoverageAttestationSource,
+      // scanEvidenceStatus is always ABSENT here, so
+      // RecoveryCoverage_Evaluate's decision-order step 2 always fires
+      // and this always resolves to UNASSESSED - reproducing C4.2's
+      // original unconditional-UNASSESSED behavior exactly (see this
+      // function's header comment). A failed query
+      // (succeeded==false) can still resolve to INSUFFICIENT rather
+      // than UNASSESSED when the attestation independently proves a
+      // coverage gap - decision-order step 3 is checked before step 4,
+      // deliberately (§11.8).
+      ENUM_RECOVERY_COVERAGE_VERDICT verdict = RecoveryCoverage_Evaluate(
+         queryFrom, queryTo, scanServerTime, succeeded,
+         scanAttestation, scanEvidenceStatus);
+      outcomes[i].adequacy = RecoveryCoverageVerdictToAdequacy(verdict);
+      outcomes[i].evidence_status = scanEvidenceStatus;
+      outcomes[i].evidence_detail = RecoveryCoverage_DetailToken(scanEvidenceStatus, verdict);
 
       if(succeeded)
       {
@@ -1399,6 +1495,29 @@ RecoveryReconciliationReport RecoveryReconciliation_ScanLive(
 
    return RecoveryReconciliation_BuildReport(localFacts, allOrders, allDeals, outcomes,
                                               effectiveOverlapMinutes, true, "");
+}
+
+// C4.2-compatible four-argument wrapper (see this function's header
+// comment above for the full two-signature rationale). Every existing
+// C4.2 caller/test keeps its exact original behavior unchanged.
+//
+// Ownership note: this file intentionally depends only on
+// ICoverageAttestationSource/NullCoverageAttestationSource
+// (MLQuantAI_CoverageAttestation.mqh), never on any concrete
+// implementation - RecoveryReconciliation_ScanLive() must not be
+// coupled to one particular attestation source. A caller that wants
+// C4.3's parameter-supplied attestation path must separately
+// #include <MLQuantAI/Execution/MLQuantAI_ParameterCoverageAttestationSource.mqh>,
+// construct and Configure() a ParameterCoverageAttestationSource
+// itself, and pass it to the five-argument overload below - simply
+// including this file does NOT enable parameter attestation.
+RecoveryReconciliationReport RecoveryReconciliation_ScanLive(
+   IHistorySource &src,
+   bool overrideSupplied, int overlapMinutesOverride,
+   RecoveryScanDiagnostics &outDiag)
+{
+   NullCoverageAttestationSource noAttestation;
+   return RecoveryReconciliation_ScanLive(src, noAttestation, overrideSupplied, overlapMinutesOverride, outDiag);
 }
 
 #endif // __MLQUANTAI_RECOVERYRECONCILIATION_MQH__
