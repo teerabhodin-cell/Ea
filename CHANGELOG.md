@@ -4,10 +4,44 @@ All notable changes to MLQuantAI. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 `MLQUANTAI_EA_VERSION` in `Include/MLQuantAI/Core/MLQuantAI_VersionRegistry.mqh`.
 
-## [Unreleased] - C4.3 Recovery Window-Adequacy Evidence Contract (PROPOSED, docs-only, not adopted, 2026-09-01)
+## [Unreleased] - C4.3 v1 implementation: recovery coverage attestation evaluation (PASSED 57/57, real MetaEditor run, merged to mlquantai via PR #12, 2026-09-02)
+
+Implements the C4.3 §11 contract (adopted via PR #11) as a first,
+parameter-source-only checkpoint. Delivers:
+`Include/MLQuantAI/Execution/MLQuantAI_CoverageAttestation.mqh`
+(`RecoveryCoverageAttestation` struct,
+`ENUM_RECOVERY_COVERAGE_EVIDENCE_STATUS`,
+`ICoverageAttestationSource`, `NullCoverageAttestationSource`);
+`MLQuantAI_ParameterCoverageAttestationSource.mqh`
+(`ParameterCoverageAttestationSource`, v1's only implemented concrete
+source, with presence-only validation at its frozen source boundary);
+`MLQuantAI_RecoveryCoverageEvaluator.mqh` (the two pure §11.6
+evaluator functions plus the additive `RecoveryCoverage_DetailToken`
+report-detail helper); and a new five-argument
+`RecoveryReconciliation_ScanLive` overload in
+`MLQuantAI_RecoveryReconciliation.mqh`, with the original
+four-argument signature preserved as a behavior-identical wrapper.
+
+`CsvStaticCoverageAttestationSource`, though already authorized by
+§11.5, was deliberately excluded from this checkpoint's scope and is
+deferred to a separate C4.3.1 implementation checkpoint. No
+`MLQuantAI.mq5` call site is wired to construct or configure any
+attestation source; that remains reserved for a future checkpoint.
+
+Validation (real MetaEditor compile/run; no compiler access in this
+session): C4.3 suite — 0 errors, 0 warnings, 57/57 checks passed.
+C4.2 regression suite
+(`MLQuantAI_Test_C4_2_RecoveryReconciliation.mq5`, unmodified) —
+0 errors, 0 warnings, 143/143 checks passed, matching the original
+sealed baseline.
+
+Implementation commit `beb60db`. PR #12. Integration merge commit
+`5ab1cf0`.
+
+## [Unreleased] - C4.3 Recovery Window-Adequacy Evidence Contract (ADOPTED, docs-only, merged to mlquantai via PR #11, 2026-09-01)
 
 C4.3 Recovery Window-Adequacy Evidence Contract
-PROPOSED — docs-only — not adopted.
+ADOPTED — docs-only — merged to mlquantai via PR #11, 2026-09-01.
 
 Proposes a deterministic, fail-closed contract for resolving
 `RECOVERY_WINDOW_ADEQUACY_UNASSESSED` to `PROVEN` or `INSUFFICIENT`
@@ -38,13 +72,15 @@ attestation integrity).
 Baseline `mlquantai@c997c63b71543f18754bfb020e87b5e4115eddef` (the
 C4.2 Recovery Reconciliation merge commit, PR #10).
 
-No `RecoveryCoverageAttestation`, `ICoverageAttestationSource`,
+Adopting this addendum alone authorized no implementation work. At the
+time PR #11 merged this documentation-only addendum into `mlquantai`,
+no `RecoveryCoverageAttestation`, `ICoverageAttestationSource`,
 `RecoveryCoverage_ClassifyEvidence`, `RecoveryCoverage_Evaluate`, or
-`ENUM_RECOVERY_COVERAGE_EVIDENCE_STATUS` symbol exists anywhere in
-the codebase yet - this addendum defines the contract those symbols
-must satisfy once a separate, future C4.3 code/test authorization is
-granted. Adopting this addendum alone authorizes no implementation
-work.
+`ENUM_RECOVERY_COVERAGE_EVIDENCE_STATUS` symbol existed in the
+codebase. This addendum defined the contract those symbols would later
+need to satisfy. A separately authorized C4.3 v1 implementation
+checkpoint subsequently delivered all five symbols; see the C4.3 v1
+implementation entry above.
 
 ## [Unreleased] - C4.2.1 Recovery-Anchor Provenance Addendum (PROPOSED, docs-only, not adopted, 2026-08-29)
 

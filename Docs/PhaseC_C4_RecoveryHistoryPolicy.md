@@ -1115,17 +1115,35 @@ this addendum's adoption and a revised code/test authorization for the
 C4.2 allowlist itself - adopting this addendum alone does not
 reinstate C4.2's implementation authorization.
 
-## 11. C4.3 Recovery Window-Adequacy Evidence Contract (PROPOSED - not yet adopted)
+## 11. C4.3 Recovery Window-Adequacy Evidence Contract (ADOPTED; v1 implemented)
 
-This section is a documentation-only proposal. No code, test, or
-schema in the merged C4.2 implementation is changed by this section.
-It defines the contract that a future, separately authorized C4.3
-implementation checkpoint must satisfy before
-`RECOVERY_WINDOW_ADEQUACY_UNASSESSED` may ever be resolved to
-`RECOVERY_WINDOW_ADEQUACY_PROVEN` or
-`RECOVERY_WINDOW_ADEQUACY_INSUFFICIENT` by `RecoveryReconciliation_ScanLive`.
-In C4.2 v1, `ScanLive` never sets `PROVEN` - no retention-proof
-mechanism exists yet. This is exactly the gap C4.3 closes.
+This section's contract text was adopted via PR #11 (merge commit
+`1f63800037a439066273473e42a4dbc77c8da71b`). No code, test, or schema
+in the merged C4.2 implementation was changed by adopting this text.
+
+A first implementation checkpoint (v1) was separately authorized,
+built, and merged: PR #12 (implementation commit `beb60db`,
+integration merge commit `5ab1cf0`) delivers the
+`RecoveryCoverageAttestation` schema (§11.3), the
+`ICoverageAttestationSource` boundary (§11.5),
+`ParameterCoverageAttestationSource` as v1's only implemented concrete
+source, the two pure evaluator functions (§11.6), and the full 25-case
+test matrix (§11.10): 57/57 checks passed, with the C4.2 suite
+unaffected (143/143 regression checks passed, matching the sealed
+baseline). `CsvStaticCoverageAttestationSource`, though authorized by
+§11.5, was deferred out of v1's implementation scope to a separate
+C4.3.1 checkpoint and does not exist yet.
+
+Before this v1 merge, `RecoveryReconciliation_ScanLive`'s original
+four-argument signature never set `RECOVERY_WINDOW_ADEQUACY_PROVEN`:
+no retention-proof mechanism existed. That signature is preserved
+unchanged through a `NullCoverageAttestationSource` wrapper and still
+never sets `PROVEN`. The new five-argument overload added by C4.3 v1
+can resolve `PROVEN` when a usable attestation is supplied and covers a
+given local fact's required window (§11.7/§11.8); this was the gap
+C4.3 v1 closed. No `MLQuantAI.mq5` call site constructs or configures
+an attestation source yet; runtime wiring is reserved for a future
+checkpoint.
 
 ### 11.1 Purpose and non-goals
 
