@@ -128,6 +128,10 @@ input int    MaxAllowedGapPoints = 100;    // Max Gap Allowed, pts
 input int    GapDetectionSeconds = 60;     // Gap Detection, Sec
 input int    MaxSlippagePoints   = 20;     // Max Slippage, pts
 input int    MaxSpreadAllowed    = 40;     // Max Spread Allowed, pts
+input bool   UseLatencyGuard          = false; // Use Latency Guard (พักเปิดไม้ถ้า execution ช้าต่อเนื่อง)
+input int    MaxLatencyMs             = 500;   // Max Latency, ms (เกินนี้ถือว่าไม้นั้นฟิลช้า)
+input int    LatencyGuardTriggerCount = 3;     // Consecutive Slow Fills to Trigger (จำนวนไม้ช้าติดกัน)
+input int    LatencyGuardPauseSeconds = 60;    // Pause Duration, Sec (ระยะเวลาพักเปิดไม้ใหม่)
 
 input group "===== 10. Dashboard ====="
 input double UIScaleMultiplier   = 1.0;    // Dashboard Size Multiplier (ตัวคูณขนาดแดชบอร์ด)
@@ -185,6 +189,11 @@ bool     IsClosingState     = false;  // สถานะกำลังปิด
 // บัญชี/VPS นั้นๆ ไม่ใช่บั๊กของ EA - อัปเดตทุกครั้งที่ OrderSend() สำเร็จ ไม่ผูกกับ order ที่ถูก reject
 double LastFillSlippagePoints = 0.0;  // |ราคาที่ฟิลจริง - ราคาที่ตั้งใจส่ง| เป็นจุด (ราคาตลาดจริง ไม่ปรับ m_multiplier)
 uint   LastFillLatencyMs       = 0;    // เวลาระหว่างส่งคำสั่งถึงได้ผลตอบกลับจากโบรกเกอร์ (ms) - ตัวแทนของ ping
+
+// Latency Guard - นับไม้ที่ฟิลช้าติดกัน (latency > MaxLatencyMs) เพื่อพักเปิดไม้ใหม่ชั่วคราว
+// เมื่อ execution แย่ต่อเนื่อง (กัน exposure เพิ่มตอนเน็ต/โบรกเกอร์มีปัญหา ซึ่งเป็นสาเหตุที่ทำให้บัญชีเบี่ยงเบนกันได้)
+int      ConsecutiveBadLatencyCount = 0;
+datetime LatencyGuardActiveUntil    = 0;
 
 // ตัวแปรสำหรับคำนวณ Max Drawdown (%) และ ($)
 double   PeakBalanceForDD   = 0.0;
@@ -273,6 +282,7 @@ double CalcEmergencySL(bool isBuy, double entryPrice, double point);
 void RecordFillStats(uint sendTick, double intendedPrice, double filledPrice, double point);
 bool IsCentAccount();
 double ComputeEffectiveThreshold(double dollarAmt, double pctAmt, double basisValue);
+bool IsLatencyGuardActive();
 void ApplyBasketBreakevenAndPartial(double currentProfit);
 void CheckForceHedgeOnDD();
 bool TryOpenForceHedgeOrder(string reasonTag, string logDetail);
@@ -729,6 +739,25 @@ void RecordFillStats(uint sendTick, double intendedPrice, double filledPrice, do
    if(point <= 0) return;
    LastFillLatencyMs      = GetTickCount() - sendTick;
    LastFillSlippagePoints = MathAbs(filledPrice - intendedPrice) / point;
+
+   if(!UseLatencyGuard) return;
+
+   if(LastFillLatencyMs > (uint)MaxLatencyMs)
+   {
+      ConsecutiveBadLatencyCount++;
+      if(ConsecutiveBadLatencyCount >= LatencyGuardTriggerCount)
+      {
+         LatencyGuardActiveUntil    = TimeCurrent() + LatencyGuardPauseSeconds;
+         ConsecutiveBadLatencyCount = 0;
+         PrintFormat("🐢 [LATENCY GUARD] %d fills in a row over %dms - pausing new entries for %ds.",
+                     LatencyGuardTriggerCount, MaxLatencyMs, LatencyGuardPauseSeconds);
+         LogEvent(StringFormat(GetUIString("Execution ช้าต่อเนื่อง - พักเปิดไม้ %d วิ", "Slow execution - pausing new entries %ds"), LatencyGuardPauseSeconds));
+      }
+   }
+   else
+   {
+      ConsecutiveBadLatencyCount = 0;
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -762,6 +791,18 @@ double ComputeEffectiveThreshold(double dollarAmt, double pctAmt, double basisVa
    if(dollarAmt > 0 && pctDollar > 0) return MathMin(dollarAmt, pctDollar);
    if(pctDollar > 0) return pctDollar;
    return dollarAmt;
+}
+
+//+------------------------------------------------------------------+
+//| Latency Guard - เมื่อไม้ฟิลช้าติดกันครบ LatencyGuardTriggerCount ครั้ง        |
+//| (ตั้งใน RecordFillStats) จะ block การเปิดไม้ใหม่แบบ unconditional เหมือน    |
+//| News Filter / Daily Loss Limit คือ block แม้มี basket เปิดค้างอยู่ เพราะ    |
+//| จุดประสงค์คือหยุดเพิ่ม exposure ตอน execution แย่ ไม่ใช่แค่กันการเปิดบาสเก็ตใหม่   |
+//+------------------------------------------------------------------+
+bool IsLatencyGuardActive()
+{
+   if(!UseLatencyGuard) return false;
+   return (TimeCurrent() < LatencyGuardActiveUntil);
 }
 
 //+------------------------------------------------------------------+
@@ -1501,6 +1542,7 @@ void OnTick()
    bool timeAllowed      = IsTradingAllowedByTime();
    bool newsBlocked      = IsNewsBlackout();
    bool dailyLossBlocked = IsDailyLossLimitReached();
+   bool latencyBlocked   = IsLatencyGuardActive();
    bool dailyGoalReached = IsDailyGoalReached();
    bool lowVolatility    = IsVolatilityTooLow();
    bool highVolatility   = IsVolatilityTooHigh();
@@ -1518,7 +1560,7 @@ void OnTick()
    bool dailyGoalBlocksEntry = dailyGoalReached && (openPositions == 0);
    bool lowVolBlocksEntry    = lowVolatility    && (openPositions == 0);
    bool highVolBlocksEntry   = highVolatility   && (openPositions == 0);
-   if(!timeBlocksEntry && !newsBlocked && !dailyLossBlocked && !dailyGoalBlocksEntry && !lowVolBlocksEntry && !highVolBlocksEntry)
+   if(!timeBlocksEntry && !newsBlocked && !dailyLossBlocked && !latencyBlocked && !dailyGoalBlocksEntry && !lowVolBlocksEntry && !highVolBlocksEntry)
    {
       if(!IsClosingState && !equityLocked && !TradingHalted && (MaxBasketProfit < effTargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
       {
@@ -1538,7 +1580,7 @@ void OnTick()
          if(openPositions > 0 && currentProfit > 0)
          {
             IsClosingState = true;
-            string blockReason = timeBlocksEntry ? "Outside trading hours" : (newsBlocked ? "News blackout window" : (dailyLossBlocked ? "Daily loss limit reached" : (dailyGoalBlocksEntry ? "Daily goal reached" : (lowVolBlocksEntry ? "Volatility too low" : "Volatility too high"))));
+            string blockReason = timeBlocksEntry ? "Outside trading hours" : (newsBlocked ? "News blackout window" : (dailyLossBlocked ? "Daily loss limit reached" : (latencyBlocked ? "Latency Guard active (slow execution)" : (dailyGoalBlocksEntry ? "Daily goal reached" : (lowVolBlocksEntry ? "Volatility too low" : "Volatility too high")))));
             PrintFormat("⏰ [ENTRY BLOCKED] %s and in profit -> Auto Closing all active positions...", blockReason);
             ClearEverythingAsync();
             DeleteVisualTSLine();
@@ -2783,6 +2825,7 @@ int DrawServerTimeRow(int y, int openPos, int pendingOrders)
    else if(!timeAllowed)                           { dotColor = C'239,68,68';  statusTxt = GetUIString("นอกเวลาเทรด", "OFF-TIME"); }
    else if(IsNewsBlackout())                       { dotColor = C'168,85,247'; statusTxt = GetUIString("พักช่วงข่าว", "NEWS PAUSE"); }
    else if(IsDailyLossLimitReached())              { dotColor = C'239,68,68';  statusTxt = GetUIString("ครบขาดทุนวันนี้", "DAILY LOSS HIT"); }
+   else if(IsLatencyGuardActive())                 { dotColor = C'239,68,68';  statusTxt = GetUIString("พักไม้ Latency สูง", "LATENCY GUARD"); }
    else if(IsDailyGoalReached())                   { dotColor = C'34,197,94';  statusTxt = GetUIString("ถึงเป้าวันนี้แล้ว", "DAILY GOAL HIT"); }
    else if(IsVolatilityTooLow())                   { dotColor = C'251,146,60'; statusTxt = GetUIString("ตลาดนิ่งเกินไป", "LOW VOLATILITY"); }
    else if(IsVolatilityTooHigh())                  { dotColor = C'239,68,68';  statusTxt = GetUIString("ตลาดผันผวนสูงเกินไป", "HIGH VOLATILITY"); }
