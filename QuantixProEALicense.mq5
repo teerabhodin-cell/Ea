@@ -30,6 +30,24 @@ enum ENUM_LOT_TYPE
    LOT_RISK_PERCENT  // % of Risk (คำนวณตาม % ความเสี่ยง)
 };
 
+// สถานะ "ระบบกำลังทำ/รออะไรอยู่" แบบเดียว คำนวณครั้งเดียวต่อรอบ (ดู ComputeSystemDecision) แล้วให้ทั้ง
+// Dashboard (DrawSystemDecisionPanel) อ่านค่าไปแสดงผลอย่างเดียว - กันไม่ให้ลำดับความสำคัญของเงื่อนไข
+// ถูกเขียนซ้ำสองที่แล้วหลุดไม่ตรงกัน (บั๊กแบบเดียวกับ blockReason ที่เจอและแก้ไปแล้วก่อนหน้านี้)
+enum ENUM_SYSTEM_DECISION
+{
+   DECISION_HALTED,           // TradingHalted - หยุดทำงานถาวร
+   DECISION_CLOSING,          // IsClosingState - กำลังปิดไม้
+   DECISION_LATENCY_GUARD,    // Latency Guard ทำงาน - พักไม้ชั่วคราว
+   DECISION_NEWS_BLOCK,       // อยู่ในช่วงพักข่าว
+   DECISION_DAILY_LOSS,       // ครบขาดทุนวันนี้
+   DECISION_TIME_BLOCK,       // นอกเวลาเทรด (เฉพาะตอนพอร์ตว่าง)
+   DECISION_DAILY_GOAL,       // ถึงเป้ากำไรวันนี้ (เฉพาะตอนพอร์ตว่าง)
+   DECISION_VOLATILITY_LOW,   // ตลาดนิ่งเกินไป (เฉพาะตอนพอร์ตว่าง)
+   DECISION_VOLATILITY_HIGH,  // ตลาดผันผวนสูงเกินไป (เฉพาะตอนพอร์ตว่าง)
+   DECISION_MANAGING_BASKET,  // มีไม้เปิดอยู่ - กำลังบริหารบาสเก็ต
+   DECISION_WAIT_GRID         // ว่าง รอราคาแตะจุดเปิดไม้แรก
+};
+
 //=========================== HARD LICENSE LOCK ================================//
 // รายชื่อเลขบัญชี MT5 ที่อนุญาตให้รัน EA นี้ได้ (ทั้งเดโมและบัญชีจริง) - ไฟล์นี้คนละตัวกับ
 // QuantixProEA.mq5 (รันบนชาร์ตจริงได้ปกติ ไม่มีล็อคบัญชี) **ห้ามทำเป็น input เด็ดขาด**
@@ -204,6 +222,10 @@ uint   LastFillLatencyMs       = 0;    // เวลาระหว่างส�
 int      ConsecutiveBadLatencyCount = 0;
 datetime LatencyGuardActiveUntil    = 0;
 
+// สถานะ "ระบบกำลังทำ/รออะไรอยู่" ล่าสุด - คำนวณครั้งเดียวต่อรอบ UpdateDashboard() ผ่าน
+// ComputeSystemDecision() แล้วเก็บไว้ที่นี่ ให้ Dashboard อ่านไปแสดงผลอย่างเดียว
+ENUM_SYSTEM_DECISION CurrentDecision = DECISION_WAIT_GRID;
+
 // ตัวแปรสำหรับคำนวณ Max Drawdown (%) และ ($)
 double   PeakBalanceForDD   = 0.0;
 double   MaxDrawdownPercent = 0.0;
@@ -302,6 +324,7 @@ bool IsCentAccount();
 double ComputeEffectiveThreshold(double dollarAmt, double pctAmt, double basisValue);
 bool IsLatencyGuardActive();
 bool CheckAndRollWeek(const MqlDateTime &dt, int &weekStartDay);
+ENUM_SYSTEM_DECISION ComputeSystemDecision(int openPos);
 void ApplyBasketBreakevenAndPartial(double currentProfit);
 void CheckForceHedgeOnDD();
 bool TryOpenForceHedgeOrder(string reasonTag, string logDetail);
@@ -836,6 +859,24 @@ bool CheckAndRollWeek(const MqlDateTime &dt, int &weekStartDay)
    if(mondayDayOfYear == weekStartDay) return false;
    weekStartDay = mondayDayOfYear;
    return true;
+}
+
+// ลำดับความสำคัญเดียวกับที่ OnTick ใช้ตัดสินใจ block การเปิดไม้จริง (unconditional block ก่อน
+// ตามด้วย flat-only) - ตัวเช็คเงื่อนไขแต่ละตัว (IsNewsBlackout ฯลฯ) คือ single source of truth
+// อยู่แล้ว ฟังก์ชันนี้แค่แปลผลรวมเป็นสถานะเดียวสำหรับโชว์ผล ไม่ได้ตัดสินใจเทรดเอง
+ENUM_SYSTEM_DECISION ComputeSystemDecision(int openPos)
+{
+   if(TradingHalted)                                   return DECISION_HALTED;
+   if(IsClosingState)                                  return DECISION_CLOSING;
+   if(IsLatencyGuardActive())                          return DECISION_LATENCY_GUARD;
+   if(IsNewsBlackout())                                return DECISION_NEWS_BLOCK;
+   if(IsDailyLossLimitReached())                       return DECISION_DAILY_LOSS;
+   if(!IsTradingAllowedByTime() && openPos == 0)       return DECISION_TIME_BLOCK;
+   if(IsDailyGoalReached() && openPos == 0)            return DECISION_DAILY_GOAL;
+   if(IsVolatilityTooLow() && openPos == 0)            return DECISION_VOLATILITY_LOW;
+   if(IsVolatilityTooHigh() && openPos == 0)           return DECISION_VOLATILITY_HIGH;
+   if(openPos > 0)                                     return DECISION_MANAGING_BASKET;
+   return DECISION_WAIT_GRID;
 }
 
 //+------------------------------------------------------------------+
@@ -3079,7 +3120,7 @@ int DrawServerTimeRow(int y, int openPos, int pendingOrders)
 // "ตอนนี้ EA กำลังทำอะไรอยู่" ตรงๆ ในกล่องเดียว แทนที่จะต้องไล่อ่านการ์ดตัวเลขหลายใบแล้วตีความเอง
 int DrawCommandRow(int y, int openPos, int pendingOrders)
 {
-   int cols  = 4;
+   int cols  = 3;
    int gap   = S(10);
    int cardW = (DASH_W - S(14) * 2 - gap * (cols - 1)) / cols;
    int cardH = S(200);
@@ -3149,35 +3190,6 @@ int DrawCommandRow(int y, int openPos, int pendingOrders)
       DrawStatusLine(lx, ly, lw3, GetUIString("เทรดอัตโนมัติ", "Auto Trading"), autoTrade ? "ON" : "OFF", autoTrade ? C'34,197,94' : C'239,68,68'); ly += lstep;
       DrawStatusLine(lx, ly, lw3, GetUIString("ฟอร์ซเฮดจ์", "Hedge"), hedgeOn ? "ON" : "OFF", hedgeOn ? C'34,197,94' : C'120,120,135'); ly += lstep;
       DrawStatusLine(lx, ly, lw3, GetUIString("โหมดแก้ไม้", "Recovery"), UseRecoveryMode ? "ON" : "OFF", UseRecoveryMode ? C'34,197,94' : C'120,120,135');
-   }
-
-   // คอลัมน์ 4: System Decision - รวมสถานะฟิลเตอร์ต่างๆ ที่กระจายกันอยู่ให้เป็นคำอธิบายภาษาคนบรรทัดเดียว
-   // ลำดับความสำคัญเดียวกับ blockReason ใน OnTick (ตัว unconditional block ก่อน ตามด้วย flat-only)
-   cx += cardW + gap;
-   DrawCardBG(cx, y, cardW, cardH, GetUIString("การตัดสินใจของระบบ", "SYSTEM DECISION"), "🧠");
-   {
-      string headTH, headEN, reasonTH, reasonEN;
-      if(TradingHalted)                              { headTH = "หยุดทำงานถาวร";       headEN = "EA HALTED";             reasonTH = "หยุดเปิดไม้ใหม่ถาวร";              reasonEN = "New entries stopped permanently."; }
-      else if(IsClosingState)                        { headTH = "กำลังปิดไม้";          headEN = "CLOSING POSITIONS";     reasonTH = "กำลังปิดบาสเก็ตปัจจุบัน";           reasonEN = "Closing current basket now."; }
-      else if(IsLatencyGuardActive())                { headTH = "พักไม้ (Latency สูง)"; headEN = "LATENCY GUARD ACTIVE";  reasonTH = "Execution ช้าต่อเนื่อง พักไม้ชั่วคราว"; reasonEN = "Slow execution - pausing entries."; }
-      else if(IsNewsBlackout())                      { headTH = "พักช่วงข่าว";          headEN = "NEWS BLACKOUT";         reasonTH = "อยู่ในช่วงพักข่าว";                reasonEN = "Inside news blackout window."; }
-      else if(IsDailyLossLimitReached())              { headTH = "ครบขาดทุนวันนี้";       headEN = "DAILY LOSS HIT";        reasonTH = "ขาดทุนวันนี้ถึงเพดานแล้ว";           reasonEN = "Daily loss limit reached."; }
-      else if(!IsTradingAllowedByTime() && openPos == 0) { headTH = "นอกเวลาเทรด";      headEN = "OUTSIDE TRADING HOURS"; reasonTH = "อยู่นอกเวลาเทรดที่กำหนด";           reasonEN = "Outside allowed trading hours."; }
-      else if(IsDailyGoalReached() && openPos == 0)   { headTH = "ถึงเป้ากำไรวันนี้";     headEN = "DAILY GOAL REACHED";    reasonTH = "กำไรวันนี้ถึงเป้าแล้ว";              reasonEN = "Daily profit goal reached."; }
-      else if(IsVolatilityTooLow() && openPos == 0)   { headTH = "ตลาดนิ่งเกินไป";       headEN = "LOW VOLATILITY";        reasonTH = "ตลาดนิ่งกว่าเกณฑ์ที่ตั้ง";            reasonEN = "Volatility below the floor."; }
-      else if(IsVolatilityTooHigh() && openPos == 0)  { headTH = "ตลาดผันผวนสูงเกินไป";  headEN = "HIGH VOLATILITY";       reasonTH = "ตลาดผันผวนเกินเกณฑ์";              reasonEN = "Volatility above the ceiling."; }
-      else if(openPos > 0)                            { headTH = "กำลังบริหารบาสเก็ต";    headEN = "MANAGING BASKET";       reasonTH = "มีไม้เปิด " + IntegerToString(openPos) + " ไม้ รอชั้นถัดไป"; reasonEN = IntegerToString(openPos) + " open - watching next level."; }
-      else                                             { headTH = "รอราคาแตะชั้นกริด";     headEN = "WAITING FOR GRID LEVEL"; reasonTH = "รอราคาแตะจุดเปิดไม้แรก";            reasonEN = "Waiting for first entry level."; }
-
-      UIFontSet(SF(15), FW_BOLD);
-      DashCanvas.TextOut(cx + S(14), y + S(48), GetUIString(headTH, headEN), ColorToARGB(C'251,193,7'));
-      UIFontSet(SF(12));
-      DashCanvas.TextOut(cx + S(14), y + S(72), GetUIString(reasonTH, reasonEN), ColorToARGB(C'160,160,180'));
-
-      double nb = GetNextGridTargetPrice(true), ns = GetNextGridTargetPrice(false);
-      int rowY = y + cardH - S(46);
-      DrawKV(cx + S(14), rowY, cardW - S(28), GetUIString("Buy ถัดไป", "Next Buy"), DoubleToString(nb, _Digits), C'160,160,180', C'34,197,94', 13); rowY += S(23);
-      DrawKV(cx + S(14), rowY, cardW - S(28), GetUIString("Sell ถัดไป", "Next Sell"), DoubleToString(ns, _Digits), C'160,160,180', C'239,68,68', 13);
    }
 
    return y + cardH + S(12);
@@ -3368,15 +3380,66 @@ int DrawEquityFeatureRow(int y)
    return y + rowH + S(12);
 }
 
+// แปลง CurrentDecision (คำนวณไว้แล้วครั้งเดียวใน UpdateDashboard ผ่าน ComputeSystemDecision) เป็น
+// ข้อความ/สีสำหรับแสดงผล - ฟังก์ชันนี้เป็นแค่ "ตัวแปล" ไม่มีการตัดสินใจเงื่อนไขใดๆ ในตัวเอง
+void GetDecisionLabels(ENUM_SYSTEM_DECISION d, int openPos, string &headTH, string &headEN, string &reasonTH, string &reasonEN, color &clr)
+{
+   switch(d)
+   {
+      case DECISION_HALTED:          headTH = "หยุดทำงานถาวร";        headEN = "EA HALTED";             reasonTH = "หยุดเปิดไม้ใหม่ถาวรตามเงื่อนไขที่ตั้งไว้";       reasonEN = "New entries stopped permanently by a configured stop."; clr = C'239,68,68';  break;
+      case DECISION_CLOSING:         headTH = "กำลังปิดไม้";           headEN = "CLOSING POSITIONS";     reasonTH = "กำลังปิดบาสเก็ตปัจจุบันตามเงื่อนไข";            reasonEN = "Closing the current basket now.";                       clr = C'251,146,60'; break;
+      case DECISION_LATENCY_GUARD:   headTH = "พักไม้ (Latency สูง)";  headEN = "LATENCY GUARD ACTIVE";  reasonTH = "Execution ช้าต่อเนื่องหลายไม้ พักเปิดไม้ชั่วคราว"; reasonEN = "Slow execution detected repeatedly - pausing entries."; clr = C'239,68,68';  break;
+      case DECISION_NEWS_BLOCK:      headTH = "พักช่วงข่าว";           headEN = "NEWS BLACKOUT";         reasonTH = "อยู่ในช่วงเวลาห้ามเปิดไม้รอบข่าวสำคัญ";          reasonEN = "Inside the news blackout window.";                      clr = C'168,85,247'; break;
+      case DECISION_DAILY_LOSS:      headTH = "ครบขาดทุนวันนี้";        headEN = "DAILY LOSS HIT";        reasonTH = "ขาดทุนที่ปิดรอบแล้ววันนี้ถึงเพดานที่ตั้งไว้";      reasonEN = "Today's realized loss hit the configured limit.";       clr = C'239,68,68';  break;
+      case DECISION_TIME_BLOCK:      headTH = "นอกเวลาเทรด";          headEN = "OUTSIDE TRADING HOURS"; reasonTH = "อยู่นอกช่วงเวลาที่อนุญาตให้เปิดไม้ใหม่";          reasonEN = "Outside the allowed trading-hours window.";              clr = C'239,68,68';  break;
+      case DECISION_DAILY_GOAL:      headTH = "ถึงเป้ากำไรวันนี้";       headEN = "DAILY GOAL REACHED";    reasonTH = "กำไรที่ปิดรอบแล้ววันนี้ถึงเป้าแล้ว หยุดเปิดไม้ใหม่"; reasonEN = "Today's realized profit hit the goal.";                clr = C'34,197,94';  break;
+      case DECISION_VOLATILITY_LOW:  headTH = "ตลาดนิ่งเกินไป";         headEN = "LOW VOLATILITY";        reasonTH = "ความผันผวนต่ำกว่าเกณฑ์ที่ตั้งไว้";               reasonEN = "Volatility is below the configured floor.";             clr = C'251,146,60'; break;
+      case DECISION_VOLATILITY_HIGH: headTH = "ตลาดผันผวนสูงเกินไป";    headEN = "HIGH VOLATILITY";       reasonTH = "ความผันผวนสูงกว่าเกณฑ์ที่ตั้งไว้";               reasonEN = "Volatility is above the configured ceiling.";           clr = C'239,68,68';  break;
+      case DECISION_MANAGING_BASKET: headTH = "กำลังบริหารบาสเก็ต";      headEN = "MANAGING BASKET";       reasonTH = "มีไม้เปิดอยู่ " + IntegerToString(openPos) + " ไม้ - รอราคาแตะชั้นถัดไป/เป้ากำไร"; reasonEN = IntegerToString(openPos) + " position(s) open - watching next level or target."; clr = C'56,189,248'; break;
+      default:                       headTH = "รอราคาแตะชั้นกริด";       headEN = "WAITING FOR GRID LEVEL"; reasonTH = "ราคายังไม่แตะจุดเปิดไม้แรกของกริด";              reasonEN = "Price has not reached the next grid entry level yet."; clr = C'251,193,7'; break;
+   }
+}
+
+// แผงเด่นตรงกลาง - บอกตรงๆ ว่าตอนนี้ระบบกำลังทำ/รออะไรอยู่ (อ่านจาก CurrentDecision ที่คำนวณไว้แล้ว
+// ครั้งเดียวต่อรอบ) พร้อมราคาเป้า Buy/Sell ถัดไปตัวใหญ่ - เป็นจุดสนใจหลักของแถวนี้ตามที่ผู้ใช้ต้องการ
+void DrawSystemDecisionPanel(int x, int y, int w, int h, int openPos)
+{
+   DrawCardBG(x, y, w, h, GetUIString("การตัดสินใจของระบบ", "SYSTEM DECISION"), "🧠");
+
+   string headTH, headEN, reasonTH, reasonEN;
+   color  clr;
+   GetDecisionLabels(CurrentDecision, openPos, headTH, headEN, reasonTH, reasonEN, clr);
+
+   UIFontSet(SF(20), FW_BOLD);
+   string headTxt = GetUIString(headTH, headEN);
+   int hw = EstimateTextWidth(headTxt, SF(20));
+   DashCanvas.TextOut(x + w / 2 - hw / 2, y + S(54), headTxt, ColorToARGB(clr));
+
+   UIFontSet(SF(13));
+   string reasonTxt = GetUIString(reasonTH, reasonEN);
+   int rw = EstimateTextWidth(reasonTxt, SF(13));
+   DashCanvas.TextOut(x + w / 2 - rw / 2, y + S(82), reasonTxt, ColorToARGB(C'160,160,180'));
+
+   double nb = GetNextGridTargetPrice(true), ns = GetNextGridTargetPrice(false);
+   int halfW = w / 2;
+   int numY  = y + h - S(66);
+   UIFontSet(SF(13));
+   DashCanvas.TextOut(x + S(26), numY, GetUIString("Buy ถัดไป", "NEXT BUY"), ColorToARGB(C'160,160,180'));
+   DashCanvas.TextOut(x + halfW + S(10), numY, GetUIString("Sell ถัดไป", "NEXT SELL"), ColorToARGB(C'160,160,180'));
+   UIFontSet(SF(22), FW_BOLD);
+   DashCanvas.TextOut(x + S(26), numY + S(20), "↑ " + DoubleToString(nb, _Digits), ColorToARGB(C'34,197,94'));
+   DashCanvas.TextOut(x + halfW + S(10), numY + S(20), "↓ " + DoubleToString(ns, _Digits), ColorToARGB(C'239,68,68'));
+}
+
 // แถวใหม่: บริหารความเสี่ยง (แท่งความคืบหน้า Daily Loss/Daily Goal/Max DD + สถานะฟิลเตอร์ตลาด) ซ้าย
-// + ตารางโพซิชั่นที่เปิดอยู่จริงขวา - เดิมข้อมูลพวกนี้กระจายอยู่ในการ์ด RISK/ORDERS เป็นตัวเลขล้วน
-// แถวนี้แปลงเป็นภาพ (แท่ง/ตาราง) ให้กวาดสายตาดูออกเร็วขึ้นแทนต้องอ่านตัวเลขทีละบรรทัด
-int DrawRiskPositionsRow(int y)
+// + การตัดสินใจของระบบเด่นตรงกลาง + ตารางโพซิชั่นที่เปิดอยู่จริงขวา
+int DrawRiskPositionsRow(int y, int openPos)
 {
    int gap    = S(12);
-   int totalW = DASH_W - S(14) * 2 - gap;
-   int rcW    = (int)(totalW * 0.42);
-   int ptW    = totalW - rcW;
+   int totalW = DASH_W - S(14) * 2 - gap * 2;
+   int rcW    = (int)(totalW * 0.29);
+   int sdW    = (int)(totalW * 0.40);
+   int ptW    = totalW - rcW - sdW;
    int rowH   = S(230);
 
    DrawCardBG(S(14), y, rcW, rowH, GetUIString("บริหารความเสี่ยง", "RISK CONTROL"), "🛡️");
@@ -3411,7 +3474,10 @@ int DrawRiskPositionsRow(int y)
       DrawStatusLine(bx, by, bw, GetUIString("กัน Gap", "Gap Guard"), UseGapProtection ? "ON" : "OFF", UseGapProtection ? C'34,197,94' : C'120,120,135');
    }
 
-   int px = S(14) + rcW + gap;
+   int sdx = S(14) + rcW + gap;
+   DrawSystemDecisionPanel(sdx, y, sdW, rowH, openPos);
+
+   int px = sdx + sdW + gap;
    DrawCardBG(px, y, ptW, rowH, GetUIString("โพซิชั่นปัจจุบัน", "CURRENT POSITIONS"), "📑");
    DrawPositionsTable(px + S(14), y + S(50), ptW - S(28), rowH - S(66));
 
@@ -3670,13 +3736,15 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
    DashCanvas.Erase(ColorToARGB(C'6,9,18'));
 
    int y = S(14);
+   CurrentDecision = ComputeSystemDecision(openPos);
+
    y = DrawHeader(y);
    y = DrawInfoBar(y);
    y = DrawServerTimeRow(y, openPos, pendingOrders);
    y = DrawCommandRow(y, openPos, pendingOrders);
    y = DrawStatCardsRow(y, balance, equity, dailyProfit, currentProfit, maxProfit);
    y = DrawEquityFeatureRow(y);
-   y = DrawRiskPositionsRow(y);
+   y = DrawRiskPositionsRow(y, openPos);
    y = DrawStatsRow(y);
    y = DrawTickerBar(y);
    y = DrawNewsCard(y);
