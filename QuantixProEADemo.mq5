@@ -81,11 +81,14 @@ input ulong  MagicNumber            = 112233;
 
 input group "===== 4. Target & Trailing ====="
 input double TargetProfit        = 5.0;    // Target Profit $ (เป้ากำไร)
+input double TargetProfitPct     = 0.0;    // Target Profit % of Balance (0=ปิด, ใช้ยอดก่อนเริ่มบาสเก็ตเป็นฐาน)
 input double TrailingStopUSD     = 0.2;    // Trailing Distance $ (ระยะเทรล)
 input double DailyProfitGoal     = 100.0;  // Daily Profit Goal $ (เป้ากำไรรายวัน, ใช้แสดงในเกจ Dashboard)
+input double DailyProfitGoalPct  = 0.0;    // Daily Profit Goal % of Balance (0=ปิด, ใช้ยอดก่อนเริ่มวันเป็นฐาน)
 input bool   UseDailyGoalStop    = false;  // Stop Trading at Daily Goal (หยุดเปิดไม้เมื่อถึงเป้ากำไรวันนี้)
 input bool   UseDailyLossLimit   = false;  // Use Daily Loss Limit (จำกัดขาดทุนรายวัน)
 input double DailyLossLimit      = 100.0;  // Daily Loss Limit $ (เพดานขาดทุนรายวัน)
+input double DailyLossLimitPct   = 0.0;    // Daily Loss Limit % of Balance (0=ปิด, ใช้ยอดก่อนเริ่มวันเป็นฐาน)
 
 input group "===== 5. Trend Filters ====="
 input bool   UseEMAFilter           = true;    // Use EMA Filter (ใช้ EMA)
@@ -237,6 +240,8 @@ datetime EventLogTimeVal[EVENT_LOG_MAX];
 
 int      DayStartDay          = -1; // dt.day_of_year ของวันที่รีเซ็ต DailyRealizedProfit ไว้ล่าสุด
 double   DailyRealizedProfit  = 0.0; // กำไรวันนี้แบบ "ปิดรอบแล้ว" เท่านั้น - บวกเพิ่มตอนบาสเก็ตปิดจริง ไม่ใช่ floating P/L สด
+double   DayStartBalance      = 0.0; // ยอดเงินตอนเริ่มวันใหม่ (ก่อนบาสเก็ตของวันนั้นปิดเลย) - ฐานคำนวณ % ของ Daily Profit Goal / Daily Loss Limit
+double   BasketStartBalance   = 0.0; // ยอดเงินตอนเริ่มบาสเก็ตนี้ (ก่อนไม้แรกฟิล) - ฐานคำนวณ % ของ Target Profit
 
 // Handle สำหรับอินดิเคเตอร์ ATR / EMA / Multi-Timeframe EMA / Bollinger Bands
 int      atrHandle       = INVALID_HANDLE;
@@ -273,6 +278,7 @@ double GetCalculatedLotSize(int nextLevel);
 double CalcEmergencySL(bool isBuy, double entryPrice, double point);
 void RecordFillStats(uint sendTick, double intendedPrice, double filledPrice, double point);
 bool IsCentAccount();
+double ComputeEffectiveThreshold(double dollarAmt, double pctAmt, double basisValue);
 void ApplyBasketBreakevenAndPartial(double currentProfit);
 void CheckForceHedgeOnDD();
 bool TryOpenForceHedgeOrder(string reasonTag, string logDetail);
@@ -346,6 +352,9 @@ void RecalculateBasePrice()
    GridBasePriceSell = GridBasePrice;
    BuyGapAnchor  = 0.0; // every call here means a fresh/flat grid, so any stale gap override is no longer relevant
    SellGapAnchor = 0.0;
+   // เช่นเดียวกัน - ทุกครั้งที่ฟังก์ชันนี้ถูกเรียกคือพอร์ตว่างจริง (ยังไม่มีไม้แรกฟิล) ยอดเงิน ณ ตอนนี้
+   // เลยเป็นฐาน "ก่อนเริ่มบาสเก็ต" ที่ถูกต้องเสมอสำหรับ Target Profit % (ดู ComputeEffectiveThreshold)
+   BasketStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
    CachedGridDistance = GetDynamicGridDistance();
    BuyGridDistance    = CachedGridDistance;
    SellGridDistance   = CachedGridDistance;
@@ -540,9 +549,11 @@ bool IsDailyLossLimitReached()
    {
       DayStartDay         = dt.day_of_year;
       DailyRealizedProfit = 0.0;
+      DayStartBalance      = AccountInfoDouble(ACCOUNT_BALANCE);
    }
 
-   return (DailyRealizedProfit <= -MathAbs(DailyLossLimit));
+   double effLossLimit = ComputeEffectiveThreshold(DailyLossLimit, DailyLossLimitPct, DayStartBalance);
+   return (effLossLimit > 0 && DailyRealizedProfit <= -MathAbs(effLossLimit));
 }
 
 //+------------------------------------------------------------------+
@@ -556,7 +567,7 @@ bool IsDailyLossLimitReached()
 bool IsDailyGoalReached()
 {
    if(!UseDailyGoalStop) return false;
-   if(DailyProfitGoal <= 0) return false;
+   if(DailyProfitGoal <= 0 && DailyProfitGoalPct <= 0) return false;
 
    MqlDateTime dt;
    TimeToStruct(TimeCurrent(), dt);
@@ -564,9 +575,11 @@ bool IsDailyGoalReached()
    {
       DayStartDay         = dt.day_of_year;
       DailyRealizedProfit = 0.0;
+      DayStartBalance      = AccountInfoDouble(ACCOUNT_BALANCE);
    }
 
-   return (DailyRealizedProfit >= DailyProfitGoal);
+   double effGoal = ComputeEffectiveThreshold(DailyProfitGoal, DailyProfitGoalPct, DayStartBalance);
+   return (effGoal > 0 && DailyRealizedProfit >= effGoal);
 }
 
 //+------------------------------------------------------------------+
@@ -740,6 +753,21 @@ bool IsCentAccount()
    if(StringFind(cur, "CENT") >= 0) return true;
    if(cur == "USC" || cur == "EUC" || cur == "GBC" || cur == "JPC" || cur == "CUC") return true;
    return false;
+}
+
+//+------------------------------------------------------------------+
+//| ค่าเดียวที่ใช้ตัดสินใจ "ถึงเป้า/เกินเพดาน" เมื่อมีทั้งเวอร์ชัน $ และ % เปิดพร้อมกัน -   |
+//| คืนค่าที่ "น้อยกว่า" เสมอ เพราะปริมาณที่เฝ้าดู (กำไรสะสม/ขาดทุนสะสม) วิ่งทางเดียว    |
+//| เข้าหาทั้งสองเพดานพร้อมกัน ตัวที่เล็กกว่าย่อมถึงก่อนเสมอ - ใช้ได้ทั้ง Target Profit    |
+//| (basisValue = BasketStartBalance) และ Daily Goal/Loss (basisValue = DayStartBalance) |
+//| ค่า 0 หมายถึง "ปิด" ตัวนั้น - ถ้าปิดทั้งคู่ ผลลัพธ์คือ dollarAmt (0 เช่นกัน = ปิดจริง)     |
+//+------------------------------------------------------------------+
+double ComputeEffectiveThreshold(double dollarAmt, double pctAmt, double basisValue)
+{
+   double pctDollar = (pctAmt > 0 && basisValue > 0) ? basisValue * pctAmt / 100.0 : 0.0;
+   if(dollarAmt > 0 && pctDollar > 0) return MathMin(dollarAmt, pctDollar);
+   if(pctDollar > 0) return pctDollar;
+   return dollarAmt;
 }
 
 //+------------------------------------------------------------------+
@@ -1097,6 +1125,8 @@ void PersistAllStats()
 {
    PersistSet("DayStartDay",         DayStartDay);
    PersistSet("DailyRealizedProfit", DailyRealizedProfit);
+   PersistSet("DayStartBalance",     DayStartBalance);
+   PersistSet("BasketStartBalance",  BasketStartBalance);
    PersistSet("StatsTotalBaskets",   StatsTotalBaskets);
    PersistSet("StatsWinCount",       StatsWinCount);
    PersistSet("StatsLossCount",      StatsLossCount);
@@ -1169,6 +1199,8 @@ int OnInit()
    double currentBalanceNow = AccountInfoDouble(ACCOUNT_BALANCE);
    DayStartDay          = (int)PersistGet("DayStartDay", -1);
    DailyRealizedProfit  = PersistGet("DailyRealizedProfit", 0.0);
+   DayStartBalance      = PersistGet("DayStartBalance", currentBalanceNow);
+   BasketStartBalance   = PersistGet("BasketStartBalance", currentBalanceNow);
    StatsTotalBaskets    = (int)PersistGet("StatsTotalBaskets", 0);
    StatsWinCount        = (int)PersistGet("StatsWinCount", 0);
    StatsLossCount       = (int)PersistGet("StatsLossCount", 0);
@@ -1425,7 +1457,10 @@ void OnTick()
    // TargetProfit/TrailingStopUSD whenever the override is off or GridType
    // isn't Virtual Limit.
    bool   useLimitTarget    = (GridType == GRID_VIRTUAL_LIMIT && UseLimitModeTarget);
-   double effTargetProfit   = useLimitTarget ? LimitModeTargetProfit    : TargetProfit;
+   // TargetProfitPct (ถ้าเปิด) ใช้ยอดเงินก่อนเริ่มบาสเก็ตนี้เป็นฐาน - ไม่ใช้กับโหมด Virtual Limit
+   // override เพราะ LimitModeTargetProfit เป็นค่าเฉพาะโหมดอยู่แล้ว ไม่ควรมีเวอร์ชัน % ซ้อนอีกชั้น
+   double effTargetProfit   = useLimitTarget ? LimitModeTargetProfit
+                                              : ComputeEffectiveThreshold(TargetProfit, TargetProfitPct, BasketStartBalance);
    double effTrailingStopUSD = useLimitTarget ? LimitModeTrailingStopUSD : TrailingStopUSD;
 
    // 2. Visual Basket Trailing Stop
@@ -2265,6 +2300,7 @@ void ClearEverythingAsync()
       {
          DayStartDay          = statsDt.day_of_year;
          DailyRealizedProfit  = 0.0;
+         DayStartBalance      = AccountInfoDouble(ACCOUNT_BALANCE);
       }
       DailyRealizedProfit += statsSnapshotProfit;
 
@@ -2825,7 +2861,10 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    DrawCardBG(cx, y, cardW, cardH, "📅 " + GetUIString("ผลงานวันนี้", "TODAY"));
    int gcx = cx + cardW / 2;
    int gcy = y + S(44) + S(58);
-   double dailyPct = (DailyProfitGoal > 0) ? (dailyProfit / DailyProfitGoal) : 0.0;
+   // ใช้เป้าที่ "มีผลจริง" (เล็กกว่าระหว่าง $ กับ % ถ้าเปิดพร้อมกัน) แทน DailyProfitGoal ดิบๆ
+   // เกจ/ตัวเลขจะได้ตรงกับเงื่อนไขที่ IsDailyGoalReached() ใช้จริงเป๊ะ ไม่ใช่แค่ค่า $ ที่อาจปิดอยู่
+   double effDailyGoal = ComputeEffectiveThreshold(DailyProfitGoal, DailyProfitGoalPct, DayStartBalance);
+   double dailyPct = (effDailyGoal > 0) ? (dailyProfit / effDailyGoal) : 0.0;
    DrawArcGauge(gcx, gcy, S(48), S(11), dailyPct);
    string pctTxt = StringFormat("%+.1f%%", dailyPct * 100.0);
    int pctFs = SF(23);
@@ -2837,7 +2876,7 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
           (dailyProfit >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(dailyProfit), 2), C'160,160,180', dailyProfit >= 0 ? C'34,197,94' : C'239,68,68');
    py2 += rowStep;
    DrawKV(cx + S(12), py2, innerW, GetUIString("เป้าหมาย", "Goal"),
-          "$" + DoubleToString(DailyProfitGoal, 0) + " (" + DoubleToString(MathMax(0, dailyPct * 100.0), 0) + "%)", C'160,160,180', clrWhite);
+          "$" + DoubleToString(effDailyGoal, 0) + " (" + DoubleToString(MathMax(0, dailyPct * 100.0), 0) + "%)", C'160,160,180', clrWhite);
 
    // คอลัมน์ 3: สถานะบาสเก็ต
    cx += cardW + gap;
@@ -3124,6 +3163,7 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
    {
       DayStartDay          = nowDt.day_of_year;
       DailyRealizedProfit  = 0.0; // ขึ้นวันใหม่ - ล้างยอดกำไรวันนี้ แม้จะยังไม่มีบาสเก็ตปิดเลยก็ตาม
+      DayStartBalance      = balance; // balance ด้านบนคือ AccountInfoDouble(ACCOUNT_BALANCE) สดของ tick นี้
    }
    // การ์ด Today อัปเดตเฉพาะตอนบาสเก็ตปิดจริง (ดู ClearEverythingAsync) ไม่ใช่ floating P/L เรียลไทม์
    double dailyProfit = DailyRealizedProfit;
