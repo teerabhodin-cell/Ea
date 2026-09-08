@@ -2602,6 +2602,23 @@ void FillRoundedRect(int x1, int y1, int x2, int y2, int r, uint argb)
    }
 }
 
+// สี่เหลี่ยมตัดมุมเฉียง (chamfered/octagon panel) - ทรงแบบแผง HUD/sci-fi แทนมุมโค้งมนแบบเดิม
+// เติมกากบาทกลางตรงๆ ก่อนแล้วเติมสามเหลี่ยมที่มุมทั้ง 4 ปิดช่องว่างรูปสามเหลี่ยมที่เหลือ
+void FillChamferedRect(int x1, int y1, int x2, int y2, int c, uint argb)
+{
+   int w = x2 - x1, h = y2 - y1;
+   if(c <= 0 || c * 2 > w || c * 2 > h) { DashCanvas.FillRectangle(x1, y1, x2, y2, argb); return; }
+
+   DashCanvas.FillRectangle(x1 + c, y1,     x2 - c, y2,     argb);
+   DashCanvas.FillRectangle(x1,     y1 + c, x1 + c, y2 - c, argb);
+   DashCanvas.FillRectangle(x2 - c, y1 + c, x2,     y2 - c, argb);
+
+   DashCanvas.FillTriangle(x1, y1 + c, x1 + c, y1, x1 + c, y1 + c, argb);
+   DashCanvas.FillTriangle(x2 - c, y1, x2, y1 + c, x2 - c, y1 + c, argb);
+   DashCanvas.FillTriangle(x1, y2 - c, x1 + c, y2, x1 + c, y2 - c, argb);
+   DashCanvas.FillTriangle(x2 - c, y2, x2, y2 - c, x2 - c, y2 - c, argb);
+}
+
 // เงานุ่มด้านล่าง-ขวาของการ์ด (offset เล็กน้อย + ดำโปร่งแสง) ให้การ์ดดูลอยขึ้นมาจากพื้นชาร์ต
 // ต้องวาดก่อนตัวการ์ดเสมอ (อยู่ชั้นล่างสุด ถูกตัวการ์ดทับเกือบหมด เหลือแค่ขอบยื่นออกมาเป็นเงา)
 void DrawPanelShadow(int x1, int y1, int x2, int y2, int r)
@@ -2630,34 +2647,36 @@ void DrawGlowBorder(int x1, int y1, int x2, int y2, color glowColor, int rings =
 // badgeIcon เว้นว่าง ("") = ไม่มีป้ายไอคอน (ใช้กับพาเนลที่ชื่อสั้นอยู่แล้วหรือไม่ต้องการ) - ทุกพาเนลใช้
 // โทนทองเดียวกันหมด (ไม่ไล่สีต่างกันทีละการ์ดแบบที่เคยลองแล้วลูกค้าไม่ชอบ) ให้ความรู้สึกเป็นชุด HUD
 // เดียวกันทั้งแผง ต่างจากเดิมตรงมีแสงเรืองรอบขอบ + ป้ายไอคอนวงกลมแทนตัวอักษร emoji ลอยหน้าหัวข้อ
+// ธีมการ์ดข้อมูลทั้งหมด: ฟ้า electric + ทรงตัดมุมเฉียง (chamfer) แทนทองล้วน+มุมโค้งมนแบบเดิม - ทองสงวนไว้
+// เฉพาะส่วนแบรนด์ (Header/แถบท้าย/แถบสรุปสถิติ) ให้ภาพรวมเป็นคู่สีทอง-ฟ้า ไม่ใช่ทองล้วนทั้งจอเหมือนเดิม
 void DrawCardBG(int x, int y, int w, int h, string title, string badgeIcon = "")
 {
-   color gold = C'212,175,55';
-   DrawGlowBorder(x, y, x + w, y + h, gold, 3);
+   color accent = C'56,189,248';
+   DrawGlowBorder(x, y, x + w, y + h, accent, 3);
 
-   int r = S(10);
-   DrawPanelShadow(x, y, x + w, y + h, r);
-   FillRoundedRect(x, y, x + w, y + h, r, ColorToARGB(C'15,17,27'));
-   DashCanvas.Line(x + r, y,     x + w - r, y,     ColorToARGB(gold));
-   DashCanvas.Line(x + r, y + h, x + w - r, y + h, ColorToARGB(C'70,60,35'));
-   DashCanvas.Line(x,     y + r, x,         y + h - r, ColorToARGB(C'70,60,35'));
-   DashCanvas.Line(x + w, y + r, x + w,     y + h - r, ColorToARGB(C'70,60,35'));
+   int c = S(14);
+   DrawPanelShadow(x, y, x + w, y + h, S(10));
+   FillChamferedRect(x, y, x + w, y + h, c, ColorToARGB(C'12,16,26'));
+   DashCanvas.Line(x + c, y,     x + w - c, y,     ColorToARGB(accent));
+   DashCanvas.Line(x + c, y + h, x + w - c, y + h, ColorToARGB(C'30,45,60'));
+   DashCanvas.Line(x,     y + c, x,         y + h - c, ColorToARGB(C'30,45,60'));
+   DashCanvas.Line(x + w, y + c, x + w,     y + h - c, ColorToARGB(C'30,45,60'));
 
-   int titleX = x + S(13);
+   int titleX = x + S(16);
    if(badgeIcon != "")
    {
       int bR  = S(12);
-      int bcx = x + S(15) + bR;
-      int bcy = y + S(22);
-      DashCanvas.FillCircle(bcx, bcy, bR, ColorToARGB(BlendColor(gold, clrBlack, 0.55)));
-      DashCanvas.FillCircle(bcx, bcy, (int)(bR * 0.72), ColorToARGB(gold));
+      int bcx = x + S(18) + bR;
+      int bcy = y + S(24);
+      DashCanvas.FillCircle(bcx, bcy, bR, ColorToARGB(BlendColor(accent, clrBlack, 0.55)));
+      DashCanvas.FillCircle(bcx, bcy, (int)(bR * 0.72), ColorToARGB(accent));
       UIFontSet(SF(13));
       int ew = EstimateTextWidth(badgeIcon, SF(13));
-      DashCanvas.TextOut(bcx - ew / 2, bcy - S(7), badgeIcon, ColorToARGB(C'20,16,8'));
-      titleX = bcx + bR + S(9);
+      DashCanvas.TextOut(bcx - ew / 2, bcy - S(7), badgeIcon, ColorToARGB(C'8,12,20'));
+      titleX = bcx + bR + S(10);
    }
-   UIFontSet(SF(16), FW_BOLD);
-   DashCanvas.TextOut(titleX, y + S(15), title, ColorToARGB(C'235,210,150'));
+   UIFontSet(SF(18), FW_BOLD);
+   DashCanvas.TextOut(titleX, y + S(16), title, ColorToARGB(C'220,238,252'));
 }
 
 // แท่งความคืบหน้าแบบมุมโค้ง (Target/Daily Loss/Daily Goal/Max DD ฯลฯ) - pct 0..1
@@ -2988,24 +3007,24 @@ int DrawHeader(int y)
    // ได้ไฟล์ .png โลโก้จริงมาฝังเป็น #resource แล้ววาดทับจุดนี้แทนทีหลัง
    int logoR  = S(32);
    int logoCx = S(14) + logoR, logoCy = y + logoR;
-   DrawGlowBorder(logoCx - logoR, logoCy - logoR, logoCx + logoR, logoCy + logoR, C'212,175,55', 3);
+   DrawGlowBorder(logoCx - logoR, logoCy - logoR, logoCx + logoR, logoCy + logoR, C'255,183,3', 3);
    DashCanvas.FillCircle(logoCx, logoCy, logoR, ColorToARGB(C'20,16,8'));
    DashCanvas.FillCircle(logoCx, logoCy, logoR - S(3), ColorToARGB(C'15,17,27'));
    UIFontSet(SF(28), FW_BOLD);
    int qw = EstimateTextWidth("Q", SF(28));
-   DashCanvas.TextOut(logoCx - qw / 2, logoCy - S(16), "Q", ColorToARGB(C'212,175,55'));
+   DashCanvas.TextOut(logoCx - qw / 2, logoCy - S(16), "Q", ColorToARGB(C'255,183,3'));
 
    int titleX = logoCx + logoR + S(16);
-   UIFontSet(SF(30), FW_BOLD);
+   UIFontSet(SF(32), FW_BOLD);
    DashCanvas.TextOut(titleX, y, "QUANTIX PRO", ColorToARGB(clrWhite));
-   DashCanvas.TextOut(titleX, y + S(31), "TERMINAL", ColorToARGB(C'212,175,55'));
+   DashCanvas.TextOut(titleX, y + S(31), "TERMINAL", ColorToARGB(C'255,183,3'));
 
    UIFontSet(SF(15));
    DashCanvas.TextOut(titleX, y + S(66), GetUIString("แดชบอร์ดวิเคราะห์แบบเรียลไทม์", "MULTI-ANALYTICS DASHBOARD"), ColorToARGB(C'200,170,100'));
 
    int badgeW = S(145), badgeH = S(30);
    int bx = DASH_W - S(14) - badgeW;
-   DrawGlowBorder(bx, y, bx + badgeW, y + badgeH, C'212,175,55', 2);
+   DrawGlowBorder(bx, y, bx + badgeW, y + badgeH, C'255,183,3', 2);
    FillRoundedRect(bx, y, bx + badgeW, y + badgeH, S(15), ColorToARGB(C'40,32,16'));
    DashCanvas.Line(bx + S(4), y, bx + badgeW - S(4), y, ColorToARGB(C'200,170,100'));
    DashCanvas.Line(bx + S(4), y + badgeH, bx + badgeW - S(4), y + badgeH, ColorToARGB(C'110,90,40'));
@@ -3075,7 +3094,7 @@ int DrawCommandRow(int y, int openPos, int pendingOrders)
       int gcx = cx + cardW / 2, gcy = y + S(58) + S(48);
       DrawArcGauge(gcx, gcy, S(46), S(11), ratio);
       string pctTxt = DoubleToString(MathMin(ratio, 9.99) * 100.0, 0) + "%";
-      int pfs = SF(22);
+      int pfs = SF(25);
       UIFontSet(pfs, FW_BOLD);
       int pw = EstimateNumericTextWidth(pctTxt, pfs);
       DashCanvas.TextOut(gcx - pw / 2, gcy - (int)(pfs * 0.4), pctTxt, ColorToARGB(clrWhite));
@@ -3101,10 +3120,10 @@ int DrawCommandRow(int y, int openPos, int pendingOrders)
       int badgeY = y + S(70);
       int badgeW = cardW - S(28);
       int bx = cx + S(14);
-      DrawGlowBorder(bx, badgeY, bx + badgeW, badgeY + badgeH, C'212,175,55', 2);
+      DrawGlowBorder(bx, badgeY, bx + badgeW, badgeY + badgeH, C'255,183,3', 2);
       FillRoundedRect(bx, badgeY, bx + badgeW, badgeY + badgeH, S(10), ColorToARGB(C'40,32,16'));
-      UIFontSet(SF(18), FW_BOLD);
-      int mw = EstimateTextWidth(modeTxt, SF(18));
+      UIFontSet(SF(20), FW_BOLD);
+      int mw = EstimateTextWidth(modeTxt, SF(20));
       DashCanvas.TextOut(cx + cardW / 2 - mw / 2, badgeY + badgeH / 2 - S(10), modeTxt, ColorToARGB(C'230,200,120'));
 
       string parts = "";
@@ -3213,7 +3232,7 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    double dailyPct = (effDailyGoal > 0) ? (dailyProfit / effDailyGoal) : 0.0;
    DrawArcGauge(gcx, gcy, S(48), S(11), dailyPct);
    string pctTxt = StringFormat("%+.1f%%", dailyPct * 100.0);
-   int pctFs = SF(23);
+   int pctFs = SF(24);
    UIFontSet(pctFs, FW_BOLD);
    int pw = EstimateNumericTextWidth(pctTxt, pctFs);
    DashCanvas.TextOut(gcx - pw / 2, gcy - (int)(pctFs * 0.42), pctTxt, ColorToARGB(dailyProfit >= 0 ? C'34,197,94' : C'239,68,68'));
@@ -3404,7 +3423,7 @@ int DrawStatsRow(int y)
    int cardW = DASH_W - S(14) * 2;
    int cardH = S(84);
    int r = S(10);
-   DrawGlowBorder(S(14), y, S(14) + cardW, y + cardH, C'212,175,55', 2);
+   DrawGlowBorder(S(14), y, S(14) + cardW, y + cardH, C'255,183,3', 2);
    DrawPanelShadow(S(14), y, S(14) + cardW, y + cardH, r);
    FillRoundedRect(S(14), y, S(14) + cardW, y + cardH, r, ColorToARGB(C'23,23,39'));
    DashCanvas.Line(S(14) + r, y,     S(14) + cardW - r, y,     ColorToARGB(C'160,130,60'));
@@ -3440,9 +3459,9 @@ int DrawStatsRow(int y)
    for(int i = 0; i < 6; i++)
    {
       int cx = S(14) + colW * i + colW / 2;
-      UIFontSet(SF(20), FW_BOLD);
-      int vw = EstimateTextWidth(values[i], SF(20));
-      DashCanvas.TextOut(cx - vw / 2, y + S(15), values[i], ColorToARGB(valColors[i]));
+      UIFontSet(SF(22), FW_BOLD);
+      int vw = EstimateTextWidth(values[i], SF(22));
+      DashCanvas.TextOut(cx - vw / 2, y + S(14), values[i], ColorToARGB(valColors[i]));
 
       UIFontSet(SF(14));
       int lw = EstimateTextWidth(labels[i], SF(14));
@@ -3458,9 +3477,9 @@ int DrawTickerBar(int y)
 {
    int cardW = DASH_W - S(14) * 2;
    int cardH = S(44);
-   DrawGlowBorder(S(14), y, S(14) + cardW, y + cardH, C'212,175,55', 2);
+   DrawGlowBorder(S(14), y, S(14) + cardW, y + cardH, C'255,183,3', 2);
    FillRoundedRect(S(14), y, S(14) + cardW, y + cardH, S(8), ColorToARGB(C'15,17,27'));
-   DashCanvas.Line(S(14), y, S(14) + cardW, y, ColorToARGB(C'212,175,55'));
+   DashCanvas.Line(S(14), y, S(14) + cardW, y, ColorToARGB(C'255,183,3'));
 
    UIFontSet(SF(13), FW_BOLD);
    DashCanvas.TextOut(S(28), y + S(13), "QUANTIX PRO EA V8", ColorToARGB(C'230,200,120'));
@@ -3602,7 +3621,7 @@ void InitDashboard()
    string btnText = GetUIString("🚨 ปิดรวบทุกไม้ (CLOSE ALL)", "🚨 CLOSE ALL POSITIONS");
    CreateButton(BTN_CLOSE_ALL, 15 + S(14), 15 + DASH_H - S(54), DASH_W - S(28), S(40), btnText, C'220,38,38', clrWhite, SF(10));
 
-   DashCanvas.Erase(ColorToARGB(C'8,8,16'));
+   DashCanvas.Erase(ColorToARGB(C'6,9,18'));
    DashCanvas.Update();
 }
 
@@ -3648,7 +3667,7 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
    // ผูกกับ event ปิดบาสเก็ตเหมือน Stats* ด้านบน เลยต้องมีจุดเซฟ periodic แยกต่างหาก
    PersistAllStats();
 
-   DashCanvas.Erase(ColorToARGB(C'8,8,16'));
+   DashCanvas.Erase(ColorToARGB(C'6,9,18'));
 
    int y = S(14);
    y = DrawHeader(y);
