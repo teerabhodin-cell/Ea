@@ -73,7 +73,7 @@ input double InpC5MaxTotalExposurePercent = 0.0;  // 0 = gate disabled
 input int    InpC5MaxOpenPositions        = 0;    // 0 = gate disabled
 input double InpC5MinMarginLevel          = 0.0;  // 0 = gate disabled
 input string InpC5ExecutionPolicyVersion  = "C5_0_FIXTURE_EXECUTION_POLICY_V1";
-input double InpC5MaxVolume               = 0.01; // ExecutionPolicy.max_volume, must be > 0 to reach SafetyGate ACCEPTED
+input double InpC5MaxVolume               = 10.0; // ExecutionPolicy.max_volume, must be > 0 to reach SafetyGate ACCEPTED (C5.1: 0.01 was tighter than any risk-sized lot could ever pass; 10.0 matches the C2.2 smoke-test precedent)
 input double InpC5MaxPlannedRiskAmount    = 1000.0; // ExecutionPolicy.max_planned_risk_amount, must be > 0 to reach SafetyGate ACCEPTED
 input double InpC5MaxDeviationPoints      = 0.0;  // ExecutionPolicy.max_deviation_points, >= 0 required
 
