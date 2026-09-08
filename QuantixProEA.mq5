@@ -41,7 +41,7 @@ input int     EndHour          = 22;      // Stop Hour (ชม.หยุด)
 input int     EndMinute        = 0;
 
 input group "===== 2. Lot ====="
-input ENUM_LOT_TYPE LotType         = LOT_FIXED; // Lot Type (ประเภท Lot)
+input ENUM_LOT_TYPE LotType         = LOT_RISK_PERCENT; // Lot Type (ประเภท Lot)
 input double BaseLot                = 0.05;      // ใช้เมื่อ LotType = Fixed Lot
 input double LotMultiplier          = 1.5;
 input double LotRiskPercent         = 1.0;     // Risk % of Equity (ใช้เมื่อ LotType = % of Risk, ต่อระยะ Grid ปัจจุบัน 1 ช่วง)
@@ -82,10 +82,10 @@ input bool   UseDailyLossLimit   = false;  // Use Daily Loss Limit (จำกั
 input double DailyLossLimit      = 100.0;  // Daily Loss Limit $ (เพดานขาดทุนรายวัน)
 
 input group "===== 5. Trend Filters ====="
-input bool   UseEMAFilter           = false;   // Use EMA Filter (ใช้ EMA)
+input bool   UseEMAFilter           = true;    // Use EMA Filter (ใช้ EMA)
 input int    EMA_Period             = 200;     // EMA Period
-input bool   StrictBuyFilter        = false;   // Block Buy < EMA (ล็อค Buy)
-input bool   StrictSellFilter       = false;   // Block Sell > EMA (ล็อค Sell)
+input bool   StrictBuyFilter        = true;    // Block Buy < EMA (ล็อค Buy)
+input bool   StrictSellFilter       = true;    // Block Sell > EMA (ล็อค Sell)
 input bool   UseMTFFilter          = false;   // Use MTF Filter (ใช้ MTF)
 input ENUM_TIMEFRAMES MTF_Period   = PERIOD_H1; // MTF Timeframe
 
@@ -127,7 +127,7 @@ input int    MaxSlippagePoints   = 20;     // Max Slippage, pts
 input int    MaxSpreadAllowed    = 40;     // Max Spread Allowed, pts
 
 input group "===== 10. Dashboard ====="
-input double UIScaleMultiplier   = 1.3;    // Dashboard Size Multiplier (ตัวคูณขนาดแดชบอร์ด)
+input double UIScaleMultiplier   = 1.0;    // Dashboard Size Multiplier (ตัวคูณขนาดแดชบอร์ด)
 input bool   ShowDashboardInBacktest = false; // Show Dashboard in Backtest (โชว์ UI ตอน backtest, ช้าลง - เปิดไว้ดูใน Visual Mode เท่านั้น)
 
 input group "===== 11. News Filter ====="
@@ -2980,7 +2980,7 @@ double ComputeUIScale()
    double scaleH = (chartH - 40.0) / (double)DASH_H_BASE;
    double scaleW = (chartW - 60.0) / (double)DASH_W_BASE; // แนวนอนกว้างขึ้น ต้องเช็คความกว้างชาร์ตด้วย ไม่งั้นล้นด้านข้าง
    double scale  = MathMin(scaleH, scaleW);
-   // UIScaleMultiplier: ตัวคูณเพิ่มเติมที่ผู้ใช้ปรับเองได้ (default 1.3) เผื่อ auto-fit ตามขนาดจอแล้วยังเล็กไป
+   // UIScaleMultiplier: ตัวคูณเพิ่มเติมที่ผู้ใช้ปรับเองได้ (default 1.0) เผื่อ auto-fit ตามขนาดจอแล้วยังเล็กไป
    // ถ้าปรับเพิ่มมากไป panel อาจใหญ่กว่าที่จอมองเห็นได้พอดี - ลดค่านี้ลงได้จาก Inputs
    scale *= UIScaleMultiplier;
    // วาดใหม่ทุกครั้งที่ resolution เปลี่ยน (ไม่ใช่ stretch บิตแมปเดิม) ขยายเกิน 1.0 ได้โดยไม่เบลอ
