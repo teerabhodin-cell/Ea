@@ -135,6 +135,8 @@ input int    MaxSpreadAllowed    = 40;     // Max Spread Allowed, pts
 input group "===== 10. Dashboard ====="
 input double UIScaleMultiplier   = 1.0;    // Dashboard Size Multiplier (ตัวคูณขนาดแดชบอร์ด)
 input bool   ShowDashboardInBacktest = false; // Show Dashboard in Backtest (โชว์ UI ตอน backtest, ช้าลง - เปิดไว้ดูใน Visual Mode เท่านั้น)
+input bool   ShowCentEquivalent  = true;   // Show Real-Money Equivalent (โชว์มูลค่าจริงคู่กับบัญชี Cent)
+input double CentDivisor         = 100.0;  // Cent Divisor (หน่วยเงินบัญชี / ค่านี้ = มูลค่าจริง)
 
 input group "===== 11. News Filter ====="
 input bool   UseNewsFilter          = false;                       // Use News Filter (พักเปิดไม้ช่วงข่าว)
@@ -180,6 +182,12 @@ int      SellGridDistance   = 0;
 datetime LastOrderSentTime  = 0;
 datetime LastCloseAllTime   = 0;    // เวลาปิดพอร์ตล่าสุด
 bool     IsClosingState     = false;  // สถานะกำลังปิดพอร์ต ล็อคไม่ให้ยิงไม้ใหม่เด็ดขาด
+
+// Execution quality ของไม้ล่าสุดที่ฟิลสำเร็จ (grid entry หรือ Force Hedge) - ใช้โชว์บน Dashboard
+// เพื่อแยกแยะให้ลูกค้าเห็นเองว่าอาการ "ผลลัพธ์ไม่ตรงกัน/ราคาเพี้ยน" มาจาก execution (ping/สลิปเพจ) ของ
+// บัญชี/VPS นั้นๆ ไม่ใช่บั๊กของ EA - อัปเดตทุกครั้งที่ OrderSend() สำเร็จ ไม่ผูกกับ order ที่ถูก reject
+double LastFillSlippagePoints = 0.0;  // |ราคาที่ฟิลจริง - ราคาที่ตั้งใจส่ง| เป็นจุด (ราคาตลาดจริง ไม่ปรับ m_multiplier)
+uint   LastFillLatencyMs       = 0;    // เวลาระหว่างส่งคำสั่งถึงได้ผลตอบกลับจากโบรกเกอร์ (ms) - ตัวแทนของ ping
 
 // ตัวแปรสำหรับคำนวณ Max Drawdown (%) และ ($)
 double   PeakBalanceForDD   = 0.0;
@@ -263,6 +271,8 @@ bool CheckMTFFilter(bool isBuy);
 bool CheckRSIFilter(bool isBuy);
 double GetCalculatedLotSize(int nextLevel);
 double CalcEmergencySL(bool isBuy, double entryPrice, double point);
+void RecordFillStats(uint sendTick, double intendedPrice, double filledPrice, double point);
+bool IsCentAccount();
 void ApplyBasketBreakevenAndPartial(double currentProfit);
 void CheckForceHedgeOnDD();
 bool TryOpenForceHedgeOrder(string reasonTag, string logDetail);
@@ -700,6 +710,39 @@ double CalcEmergencySL(bool isBuy, double entryPrice, double point)
 }
 
 //+------------------------------------------------------------------+
+//| Execution Quality Tracking                                       |
+//| เรียกทันทีหลัง OrderSend() สำเร็จทุกจุด (grid entry + Force Hedge) -   |
+//| sendTick มาจาก GetTickCount() ที่จับไว้ "ก่อน" เรียก OrderSend() ที่ตัว   |
+//| caller เอง เพราะ OrderSend() เป็น synchronous call ระยะเวลาที่เสียไปตรง  |
+//| นี้คือเวลาที่เทอร์มินัลรอผลตอบกลับจากโบรกเกอร์จริง ใช้แทนค่า ping ได้       |
+//| ตรงไปตรงมา - filledPrice มาจาก result.price ซึ่ง broker เป็นคนกรอกให้     |
+//+------------------------------------------------------------------+
+void RecordFillStats(uint sendTick, double intendedPrice, double filledPrice, double point)
+{
+   if(point <= 0) return;
+   LastFillLatencyMs      = GetTickCount() - sendTick;
+   LastFillSlippagePoints = MathAbs(filledPrice - intendedPrice) / point;
+}
+
+//+------------------------------------------------------------------+
+//| Cent Account Detection                                           |
+//| ACCOUNT_CURRENCY เป็นตัวเดียวที่เชื่อถือได้จาก terminal API สำหรับเช็คนี้ -    |
+//| โบรกเกอร์ที่ทำบัญชี Cent จริงส่วนใหญ่ตั้งชื่อสกุลเงินเป็นรหัสจบด้วย C (USC/EUC/   |
+//| GBC ฯลฯ) หรือมีคำว่า CENT อยู่ในชื่อ ไม่มีวิธีเช็คที่แม่นยำ 100% ข้ามทุกโบรกเกอร์   |
+//| เพราะบางเจ้าอาจตั้งชื่อเอง - ถ้า auto-detect พลาดไป ปิด ShowCentEquivalent  |
+//| จาก Inputs ได้ตรงๆ                                                      |
+//+------------------------------------------------------------------+
+bool IsCentAccount()
+{
+   if(!ShowCentEquivalent) return false;
+   string cur = AccountInfoString(ACCOUNT_CURRENCY);
+   StringToUpper(cur);
+   if(StringFind(cur, "CENT") >= 0) return true;
+   if(cur == "USC" || cur == "EUC" || cur == "GBC" || cur == "JPC" || cur == "CUC") return true;
+   return false;
+}
+
+//+------------------------------------------------------------------+
 //| Dynamic Lot Calculation & Auto Reduction                         |
 //| Rounds to the symbol's actual volume step and clamps to          |
 //| SYMBOL_VOLUME_MIN/MAX so OrderSend can't be rejected with an      |
@@ -944,9 +987,11 @@ bool TryOpenForceHedgeOrder(string reasonTag, string logDetail)
    request.comment      = reasonTag + (needBuy ? "-BUY" : "-SELL");
    request.type_filling = fillMode;
 
+   uint sendTick = GetTickCount();
    if(OrderSend(request, result))
    {
       LastOrderSentTime = TimeCurrent();
+      RecordFillStats(sendTick, request.price, result.price, point);
       PrintFormat("🆘 [%s] %s -> Forced %s %.2f lot (Buy:%d Sell:%d before).",
                   reasonTag, logDetail, needBuy ? "BUY" : "SELL", lot, buyCount, sellCount);
       LogEvent(StringFormat(GetUIString("Force Hedge ทำงาน (%s)", "Force Hedge fired (%s)"), reasonTag));
@@ -1909,9 +1954,11 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
             request.comment      = "V-BUY-" + IntegerToString(nextLevel);
             request.type_filling = fillMode;
 
+            uint sendTick = GetTickCount();
             if(OrderSend(request, result))
             {
                LastOrderSentTime = TimeCurrent();
+               RecordFillStats(sendTick, ask, result.price, point);
                // Pin the still-empty Sell side's level-0 target to the price that was
                // just traded, instead of leaving it anchored to wherever the basket
                // started - but ONLY in Per-Side ATR mode, where each side's distance
@@ -2007,9 +2054,11 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
             request.comment      = "V-SELL-" + IntegerToString(nextLevel);
             request.type_filling = fillMode;
 
+            uint sendTick = GetTickCount();
             if(OrderSend(request, result))
             {
                LastOrderSentTime = TimeCurrent();
+               RecordFillStats(sendTick, bid, result.price, point);
                // Symmetric to the Buy-fills-first case above - same Per-Side ATR gate,
                // same reasoning: outside that mode the base must stay put.
                if(IsPerSideDistanceActive() && buyCount == 0) GridBasePriceBuy = bid;
@@ -2422,14 +2471,14 @@ void DrawCardBG(int x, int y, int w, int h, string title)
    int r = S(10);
    DrawPanelShadow(x, y, x + w, y + h, r);
    FillRoundedRect(x, y, x + w, y + h, r, ColorToARGB(C'23,23,39'));
-   // กรอบสีม่วงอ่อนด้านบน (โทนเดียวกับแบรนด์ QUANTIX PRO TERMINAL) เข้มกว่าอีก 3 ด้าน เพื่อให้ดู
-   // มีลำดับชั้น (hierarchy) แทนกรอบเทาแบนสีเดียวทั้ง 4 ด้านแบบเดิม
-   DashCanvas.Line(x + r, y,     x + w - r, y,     ColorToARGB(C'96,82,138'));
-   DashCanvas.Line(x + r, y + h, x + w - r, y + h, ColorToARGB(C'52,48,74'));
-   DashCanvas.Line(x,     y + r, x,         y + h - r, ColorToARGB(C'52,48,74'));
-   DashCanvas.Line(x + w, y + r, x + w,     y + h - r, ColorToARGB(C'52,48,74'));
+   // กรอบสีทองอ่อนด้านบน (โทนเดียวกับแบรนด์ QUANTIX PRO - gold/charcoal ให้เข้าชุดกับคู่มือ) เข้มกว่า
+   // อีก 3 ด้าน เพื่อให้ดูมีลำดับชั้น (hierarchy) แทนกรอบเทาแบนสีเดียวทั้ง 4 ด้านแบบเดิม
+   DashCanvas.Line(x + r, y,     x + w - r, y,     ColorToARGB(C'160,130,60'));
+   DashCanvas.Line(x + r, y + h, x + w - r, y + h, ColorToARGB(C'70,60,35'));
+   DashCanvas.Line(x,     y + r, x,         y + h - r, ColorToARGB(C'70,60,35'));
+   DashCanvas.Line(x + w, y + r, x + w,     y + h - r, ColorToARGB(C'70,60,35'));
    UIFontSet(SF(17), FW_BOLD);
-   DashCanvas.TextOut(x + S(13), y + S(13), title, ColorToARGB(C'186,170,224'));
+   DashCanvas.TextOut(x + S(13), y + S(13), title, ColorToARGB(C'230,200,120'));
 }
 
 // เกจวงแหวน (donut gauge) ไล่สีเขียว -> ฟ้า ตามสัดส่วน percent (0..1)
@@ -2678,16 +2727,16 @@ int DrawHeader(int y)
 {
    UIFontSet(SF(34), FW_BOLD);
    DashCanvas.TextOut(S(14), y, "QUANTIX PRO", ColorToARGB(clrWhite));
-   DashCanvas.TextOut(S(14), y + S(31), "TERMINAL", ColorToARGB(C'168,85,247'));
+   DashCanvas.TextOut(S(14), y + S(31), "TERMINAL", ColorToARGB(C'212,175,55'));
 
    UIFontSet(SF(15));
-   DashCanvas.TextOut(S(14), y + S(66), GetUIString("แดชบอร์ดวิเคราะห์แบบเรียลไทม์", "MULTI-ANALYTICS DASHBOARD"), ColorToARGB(C'150,120,200'));
+   DashCanvas.TextOut(S(14), y + S(66), GetUIString("แดชบอร์ดวิเคราะห์แบบเรียลไทม์", "MULTI-ANALYTICS DASHBOARD"), ColorToARGB(C'200,170,100'));
 
    int badgeW = S(145), badgeH = S(30);
    int bx = DASH_W - S(14) - badgeW;
-   FillRoundedRect(bx, y, bx + badgeW, y + badgeH, S(15), ColorToARGB(C'34,30,54'));
-   DashCanvas.Line(bx + S(4), y, bx + badgeW - S(4), y, ColorToARGB(C'150,130,200'));
-   DashCanvas.Line(bx + S(4), y + badgeH, bx + badgeW - S(4), y + badgeH, ColorToARGB(C'90,80,120'));
+   FillRoundedRect(bx, y, bx + badgeW, y + badgeH, S(15), ColorToARGB(C'40,32,16'));
+   DashCanvas.Line(bx + S(4), y, bx + badgeW - S(4), y, ColorToARGB(C'200,170,100'));
+   DashCanvas.Line(bx + S(4), y + badgeH, bx + badgeW - S(4), y + badgeH, ColorToARGB(C'110,90,40'));
    UIFontSet(SF(15), FW_BOLD);
    DashCanvas.TextOut(bx + S(14), y + S(6), GetUIString("เรียลไทม์", "UI REAL-TIME"), ColorToARGB(clrWhite));
 
@@ -2739,7 +2788,7 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    int cols   = 6;
    int gap    = S(10);
    int cardW  = (DASH_W - S(14) * 2 - gap * (cols - 1)) / cols;
-   int cardH  = S(258);
+   int cardH  = S(288);
    int innerW = cardW - S(24);
    int rowStep = S(29);
 
@@ -2762,6 +2811,10 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    DrawCardBG(cx, y, cardW, cardH, "👤 " + GetUIString("บัญชี", "ACCOUNT"));
    int ry = y + S(44);
    DrawKV(cx + S(12), ry, innerW, GetUIString("ยอดเงิน", "Balance"), "$" + DoubleToString(balance, 2), C'160,160,180', clrWhite); ry += rowStep;
+   if(IsCentAccount() && CentDivisor > 0)
+   {
+      DrawKV(cx + S(12), ry, innerW, GetUIString("มูลค่าจริง", "Real Value"), "≈$" + DoubleToString(balance / CentDivisor, 2), C'160,160,180', C'251,193,7'); ry += rowStep;
+   }
    DrawKV(cx + S(12), ry, innerW, GetUIString("มูลค่าสุทธิ", "Equity"), "$" + DoubleToString(equity, 2), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("หลักประกัน", "Margin"), "$" + DoubleToString(margin, 2), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ประกันเหลือ", "Free Mgn"), "$" + DoubleToString(freeMargin, 2), C'160,160,180', clrWhite); ry += rowStep;
@@ -2815,7 +2868,12 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    color liveDistClr = liveDistHigh ? C'239,68,68' : (liveDistLow ? C'251,146,60' : clrWhite);
    DrawKV(cx + S(12), ry, innerW, GetUIString("ระยะ Grid ปัจจุบัน", "Current Distance"), IntegerToString(liveDistNow) + " P", C'160,160,180', liveDistClr); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, "ATR", (UseATRDistance ? IntegerToString(GetCurrentATRPoints()) + " P" : "—"), C'160,160,180', clrWhite); ry += rowStep;
-   DrawKV(cx + S(12), ry, innerW, GetUIString("สเปรด", "Spread"), IntegerToString(adjSpread) + " P", C'160,160,180', adjSpread > MaxSpreadAllowed * m_multiplier ? C'239,68,68' : clrWhite);
+   DrawKV(cx + S(12), ry, innerW, GetUIString("สเปรด", "Spread"), IntegerToString(adjSpread) + " P", C'160,160,180', adjSpread > MaxSpreadAllowed * m_multiplier ? C'239,68,68' : clrWhite); ry += rowStep;
+   // Execution quality ของไม้ล่าสุด - ช่วยแยกแยะว่าอาการ "ราคาไม่ตรง/ผลต่างจากบัญชีอื่น" มาจาก
+   // ping/สลิปเพจของ execution จริง ไม่ใช่บั๊ก EA (ดู RecordFillStats ด้านบน)
+   color latencyClr = (LastFillLatencyMs == 0) ? clrWhite : (LastFillLatencyMs > 800 ? C'239,68,68' : (LastFillLatencyMs > 300 ? C'251,146,60' : C'34,197,94'));
+   string execTxt = (LastFillLatencyMs == 0) ? "—" : DoubleToString(LastFillSlippagePoints, 1) + "P / " + IntegerToString((int)LastFillLatencyMs) + "ms";
+   DrawKV(cx + S(12), ry, innerW, GetUIString("สลิป/ปิงล่าสุด", "Last Slip/Ping"), execTxt, C'160,160,180', latencyClr);
 
    // คอลัมน์ 5: สถานะกริด
    cx += cardW + gap;
@@ -2897,10 +2955,10 @@ int DrawStatsRow(int y)
    int r = S(10);
    DrawPanelShadow(S(14), y, S(14) + cardW, y + cardH, r);
    FillRoundedRect(S(14), y, S(14) + cardW, y + cardH, r, ColorToARGB(C'23,23,39'));
-   DashCanvas.Line(S(14) + r, y,     S(14) + cardW - r, y,     ColorToARGB(C'96,82,138'));
-   DashCanvas.Line(S(14) + r, y + cardH, S(14) + cardW - r, y + cardH, ColorToARGB(C'52,48,74'));
-   DashCanvas.Line(S(14),         y + r, S(14),         y + cardH - r, ColorToARGB(C'52,48,74'));
-   DashCanvas.Line(S(14) + cardW, y + r, S(14) + cardW, y + cardH - r, ColorToARGB(C'52,48,74'));
+   DashCanvas.Line(S(14) + r, y,     S(14) + cardW - r, y,     ColorToARGB(C'160,130,60'));
+   DashCanvas.Line(S(14) + r, y + cardH, S(14) + cardW - r, y + cardH, ColorToARGB(C'70,60,35'));
+   DashCanvas.Line(S(14),         y + r, S(14),         y + cardH - r, ColorToARGB(C'70,60,35'));
+   DashCanvas.Line(S(14) + cardW, y + r, S(14) + cardW, y + cardH - r, ColorToARGB(C'70,60,35'));
 
    double winRate = (StatsTotalBaskets > 0) ? (StatsWinCount * 100.0 / StatsTotalBaskets) : 0.0;
    double avgWin   = (StatsWinCount  > 0) ? (StatsSumWinProfit  / StatsWinCount)  : 0.0;
@@ -2985,7 +3043,7 @@ int DrawNewsCard(int y)
 //+------------------------------------------------------------------+
 double UIScale       = 1.0;
 int    DASH_W_BASE   = 1450;
-int    DASH_H_BASE   = 1095;
+int    DASH_H_BASE   = 1125;
 
 int S(double v)  { return (int)MathRound(v * UIScale); }
 // พื้นฟอนต์ต่ำมาก (8px) แค่กันกรณีสุดขั้ว - ถ้าตั้งพื้นสูงกว่านี้ ฟอนต์จะไม่ย่อตามการ์ดที่หดลงจริง
