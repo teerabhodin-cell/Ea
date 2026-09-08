@@ -40,6 +40,7 @@
 #include <MLQuantAI/Execution/MLQuantAI_EligibilityBuilder.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_ExecutionRequestBuilder.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_SafetyGate.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_EnvironmentIdentitySnapshot.mqh>
 
 input group "=== System ==="
 input bool   DebugMode                   = false;
@@ -76,6 +77,11 @@ input string InpC5ExecutionPolicyVersion  = "C5_0_FIXTURE_EXECUTION_POLICY_V1";
 input double InpC5MaxVolume               = 10.0; // ExecutionPolicy.max_volume, must be > 0 to reach SafetyGate ACCEPTED (C5.1: 0.01 was tighter than any risk-sized lot could ever pass; 10.0 matches the C2.2 smoke-test precedent)
 input double InpC5MaxPlannedRiskAmount    = 1000.0; // ExecutionPolicy.max_planned_risk_amount, must be > 0 to reach SafetyGate ACCEPTED
 input double InpC5MaxDeviationPoints      = 0.0;  // ExecutionPolicy.max_deviation_points, >= 0 required
+
+input group "C6.1 Environment Identity Verification (advisory/diagnostic only - no authority)"
+input string InpC6AccountAllowlist = ""; // comma-separated ACCOUNT_LOGIN values; empty = unconfigured, fails closed (diagnostic only)
+input string InpC6ServerAllowlist  = ""; // comma-separated ACCOUNT_SERVER values; empty = unconfigured, fails closed (diagnostic only)
+input string InpC6SymbolAllowlist  = ""; // comma-separated symbols; empty = unconfigured, fails closed (diagnostic only)
 
 string   g_EventStoreFileName = "";
 datetime g_LastContextBarTime = 0;
@@ -275,6 +281,15 @@ int OnInit()
 
    LogInfo(StringFormat("%s v%s starting - event store file: %s", MLQUANTAI_EA_NAME, MLQUANTAI_EA_VERSION, g_EventStoreFileName));
    LogInfo("Phase B B3: Data Hub + Feature Engine active (closed-bar MarketContext). Still no strategies, no AI, no order execution.");
+
+   // C6.1 Environment Identity Verification: pure, read-only observation
+   // of environment/identity/authority runtime facts, logged for operator
+   // diagnostic visibility only. Authority: NONE - never gates, never
+   // suppresses, never caches for later use by any sealed gate. See
+   // Include/MLQuantAI/Execution/MLQuantAI_EnvironmentIdentitySnapshot.mqh.
+   EnvironmentIdentitySnapshot c6EnvIdentitySnapshot;
+   EnvironmentIdentitySnapshot_Build(InpC6AccountAllowlist, InpC6ServerAllowlist, InpC6SymbolAllowlist, c6EnvIdentitySnapshot);
+   EnvironmentIdentitySnapshot_Log(c6EnvIdentitySnapshot, InpC6AccountAllowlist, InpC6ServerAllowlist, InpC6SymbolAllowlist);
 
    if(!FeatureEngine_Init(_Symbol))
    {
