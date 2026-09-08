@@ -275,6 +275,21 @@ void OnStart()
    lockPolicy.environment_lock_policy_version = "ENVLOCK_C2_SMOKE_V1";
    lockPolicy.trade_server_allowlist = AccountInfoString(ACCOUNT_SERVER);
 
+   // Diagnostic-only addition (C4.4 checkpoint, scenario 10 bootstrap):
+   // these identity fields are fully deterministic across repeated runs
+   // of this script (BuildAcceptedRequest uses a fixed t0 = D'2026.03.01
+   // 00:00:00', never TimeCurrent()), and are exactly what
+   // MLQuantAI_ManualScript_GrantApproval.mq5 requires as its
+   // I_ExecutionRequestId/I_ExecutionRequestHash/I_CandidateId inputs -
+   // printed here because a gate rejection at
+   // REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED writes nothing durable
+   // for an operator to read them back from afterward. Does not change
+   // any existing behavior, event, or return value of this script.
+   Print("DIAGNOSTIC (for MLQuantAI_ManualScript_GrantApproval.mq5 inputs): candidate_id=", candidate.candidate_id,
+         " execution_request_id=", req.execution_request_id,
+         " execution_request_hash=", req.execution_request_hash,
+         " execution_policy_version=", policy.execution_policy_version);
+
    Print("Submitting real order: symbol=", _Symbol, " side=", (req.side == ORDER_TYPE_BUY ? "BUY" : "SELL"),
          " lot=", DoubleToString(req.lot_size, 2), " correlation_id=", req.correlation_id);
    Print("NOTE: planned_sl/planned_tp come from a synthetic ~100-104 price-scale fixture, NOT real ", _Symbol,
