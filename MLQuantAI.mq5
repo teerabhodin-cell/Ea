@@ -31,12 +31,26 @@
 #include <MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionAudit.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionStartupDiagnostics.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_LifecycleAuthorityProcessor.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_RecoveryReconciliationStartup.mqh>
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_Contract.mqh>
 
 input group "=== System ==="
 input bool   DebugMode                   = false;
 input string EventStoreFileNameOverride  = ""; // blank = auto date-stamped "MLQuantAI_events_YYYY-MM-DD.jsonl"
 input bool   RunLifecycleSmokeTest       = true; // Step 8.5: prove a candidate written by THIS EA replays correctly across restarts. Turn off once Phase B strategies produce real candidates.
+
+input group "C4.4 Recovery coverage attestation"
+input ENUM_C44_COVERAGE_SOURCE_MODE InpC44CoverageSourceMode = C44_COVERAGE_SOURCE_NONE; // NONE preserves today's exact shipped behavior (adequacy always UNASSESSED)
+input string   InpC44CoverageCsvFileName        = ""; // CSV mode only - Common\Files filename; blank = not configured (Load() fails closed)
+input string   InpC44CoverageBrokerIdentity     = ""; // PARAMETER mode only
+input string   InpC44CoverageAccountIdentity    = ""; // PARAMETER mode only
+input string   InpC44CoverageServerTimeBasis    = ""; // PARAMETER mode only
+input datetime InpC44CoverageFrom               = 0;  // PARAMETER mode only
+input datetime InpC44CoverageTo                 = 0;  // PARAMETER mode only
+input datetime InpC44CoverageValidUntil         = 0;  // PARAMETER mode only
+input string   InpC44CoverageIssuerIdentity     = ""; // PARAMETER mode only
+input string   InpC44CoverageEvidenceReference  = ""; // PARAMETER mode only
+input string   InpC44CoverageIntegrityIdentifier = ""; // PARAMETER mode only
 
 string   g_EventStoreFileName = "";
 datetime g_LastContextBarTime = 0;
@@ -348,6 +362,26 @@ int OnInit()
    // broker query/candidate mutation/event append/OnTradeTransaction
    // anywhere in this call chain.
    TransactionMatching_StartupRebuild(g_EventStoreFileName);
+
+   // C4.4 recovery-coverage runtime wiring (frozen this checkpoint): one
+   // read-only RecoveryReconciliation_ScanLive() call, using whichever
+   // ICoverageAttestationSource the operator selected via
+   // InpC44CoverageSourceMode (default NONE - reproduces today's exact
+   // shipped behavior). Placed here because this is the earliest point
+   // both OrderAggregateRegistry (just rebuilt above) and
+   // ExecutionRequestProjection (rebuilt by BrokerSubmissionAudit_
+   // StartupRebuild earlier in this function) - the only two registries
+   // ScanLive reads - are guaranteed ready; C4's own contract (§5/§8) is
+   // read-only/no execution-gate authority, so a scan or source failure
+   // here is diagnostic-only (see RecoveryReconciliation_StartupScan's
+   // own LogWarn/LogInfo calls) and can never fail EA initialization or
+   // trip Safe Mode.
+   RecoveryReconciliationReport c44RecoveryCoverageReport = RecoveryReconciliation_StartupScan(
+      InpC44CoverageSourceMode,
+      InpC44CoverageCsvFileName,
+      InpC44CoverageBrokerIdentity, InpC44CoverageAccountIdentity, InpC44CoverageServerTimeBasis,
+      InpC44CoverageFrom, InpC44CoverageTo, InpC44CoverageValidUntil,
+      InpC44CoverageIssuerIdentity, InpC44CoverageEvidenceReference, InpC44CoverageIntegrityIdentifier);
 
    EventStore_LogSystem(EventTypeToString(EVENT_TYPE_SYSTEM_STARTED),
                          StringFormat("%s v%s", MLQUANTAI_EA_NAME, MLQUANTAI_EA_VERSION),
