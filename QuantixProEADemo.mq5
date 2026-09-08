@@ -2799,83 +2799,6 @@ void DrawEquityCurveChart(int x, int y, int w, int h)
    }
 }
 
-int PriceToChartY(double price, double lo, double range, int y, int h)
-{
-   return y + h - (int)((price - lo) / range * h);
-}
-
-// เส้นแนวนอนประ (dashed) พาดกลางกราฟแท่งเทียน พร้อม label ราคาที่ขอบขวา - ใช้โชว์ราคาปัจจุบัน/
-// เป้า Buy/Sell ถัดไปทับบนกราฟ ให้เห็นภาพเดียวกันว่าราคาต้องขยับไปทางไหนถึงจะฟิลไม้ถัดไป
-void DrawChartDashedHLine(int x1, int x2, int yPos, color c, string label)
-{
-   for(int px = x1; px < x2; px += S(7)) DashCanvas.Line(px, yPos, MathMin(px + S(4), x2), yPos, ColorToARGB(c));
-   UIFontSet(SF(11), FW_BOLD);
-   DashCanvas.TextOut(x2 + S(4), yPos - S(7), label, ColorToARGB(c));
-}
-
-// กราฟแท่งเทียนจริงของสัญลักษณ์/ไทม์เฟรมที่ EA กำลังรันอยู่ (CopyRates ของ _Period ปัจจุบัน) พร้อมเส้น
-// ราคาปัจจุบัน (ฟ้า) และเป้า Buy/Sell ถัดไปของกริด (เขียว/แดง) ทับอยู่ ให้เห็นในภาพเดียวว่าราคาต้อง
-// ขยับไปทางไหน/อีกเท่าไหร่ถึงจะฟิลไม้ถัดไป - แทนกราฟเส้น equity เดิมที่บอกแค่พอร์ตโต/หด ไม่บอกบริบทราคา
-void DrawCandleChart(int x, int y, int w, int h, double nextBuyPrice, double nextSellPrice)
-{
-   int r = S(6);
-   FillRoundedRect(x, y, x + w, y + h, r, ColorToARGB(C'10,12,20'));
-
-   int barsToShow = 50;
-   MqlRates rates[];
-   ArraySetAsSeries(rates, true);
-   int copied = CopyRates(_Symbol, _Period, 0, barsToShow, rates);
-   if(copied < 2)
-   {
-      UIFontSet(SF(14));
-      DashCanvas.TextOut(x + S(10), y + h / 2 - S(7), GetUIString("กำลังโหลดกราฟ...", "Loading chart..."), ColorToARGB(C'100,100,120'));
-      return;
-   }
-
-   double hi = rates[0].high, lo = rates[0].low;
-   for(int i = 1; i < copied; i++)
-   {
-      if(rates[i].high > hi) hi = rates[i].high;
-      if(rates[i].low  < lo) lo = rates[i].low;
-   }
-   if(nextBuyPrice  > 0) { hi = MathMax(hi, nextBuyPrice);  lo = MathMin(lo, nextBuyPrice); }
-   if(nextSellPrice > 0) { hi = MathMax(hi, nextSellPrice); lo = MathMin(lo, nextSellPrice); }
-   double range = hi - lo;
-   if(range <= 0) range = 1.0;
-   double mid = (hi + lo) / 2.0;
-   range *= 1.2; // เผื่อขอบบน-ล่างไม่ให้แท่งเทียน/เส้นราคาชนกรอบพอดี
-   hi = mid + range / 2.0;
-   lo = mid - range / 2.0;
-
-   int padR    = S(58); // เผื่อที่ขวาไว้ label ราคาของเส้นทับกราฟ
-   int plotW   = w - S(6) - padR;
-   int candleW = MathMax(2, plotW / barsToShow);
-
-   for(int i = 0; i < copied; i++)
-   {
-      int idx = copied - 1 - i; // rates[] เป็น series (0 = แท่งล่าสุด) - วาดจากซ้าย(เก่าสุด)ไปขวา(ล่าสุด)
-      int cxPos  = x + S(3) + i * candleW + candleW / 2;
-      int yHigh  = PriceToChartY(rates[idx].high,  lo, range, y, h);
-      int yLow   = PriceToChartY(rates[idx].low,   lo, range, y, h);
-      int yOpen  = PriceToChartY(rates[idx].open,  lo, range, y, h);
-      int yClose = PriceToChartY(rates[idx].close, lo, range, y, h);
-      bool bull  = rates[idx].close >= rates[idx].open;
-      color bodyColor = bull ? C'34,197,94' : C'239,68,68';
-
-      DashCanvas.Line(cxPos, yHigh, cxPos, yLow, ColorToARGB(bodyColor));
-      int bodyTop = MathMin(yOpen, yClose), bodyBot = MathMax(yOpen, yClose);
-      if(bodyBot - bodyTop < 1) bodyBot = bodyTop + 1;
-      int bw = MathMax(1, (int)(candleW * 0.6));
-      DashCanvas.FillRectangle(cxPos - bw / 2, bodyTop, cxPos + bw / 2, bodyBot, ColorToARGB(bodyColor));
-   }
-
-   int lineX2 = x + S(3) + copied * candleW;
-   double curPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   DrawChartDashedHLine(x + S(3), lineX2, PriceToChartY(curPrice, lo, range, y, h), C'96,165,250', DoubleToString(curPrice, _Digits));
-   if(nextBuyPrice  > 0) DrawChartDashedHLine(x + S(3), lineX2, PriceToChartY(nextBuyPrice,  lo, range, y, h), C'34,197,94', DoubleToString(nextBuyPrice, _Digits));
-   if(nextSellPrice > 0) DrawChartDashedHLine(x + S(3), lineX2, PriceToChartY(nextSellPrice, lo, range, y, h), C'239,68,68', DoubleToString(nextSellPrice, _Digits));
-}
-
 void DrawFeatureIcon(int x, int cellW, int y, string emoji, string labelTh, string labelEn, bool isOn)
 {
    int cx       = x + cellW / 2;
@@ -3350,30 +3273,28 @@ int DrawEquityFeatureRow(int y)
    int ftW   = totalW - eqW - psW;
    int rowH  = S(265);
 
-   DrawCardBG(S(14), y, eqW, rowH, GetUIString("กราฟราคา & กริด", "LIVE CHART & GRID"), "📈");
+   DrawCardBG(S(14), y, eqW, rowH, GetUIString("กราฟเส้นทุน", "EQUITY CURVE"), "📈");
    int chartY = y + S(44);
    int chartH = rowH - S(44) - S(32);
-   double liveNextBuy  = GetNextGridTargetPrice(true);
-   double liveNextSell = GetNextGridTargetPrice(false);
-   DrawCandleChart(S(14) + S(10), chartY, eqW - S(20), chartH, liveNextBuy, liveNextSell);
+   DrawEquityCurveChart(S(14) + S(10), chartY, eqW - S(20), chartH);
    UIFontSet(SF(14), FW_BOLD);
    string ddTxt = GetUIString("ย่อตัวสูงสุด: ", "MAX DRAWDOWN: ") + DoubleToString(MaxDrawdownPercent, 2) + "%";
    int tw = EstimateTextWidth(ddTxt, SF(14));
    DashCanvas.TextOut(S(14) + eqW - S(14) - tw, y + rowH - S(27), ddTxt, ColorToARGB(C'239,68,68'));
 
    // คอลัมน์กลาง: สรุปกำไรวันนี้/สัปดาห์นี้/เดือนนี้/รวมทั้งหมด (นับเฉพาะบาสเก็ตที่ปิดรอบแล้วจริงเหมือน
-   // การ์ด TODAY เดิม) + กราฟเส้น equity ย่อส่วนไว้ด้านล่างให้เห็นเทรนด์พอร์ตควบคู่ไปด้วย
+   // การ์ด TODAY เดิม) - ไม่มีกราฟย่อยซ้ำ เพราะกราฟเส้นทุนตัวเต็มอยู่ในการ์ดซ้ายแล้ว
    int psx = S(14) + eqW + gap;
    DrawCardBG(psx, y, psW, rowH, GetUIString("สรุปกำไร", "PROFIT SUMMARY"), "💰");
    {
-      int psy = y + S(48);
+      int psy = y + S(56);
       int innerPsW = psW - S(24);
-      DrawKV(psx + S(12), psy, innerPsW, GetUIString("วันนี้", "Today"), (DailyRealizedProfit >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(DailyRealizedProfit), 2), C'160,160,180', DailyRealizedProfit >= 0 ? C'34,197,94' : C'239,68,68'); psy += S(30);
-      DrawKV(psx + S(12), psy, innerPsW, GetUIString("สัปดาห์นี้", "This Week"), (WeeklyRealizedProfit >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(WeeklyRealizedProfit), 2), C'160,160,180', WeeklyRealizedProfit >= 0 ? C'34,197,94' : C'239,68,68'); psy += S(30);
-      DrawKV(psx + S(12), psy, innerPsW, GetUIString("เดือนนี้", "This Month"), (MonthlyRealizedProfit >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(MonthlyRealizedProfit), 2), C'160,160,180', MonthlyRealizedProfit >= 0 ? C'34,197,94' : C'239,68,68'); psy += S(30);
+      int psStep = (rowH - S(56) - S(20)) / 4;
+      DrawKV(psx + S(12), psy, innerPsW, GetUIString("วันนี้", "Today"), (DailyRealizedProfit >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(DailyRealizedProfit), 2), C'160,160,180', DailyRealizedProfit >= 0 ? C'34,197,94' : C'239,68,68', 16); psy += psStep;
+      DrawKV(psx + S(12), psy, innerPsW, GetUIString("สัปดาห์นี้", "This Week"), (WeeklyRealizedProfit >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(WeeklyRealizedProfit), 2), C'160,160,180', WeeklyRealizedProfit >= 0 ? C'34,197,94' : C'239,68,68', 16); psy += psStep;
+      DrawKV(psx + S(12), psy, innerPsW, GetUIString("เดือนนี้", "This Month"), (MonthlyRealizedProfit >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(MonthlyRealizedProfit), 2), C'160,160,180', MonthlyRealizedProfit >= 0 ? C'34,197,94' : C'239,68,68', 16); psy += psStep;
       double totalRealized = StatsSumWinProfit - StatsSumLossAmount;
-      DrawKV(psx + S(12), psy, innerPsW, GetUIString("รวมทั้งหมด", "All-Time"), (totalRealized >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(totalRealized), 2), C'160,160,180', totalRealized >= 0 ? C'34,197,94' : C'239,68,68'); psy += S(38);
-      DrawEquityCurveChart(psx + S(10), psy, psW - S(20), y + rowH - S(14) - psy);
+      DrawKV(psx + S(12), psy, innerPsW, GetUIString("รวมทั้งหมด", "All-Time"), (totalRealized >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(totalRealized), 2), C'160,160,180', totalRealized >= 0 ? C'34,197,94' : C'239,68,68', 16);
    }
 
    int fx = S(14) + eqW + psW + gap * 2;
