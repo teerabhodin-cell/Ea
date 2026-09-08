@@ -33,6 +33,13 @@
 #include <MLQuantAI/Execution/MLQuantAI_LifecycleAuthorityProcessor.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_RecoveryReconciliationStartup.mqh>
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_Contract.mqh>
+#include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_ToTradeCandidate.mqh>
+#include <MLQuantAI/Market/MLQuantAI_FeatureSnapshotBuilder.mqh>
+#include <MLQuantAI/Core/MLQuantAI_RiskSizing.mqh>
+#include <MLQuantAI/AI/MLQuantAI_AIDecisionBuilder.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_EligibilityBuilder.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_ExecutionRequestBuilder.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_SafetyGate.mqh>
 
 input group "=== System ==="
 input bool   DebugMode                   = false;
@@ -51,6 +58,24 @@ input datetime InpC44CoverageValidUntil         = 0;  // PARAMETER mode only
 input string   InpC44CoverageIssuerIdentity     = ""; // PARAMETER mode only
 input string   InpC44CoverageEvidenceReference  = ""; // PARAMETER mode only
 input string   InpC44CoverageIntegrityIdentifier = ""; // PARAMETER mode only
+
+input group "C5.0 TEST FIXTURE candidate pipeline (Strategy Tester only)"
+input double InpC5TargetRiskPercent       = 1.0;  // RiskContext.target_risk_percent, e.g. 1.0 == 1%
+input string InpC5SizingRulesVersion      = "C5_0_FIXTURE_SIZING_V1";
+input double InpC5StubPSuccess            = 1.0;  // synthetic InferenceResult.output_values[0], in [0,1] - controls ALLOW/REJECT deterministically
+input string InpC5AIDecisionPolicyVersion = "C5_0_FIXTURE_AI_POLICY_V1";
+input string InpC5AIThresholdVersion      = "C5_0_FIXTURE_AI_THRESHOLD_V1";
+input double InpC5AIAllowThreshold        = 0.5;  // in [0,1]
+input string InpC5EligibilityPolicyVersion = "C5_0_FIXTURE_ELIGIBILITY_POLICY_V1";
+input double InpC5MaxDailyLossPercent     = 0.0;  // 0 = gate disabled
+input double InpC5MaxDrawdownPercent      = 0.0;  // 0 = gate disabled
+input double InpC5MaxTotalExposurePercent = 0.0;  // 0 = gate disabled
+input int    InpC5MaxOpenPositions        = 0;    // 0 = gate disabled
+input double InpC5MinMarginLevel          = 0.0;  // 0 = gate disabled
+input string InpC5ExecutionPolicyVersion  = "C5_0_FIXTURE_EXECUTION_POLICY_V1";
+input double InpC5MaxVolume               = 0.01; // ExecutionPolicy.max_volume, must be > 0 to reach SafetyGate ACCEPTED
+input double InpC5MaxPlannedRiskAmount    = 1000.0; // ExecutionPolicy.max_planned_risk_amount, must be > 0 to reach SafetyGate ACCEPTED
+input double InpC5MaxDeviationPoints      = 0.0;  // ExecutionPolicy.max_deviation_points, >= 0 required
 
 string   g_EventStoreFileName = "";
 datetime g_LastContextBarTime = 0;
@@ -576,4 +601,128 @@ void OnTick()
    }
 
    FeatureEngine_LogContextReady(ctx);
+
+   // C5.0 TEST FIXTURE candidate pipeline: the first end-to-end wiring of
+   // the already-built, already-tested candidate -> risk -> AI -> eligibility
+   // -> execution-request -> safety-gate chain, Strategy Tester only. Stub
+   // AI inference (no ONNX model exists yet) - real InferenceResult contract
+   // shape, synthetic model identity, referentially matched to the real
+   // FeatureSnapshot it's built from. Stops at SafetyGate_Evaluate() -
+   // never calls BrokerSubmission_Submit()/OrderSend()/EventStore_Log* -
+   // diagnostic-only, no execution authority, per the C5.0 design freeze.
+   if(!MQLInfoInteger(MQL_TESTER)) return;
+
+   CRTDetectionResult crtResult;
+   CRT_DetectV1(ctx, crtResult);
+   if(!crtResult.detected) return; // no log - expected most bars, not a failure
+
+   TradeCandidate c5Candidate;
+   if(!CRT_ToTradeCandidate(ctx, crtResult, c5Candidate))
+   {
+      LogWarn("C5.0 TEST FIXTURE stopped: CRT_TO_TRADE_CANDIDATE_FAILED");
+      return;
+   }
+
+   FeatureSnapshot c5Snapshot;
+   if(!Candidate_ToFeatureSnapshot(c5Candidate, ctx, c5Snapshot))
+   {
+      LogWarn("C5.0 TEST FIXTURE stopped: FEATURE_SNAPSHOT_BUILD_FAILED candidate_id=" + c5Candidate.candidate_id);
+      return;
+   }
+
+   RiskContext c5RiskCtx;
+   RiskContext_Init(c5RiskCtx);
+   c5RiskCtx.account              = ctx.account;
+   c5RiskCtx.symbol_spec          = ctx.symbol_spec;
+   c5RiskCtx.target_risk_percent  = InpC5TargetRiskPercent;
+   c5RiskCtx.sizing_method        = "FIXED_PERCENT_RISK";
+   c5RiskCtx.sizing_rules_version = InpC5SizingRulesVersion;
+   c5RiskCtx.risk_context_hash    = RiskContext_ComputeHash(c5RiskCtx);
+
+   RiskPlan c5RiskPlan;
+   if(!Candidate_ToRiskPlan(c5Candidate, c5RiskCtx, c5RiskPlan))
+   {
+      LogWarn("C5.0 TEST FIXTURE stopped: RISK_PLAN_BUILD_FAILED candidate_id=" + c5Candidate.candidate_id);
+      return;
+   }
+
+   InferenceResult c5StubInference;
+   InferenceResult_Init(c5StubInference);
+   c5StubInference.model_registry_id     = "STUB_NO_MODEL_V1";
+   c5StubInference.model_registry_hash   = "STUB_NO_MODEL_V1";
+   c5StubInference.model_artifact_hash   = "STUB_NO_MODEL_V1";
+   c5StubInference.feature_snapshot_id   = c5Snapshot.feature_snapshot_id;
+   c5StubInference.feature_snapshot_hash = c5Snapshot.feature_snapshot_hash;
+   c5StubInference.feature_vector_hash   = c5Snapshot.feature_vector_hash;
+   c5StubInference.output_schema_version = "STUB_V1";
+   ArrayResize(c5StubInference.output_values, 1);
+   c5StubInference.output_values[0] = (float)InpC5StubPSuccess;
+   c5StubInference.output_hash      = InferenceResult_ComputeOutputHash(c5StubInference);
+   c5StubInference.runtime_framework = "NONE";
+   c5StubInference.runtime_version   = "STUB";
+
+   AIDecisionPolicy c5AIPolicy;
+   AIDecisionPolicy_Init(c5AIPolicy);
+   c5AIPolicy.decision_policy_version = InpC5AIDecisionPolicyVersion;
+   c5AIPolicy.threshold_version       = InpC5AIThresholdVersion;
+   c5AIPolicy.allow_threshold         = InpC5AIAllowThreshold;
+
+   AIDecision c5AIDecision; string c5AIReason;
+   if(!AIDecision_Build(c5StubInference, c5Snapshot, c5AIPolicy, c5AIDecision, c5AIReason))
+   {
+      LogWarn("C5.0 TEST FIXTURE stopped: AI_DECISION_BUILD_FAILED candidate_id=" + c5Candidate.candidate_id + " reason=" + c5AIReason);
+      return;
+   }
+
+   EligibilityContext c5EligCtx;
+   EligibilityContext_Init(c5EligCtx);
+   c5EligCtx.account               = ctx.account;
+   c5EligCtx.safe_mode_active      = SafeMode_IsActive();
+   c5EligCtx.eligibility_context_hash = EligibilityContext_ComputeHash(c5EligCtx);
+
+   EligibilityPolicy c5EligPolicy;
+   EligibilityPolicy_Init(c5EligPolicy);
+   c5EligPolicy.eligibility_policy_version = InpC5EligibilityPolicyVersion;
+   c5EligPolicy.max_daily_loss_percent     = InpC5MaxDailyLossPercent;
+   c5EligPolicy.max_drawdown_percent       = InpC5MaxDrawdownPercent;
+   c5EligPolicy.max_total_exposure_percent = InpC5MaxTotalExposurePercent;
+   c5EligPolicy.max_open_positions         = InpC5MaxOpenPositions;
+   c5EligPolicy.min_margin_level           = InpC5MinMarginLevel;
+
+   EligibilityDecision c5EligDecision; string c5EligReason;
+   if(!EligibilityDecision_Build(c5RiskPlan, c5AIDecision, c5Snapshot, c5EligCtx, c5EligPolicy, c5EligDecision, c5EligReason))
+   {
+      LogWarn("C5.0 TEST FIXTURE stopped: ELIGIBILITY_DECISION_BUILD_FAILED candidate_id=" + c5Candidate.candidate_id + " reason=" + c5EligReason);
+      return;
+   }
+
+   ExecutionPolicy c5ExecPolicy;
+   ExecutionPolicy_Init(c5ExecPolicy);
+   c5ExecPolicy.execution_policy_version = InpC5ExecutionPolicyVersion;
+   c5ExecPolicy.environment_mode         = EXECUTION_ENV_TESTER;
+   c5ExecPolicy.dry_run                  = true;
+   c5ExecPolicy.manual_approval_required = false;
+   c5ExecPolicy.account_allowlist        = IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
+   c5ExecPolicy.symbol_allowlist         = _Symbol;
+   c5ExecPolicy.max_volume               = InpC5MaxVolume;
+   c5ExecPolicy.max_planned_risk_amount  = InpC5MaxPlannedRiskAmount;
+   c5ExecPolicy.max_deviation_points     = InpC5MaxDeviationPoints;
+
+   ExecutionRequest c5ExecRequest; string c5ExecReason;
+   if(!ExecutionRequest_Build(c5Candidate, c5EligDecision, c5AIDecision, c5RiskPlan, c5ExecPolicy, c5ExecRequest, c5ExecReason))
+   {
+      LogWarn("C5.0 TEST FIXTURE stopped: EXECUTION_REQUEST_BUILD_FAILED candidate_id=" + c5Candidate.candidate_id + " reason=" + c5ExecReason);
+      return;
+   }
+
+   DryRunExecutionResult c5GateResult;
+   if(!SafetyGate_Evaluate(c5ExecRequest, c5ExecPolicy, c5GateResult))
+   {
+      LogWarn("C5.0 TEST FIXTURE stopped: SAFETY_GATE_EVALUATE_STRUCTURAL_FAILURE candidate_id=" + c5Candidate.candidate_id);
+      return;
+   }
+
+   LogInfo("C5.0 TEST FIXTURE: candidate_id=" + c5Candidate.candidate_id +
+           " decision=" + (c5GateResult.decision == SAFETY_GATE_ACCEPTED ? "ACCEPTED" : "REJECTED") +
+           " reason=" + ReasonCodeToString(c5GateResult.reason_code));
 }
