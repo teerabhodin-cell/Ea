@@ -3454,7 +3454,8 @@ int DrawNewsCard(int y)
 //+------------------------------------------------------------------+
 double UIScale       = 1.0;
 int    DASH_W_BASE   = 1450;
-int    DASH_H_BASE   = 1600; // เผื่อ Positions panel แสดงเต็ม 6 แถว + แถว System Decision/Status/Risk 3 การ์ดเรียงกัน
+int    DASH_H_BASE   = 1450; // ใช้อ้างอิงคำนวณ UIScale เท่านั้น (ความสูงจริงของ canvas มาจาก
+                              // ComputeDashboardContentHeight() แบบ dynamic ตามจำนวนไม้ที่เปิดอยู่จริง)
 
 int S(double v)  { return (int)MathRound(v * UIScale); }
 // พื้นฟอนต์ต่ำมาก (8px) แค่กันกรณีสุดขั้ว - ถ้าตั้งพื้นสูงกว่านี้ ฟอนต์จะไม่ย่อตามการ์ดที่หดลงจริง
@@ -3478,6 +3479,30 @@ double ComputeUIScale()
    if(scale > 2.4) scale = 2.4;   // กันขยายจนใหญ่เกินจอ
    if(scale < 0.4) scale = 0.4;   // กันหดจนเล็กเกินไป (SF() มีพื้นฟอนต์กันไว้อีกชั้น)
    return scale;
+}
+
+// ความสูง "เนื้อหาจริง" ที่ต้องใช้ ณ ตอนนี้ - รวมทุก section ตามลำดับเดียวกับที่วาดจริงใน
+// UpdateDashboard() ทุกตัวคงที่ ยกเว้น Positions panel ที่แปรผันตามจำนวนไม้ที่เปิดอยู่จริง (posCount)
+// ทำให้ DASH_H ไม่ต้องเผื่อพื้นที่ตายตัวสำหรับกรณีเลวร้ายสุดตลอดเวลา (ว่างเปล่าตอนไม้น้อย) หรือเสี่ยง
+// ล้นตอนไม้เยอะ - ต้องแก้ตัวเลขที่นี่คู่กันเสมอถ้าปรับความสูงใน Draw* ฟังก์ชันไหนด้านบน
+int ComputeDashboardContentHeight(int posCount)
+{
+   int maxRows   = 6;
+   int shownRows = MathMax(1, MathMin(posCount, maxRows));
+   int extraLine = (posCount > maxRows) ? 1 : 0;
+   int posCardH  = S(44) + S(24) + (shownRows + extraLine) * S(26) + S(36);
+
+   int h = S(14);          // จุดเริ่ม y (DrawHeader)
+   h += S(90);              // DrawHeader
+   h += S(46);              // DrawInfoBar
+   h += S(38);              // DrawServerTimeRow
+   h += S(258) + S(12);     // DrawStatCardsRow
+   h += S(265) + S(12);     // DrawEquityFeatureRow
+   h += S(84)  + S(12);     // DrawStatsRow
+   h += S(204) + S(12);     // DrawStatusRow
+   h += posCardH + S(12);   // DrawPositionsPanel
+   h += S(162) + S(14);     // DrawNewsCard
+   return h;
 }
 
 //+------------------------------------------------------------------+
@@ -3530,7 +3555,9 @@ void InitDashboard()
 
    UIScale = ComputeUIScale();
    DASH_W  = S(DASH_W_BASE);
-   DASH_H  = S(DASH_H_BASE);
+   int buyCnt0, sellCnt0; double totalLots0;
+   CountPositions(buyCnt0, sellCnt0, totalLots0);
+   DASH_H = ComputeDashboardContentHeight(buyCnt0 + sellCnt0) + S(68); // +68 = พื้นที่ปุ่ม CLOSE ALL ด้านล่าง
 
    DashCanvas.CreateBitmapLabel(CANVAS_NAME, 15, 15, DASH_W, DASH_H, COLOR_FORMAT_ARGB_NORMALIZE);
    ObjectSetInteger(0, CANVAS_NAME, OBJPROP_CORNER, CORNER_LEFT_UPPER);
@@ -3548,8 +3575,14 @@ void InitDashboard()
 void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, int openPos, int pendingOrders)
 {
    if(IsTestingMode && !ShowDashboardInBacktest) return;
+
+   int buyCntChk, sellCntChk; double totalLotsChk;
+   CountPositions(buyCntChk, sellCntChk, totalLotsChk);
+   int neededH = ComputeDashboardContentHeight(buyCntChk + sellCntChk) + S(68);
+
    if(ObjectFind(0, CANVAS_NAME) < 0) InitDashboard();
    else if(MathAbs(ComputeUIScale() - UIScale) >= 0.03) InitDashboard(); // ขนาดหน้าต่างชาร์ตเปลี่ยนพอสมควร - สร้าง canvas ใหม่ที่ความละเอียดใหม่
+   else if(MathAbs(neededH - DASH_H) > S(40)) InitDashboard(); // จำนวนไม้เปิดเปลี่ยนพอที่ความสูงเนื้อหาจริงจะต่างจาก canvas เดิมเห็นได้ชัด - รีไซส์ให้พอดี
 
    double equity  = AccountInfoDouble(ACCOUNT_EQUITY);
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
