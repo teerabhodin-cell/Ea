@@ -3394,7 +3394,8 @@ void InitDashboard()
    ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_XDISTANCE, 15);
    ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_YDISTANCE, 15);
-   ObjectSetString(0, BG_BITMAP_NAME, OBJPROP_BMPFILE, "::Images\\QuantixDashboardTemplate.png");
+   ObjectSetString(0, BG_BITMAP_NAME, OBJPROP_BMPFILE, 0, "::Images\\QuantixDashboardTemplate.png");
+   ObjectSetString(0, BG_BITMAP_NAME, OBJPROP_BMPFILE, 1, "::Images\\QuantixDashboardTemplate.png");
    ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_XSIZE, DASH_W);
    ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_YSIZE, DASH_H);
    ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_SELECTABLE, false);
