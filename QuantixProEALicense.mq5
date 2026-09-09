@@ -8,9 +8,9 @@
 #include <Trade\Trade.mqh>
 #include <Canvas\Canvas.mqh>
 // Template ดาชบอร์ดจริง (ออกแบบเป็นภาพ ไม่ใช่วาดด้วย Canvas primitive) - ต้องมีไฟล์
-// Images\QuantixDashboardTemplate.png วางไว้ในโฟลเดอร์เดียวกับไฟล์ .mq5 นี้ตอน compile
+// Images\QuantixDashboardTemplate.bmp วางไว้ในโฟลเดอร์เดียวกับไฟล์ .mq5 นี้ตอน compile
 // ถึงจะฝัง resource ได้สำเร็จ (ไฟล์อยู่ในโฟลเดอร์ Images ของ repo แล้ว)
-#resource "Images\\QuantixDashboardTemplate.png"
+#resource "Images\\QuantixDashboardTemplate.bmp"
 
 CTrade trade;
 
@@ -2969,7 +2969,7 @@ void GetDecisionLabels(ENUM_SYSTEM_DECISION d, int openPos, string &headTH, stri
 }
 
 //+------------------------------------------------------------------+
-//| Section drawers - พิกัดทุกตัวอิงจากไฟล์ Images\QuantixDashboardTemplate.png |
+//| Section drawers - พิกัดทุกตัวอิงจากไฟล์ Images\QuantixDashboardTemplate.bmp |
 //| (วัดจากภาพต้นฉบับ 1536x1024 ตรงๆ) ไม่มี responsive scaling อีกต่อไป -   |
 //| ถ้าตำแหน่งไม่ตรงกรอบพอดีเป๊ะหลังรันจริง ปรับตัวเลขคงที่พวกนี้ได้เลย        |
 //+------------------------------------------------------------------+
@@ -3394,7 +3394,7 @@ void ShowUnlicensedWarning()
 void LoadTemplatePixelsOnce()
 {
    if(TemplateLoaded) return;
-   TemplateLoaded = ResourceReadImage("::Images\\QuantixDashboardTemplate.png", TemplatePixels, TemplateImgW, TemplateImgH);
+   TemplateLoaded = ResourceReadImage("::Images\\QuantixDashboardTemplate.bmp", TemplatePixels, TemplateImgW, TemplateImgH);
    Print("QuantixPro Dashboard: ResourceReadImage loaded=", TemplateLoaded, " W=", TemplateImgW, " H=", TemplateImgH,
          " arraySize=", ArraySize(TemplatePixels), " lastError=", GetLastError());
    if(TemplateLoaded)
