@@ -163,7 +163,7 @@ input int    LatencyGuardPauseSeconds = 60;    // Pause Duration, Sec (ระย
 
 input group "===== 10. Dashboard ====="
 input bool   ShowDashboardInBacktest = false; // Show Dashboard in Backtest (โชว์ UI ตอน backtest, ช้าลง - เปิดไว้ดูใน Visual Mode เท่านั้น)
-input double DashboardScale      = 1.0;    // Dashboard Scale (0.5=เล็กลงครึ่ง, 1.0=ขนาดจริง=เร็วสุด, 1.5=ใหญ่ขึ้น - ค่าอื่นนอกจาก 1.0 ใช้ CPU เพิ่มขึ้นเพราะต้อง resample ทุกรอบ)
+input double DashboardScale      = 0.75;   // Dashboard Scale (0.5=เล็กลงครึ่ง, 1.0=ขนาดจริงของภาพ template=เร็วสุด, 1.5=ใหญ่ขึ้น - ค่าอื่นนอกจาก 1.0 ใช้ CPU เพิ่มขึ้นเพราะต้อง resample ทุกรอบ)
 input bool   ShowCentEquivalent  = true;   // Show Real-Money Equivalent (โชว์มูลค่าจริงคู่กับบัญชี Cent)
 input double CentDivisor         = 100.0;  // Cent Divisor (หน่วยเงินบัญชี / ค่านี้ = มูลค่าจริง)
 
