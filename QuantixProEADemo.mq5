@@ -163,7 +163,7 @@ input int    LatencyGuardPauseSeconds = 60;    // Pause Duration, Sec (ระย
 
 input group "===== 10. Dashboard ====="
 input bool   ShowDashboardInBacktest = false; // Show Dashboard in Backtest (โชว์ UI ตอน backtest, ช้าลง - เปิดไว้ดูใน Visual Mode เท่านั้น)
-input double DashboardScale      = 1.0;    // Dashboard Scale (0.5=เล็กลงครึ่ง, 1.0=ขนาดจริงของภาพ template, 1.5=ใหญ่ขึ้น)
+input double DashboardScale      = 1.0;    // Dashboard Scale (0.5=เล็กลงครึ่ง, 1.0=ขนาดจริง=เร็วสุด, 1.5=ใหญ่ขึ้น - ค่าอื่นนอกจาก 1.0 ใช้ CPU เพิ่มขึ้นเพราะต้อง resample ทุกรอบ)
 input bool   ShowCentEquivalent  = true;   // Show Real-Money Equivalent (โชว์มูลค่าจริงคู่กับบัญชี Cent)
 input double CentDivisor         = 100.0;  // Cent Divisor (หน่วยเงินบัญชี / ค่านี้ = มูลค่าจริง)
 
@@ -254,13 +254,18 @@ double   StatsSumLossAmount  = 0.0; // เก็บเป็นค่าบว�
 string   UI_PREFIX       = "QX_PRO_";
 string   BTN_CLOSE_ALL   = "QX_PRO_BtnCloseAll";
 string   CANVAS_NAME     = "QX_PRO_Canvas";
+string   CANVAS_WORK_NAME = "QX_PRO_CanvasWork";
 
-// --- Dashboard: DashCanvas เดียว วาดพื้นหลัง (pixel ของภาพ template จริง อ่านจาก resource
-// ด้วย ResourceReadImage() ครั้งเดียวแล้ว cache ไว้ที่ TemplatePixels[]) แล้ว blit ทับใหม่ทุกรอบ
-// update ก่อนวาดตัวเลข/สถานะ/กราฟสดๆ ทับลงไป - ไม่ใช้ OBJ_BITMAP_LABEL แยกซ้อนกันอีกต่อไป
-// (เจอปัญหา bitmap label ไม่ยอมแสดงผลบน object ที่ซ้อนกับ canvas) กรอบ/มุม/เส้นประดับทั้งหมด
-// มาจากภาพ ไม่ใช่วาดเอง - ขนาดคงที่ 1:1 พิกเซลตามภาพเสมอ (ภาพ raster ขยาย/ย่อแล้วเบลอ)
+// --- Dashboard: DashCanvas วาดพื้นหลัง (pixel ของภาพ template จริง อ่านจาก resource ด้วย
+// ResourceReadImage() ครั้งเดียวแล้ว cache ไว้ที่ TemplatePixels[]) แล้ว blit ทับใหม่ทุกรอบ update
+// ก่อนวาดตัวเลข/สถานะ/กราฟสดๆ ทับลงไป ที่ความละเอียดจริง 1:1 (DASH_W x DASH_H) เสมอ - กรอบ/มุม/
+// เส้นประดับทั้งหมดมาจากภาพ ไม่ใช่วาดเอง (ภาพ raster ขยาย/ย่อแล้วเบลอ เลยวาดที่ความละเอียดเดียวเสมอ)
+// ถ้า DashboardScale != 1.0: DashCanvas กลายเป็น "งานร่าง" นอกจอ (วาดแบบเดิมทุกจุดไม่ต้องแก้พิกัด)
+// แล้ว resample ทีละพิกเซลไปลง DashDisplayCanvas ซึ่งเป็นตัวที่ผูกกับ CANVAS_NAME ที่แสดงจริงบน
+// ชาร์ต ขนาดตาม scale ที่ตั้งไว้ (OBJ_BITMAP_LABEL ไม่ stretch ภาพให้เอง ต้อง resample เอง)
 CCanvas  DashCanvas;
+CCanvas  DashDisplayCanvas;
+bool     UsingScaledDisplay = false;
 int      DASH_W = 1536;
 int      DASH_H = 1024;
 uint     TemplatePixels[];
@@ -3354,6 +3359,25 @@ void BlitTemplateBackground()
    }
 }
 
+// OBJ_BITMAP_LABEL ไม่ stretch ภาพเวลา XSIZE/YSIZE เล็กกว่าต้นฉบับ (แค่ครอปมุมซ้ายบนให้เห็น
+// เท่านั้น) เลยต้อง resample เอง: อ่านทีละพิกเซลจาก DashCanvas (งานร่างความละเอียดเต็ม 1536x1024
+// นอกจอ) แล้วเขียนลง DashDisplayCanvas (ตัวที่แสดงจริงบนชาร์ต ขนาด dispW x dispH ตาม scale)
+void ResampleToDisplay(int dispW, int dispH)
+{
+   if(dispW <= 0 || dispH <= 0) return;
+   for(int y = 0; y < dispH; y++)
+   {
+      int sy = (int)((long)y * DASH_H / dispH);
+      if(sy >= DASH_H) sy = DASH_H - 1;
+      for(int x = 0; x < dispW; x++)
+      {
+         int sx = (int)((long)x * DASH_W / dispW);
+         if(sx >= DASH_W) sx = DASH_W - 1;
+         DashDisplayCanvas.PixelSet(x, y, DashCanvas.PixelGet(sx, sy));
+      }
+   }
+}
+
 //+------------------------------------------------------------------+
 //| Dashboard lifecycle                                              |
 //+------------------------------------------------------------------+
@@ -3363,19 +3387,34 @@ void InitDashboard()
    DeleteDashboard();
    LoadTemplatePixelsOnce();
 
-   // canvas เดียว (ARGB) - blit พื้นหลังจากภาพ template ก่อน แล้ววาดตัวเลข/สถานะ/กราฟสดทับ
-   // วาดที่ความละเอียดจริง 1:1 (DASH_W x DASH_H) เสมอ - ปรับขนาดที่แสดงบนชาร์ตด้วย
-   // OBJPROP_XSIZE/YSIZE แทน (MT5 stretch บิตแมปให้เอง) ไม่ต้องแก้พิกัดวาดของ panel ไหนเลย
    double scale = (DashboardScale > 0.1) ? DashboardScale : 1.0;
    int dispW = (int)MathRound(DASH_W * scale);
    int dispH = (int)MathRound(DASH_H * scale);
-   DashCanvas.CreateBitmapLabel(CANVAS_NAME, 15, 15, DASH_W, DASH_H, COLOR_FORMAT_ARGB_NORMALIZE);
-   ObjectSetInteger(0, CANVAS_NAME, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, CANVAS_NAME, OBJPROP_XSIZE, dispW);
-   ObjectSetInteger(0, CANVAS_NAME, OBJPROP_YSIZE, dispH);
-   ObjectSetInteger(0, CANVAS_NAME, OBJPROP_SELECTABLE, false);
-   ObjectSetInteger(0, CANVAS_NAME, OBJPROP_BACK, false);
-   ObjectSetInteger(0, CANVAS_NAME, OBJPROP_HIDDEN, true);
+   UsingScaledDisplay = (MathAbs(scale - 1.0) > 0.001);
+
+   if(UsingScaledDisplay)
+   {
+      // DashCanvas กลายเป็น "งานร่าง" นอกจอ วาดที่ความละเอียดเต็ม 1536x1024 เหมือนเดิมทุกจุด
+      DashCanvas.CreateBitmapLabel(CANVAS_WORK_NAME, -20000, -20000, DASH_W, DASH_H, COLOR_FORMAT_ARGB_NORMALIZE);
+      ObjectSetInteger(0, CANVAS_WORK_NAME, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, CANVAS_WORK_NAME, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, CANVAS_WORK_NAME, OBJPROP_HIDDEN, true);
+
+      // DashDisplayCanvas คือของจริงบนชาร์ต ขนาดตาม scale
+      DashDisplayCanvas.CreateBitmapLabel(CANVAS_NAME, 15, 15, dispW, dispH, COLOR_FORMAT_ARGB_NORMALIZE);
+      ObjectSetInteger(0, CANVAS_NAME, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, CANVAS_NAME, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, CANVAS_NAME, OBJPROP_BACK, false);
+      ObjectSetInteger(0, CANVAS_NAME, OBJPROP_HIDDEN, true);
+   }
+   else
+   {
+      DashCanvas.CreateBitmapLabel(CANVAS_NAME, 15, 15, DASH_W, DASH_H, COLOR_FORMAT_ARGB_NORMALIZE);
+      ObjectSetInteger(0, CANVAS_NAME, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, CANVAS_NAME, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, CANVAS_NAME, OBJPROP_BACK, false);
+      ObjectSetInteger(0, CANVAS_NAME, OBJPROP_HIDDEN, true);
+   }
 
    string btnText = GetUIString("🚨 ปิดรวบทุกไม้ (CLOSE ALL)", "🚨 CLOSE ALL POSITIONS");
    CreateButton(BTN_CLOSE_ALL, 15 + 14, 15 + dispH + 10, dispW - 28, 40, btnText, C'220,38,38', clrWhite, 10);
@@ -3383,6 +3422,11 @@ void InitDashboard()
    DashCanvas.Erase(0);
    BlitTemplateBackground();
    DashCanvas.Update();
+   if(UsingScaledDisplay)
+   {
+      ResampleToDisplay(dispW, dispH);
+      DashDisplayCanvas.Update();
+   }
    ChartRedraw();
 }
 
@@ -3452,11 +3496,20 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
    DrawTickerContent();
 
    DashCanvas.Update();
+   if(UsingScaledDisplay)
+   {
+      double scale = (DashboardScale > 0.1) ? DashboardScale : 1.0;
+      int dispW = (int)MathRound(DASH_W * scale);
+      int dispH = (int)MathRound(DASH_H * scale);
+      ResampleToDisplay(dispW, dispH);
+      DashDisplayCanvas.Update();
+   }
 }
 
 void DeleteDashboard()
 {
    DashCanvas.Destroy();
+   DashDisplayCanvas.Destroy();
    for(int i = ObjectsTotal(0) - 1; i >= 0; i--)
    {
       string name = ObjectName(0, i);
