@@ -47,6 +47,7 @@
 #property script_show_inputs
 
 input bool I_Understand_This_May_Open_A_Real_Position = false; // must be set true to run - script aborts otherwise
+input double CeremonyReferencePrice = 0.0; // C6.6-RA-06: 0.0 = capture current SYMBOL_BID now and print it as this run's frozen ceremony reference; >0 = reuse the EXACT value printed by an earlier run, unmodified/unrounded, so this run's identity chain matches that earlier run's - required for Manual Approval to ever match a later submission attempt
 
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_ToTradeCandidate.mqh>
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_EventEmission.mqh>
@@ -73,12 +74,15 @@ input bool I_Understand_This_May_Open_A_Real_Position = false; // must be set tr
 // own reference point (the filler bars' own close price, unchanged since
 // this script's first version) - every hardcoded fixture price below is
 // defined relative to it. BuildAcceptedRequest() computes
-// delta = SymbolInfoDouble(_Symbol, SYMBOL_BID) - SMOKE_FIXTURE_BASE_PRICE
-// once, and every fixture price is shifted by that same delta - a pure
-// additive translation that preserves every relative distance in the
-// original CRT pattern exactly, so CRT_DetectV1's own detection logic
-// (untouched) sees the identical shape, just re-based onto the real
-// current price of whatever symbol this ceremony run is attached to.
+// delta = referencePrice - SMOKE_FIXTURE_BASE_PRICE once, and every
+// fixture price is shifted by that same delta - a pure additive
+// translation that preserves every relative distance in the original CRT
+// pattern exactly, so CRT_DetectV1's own detection logic (untouched) sees
+// the identical shape, just re-based onto a real, tradeable price level.
+// C6.6-RA-06 (QA-authorized): referencePrice is no longer always live
+// SYMBOL_BID - see CeremonyReferencePrice's own comment and the RA-06
+// block inside BuildAcceptedRequest() for why a live-per-run price broke
+// Manual Approval identity matching across two separate ceremony runs.
 #define SMOKE_FIXTURE_BASE_PRICE 105.00
 
 void MakeBar(MqlRates &r, datetime t, double open, double high, double low, double close, long tickVolume, int spread)
@@ -174,11 +178,39 @@ bool BuildAcceptedRequest(TradeCandidate &c, ExecutionRequest &req, ExecutionPol
    // the C6.6 empirical ceremony needs. Single delta computed once here,
    // threaded through every fixture price call below - see
    // SMOKE_FIXTURE_BASE_PRICE's own comment for the full rationale.
-   double realBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double delta   = realBid - SMOKE_FIXTURE_BASE_PRICE;
-   Print("F1 fixture re-base: _Symbol=", _Symbol, " real SYMBOL_BID=", DoubleToString(realBid, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)),
-         " SMOKE_FIXTURE_BASE_PRICE=", DoubleToString(SMOKE_FIXTURE_BASE_PRICE, 2),
-         " delta=", DoubleToString(delta, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)));
+   // C6.6-RA-06 (QA-authorized, ceremony tooling only): the live SYMBOL_BID
+   // read below is a RUNTIME OBSERVATION only, printed for the operator's
+   // own situational awareness (e.g. cross-checking Phase 4.5 broker
+   // constraints against the current market) - it is NEVER used as the
+   // fixture's price anchor anymore. The anchor is CeremonyReferencePrice:
+   // on a first run (input left at 0.0) this run's own live bid is
+   // captured once and printed as the frozen reference for a LATER run to
+   // paste back in; on a later run (input > 0) that exact value is reused
+   // verbatim, unrounded, as the anchor - never re-derived from whatever
+   // the market is doing right now. This is what makes two separate
+   // script executions produce the IDENTICAL candidate_hash/
+   // execution_request_id/execution_request_hash, so a Manual Approval
+   // granted against a first run's printed identity can still match a
+   // later run's submission attempt. No identity/hash algorithm changed -
+   // only which price value feeds the same, unmodified fixture geometry.
+   double liveBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double referencePrice = (CeremonyReferencePrice > 0.0) ? CeremonyReferencePrice : liveBid;
+   double delta = referencePrice - SMOKE_FIXTURE_BASE_PRICE;
+
+   Print("RA-06 runtime observation (NOT the identity anchor): _Symbol=", _Symbol,
+         " current live SYMBOL_BID=", DoubleToString(liveBid, 8));
+
+   if(CeremonyReferencePrice > 0.0)
+      Print("RA-06 ceremony reference: REUSING CeremonyReferencePrice input = ", DoubleToString(CeremonyReferencePrice, 8),
+            " (unmodified, unrounded) - this run's identity chain should match the run that originally printed this value.");
+   else
+      Print("RA-06 ceremony reference: CeremonyReferencePrice input was 0.0 - CAPTURED this run's own live bid as the frozen "
+            "reference = ", DoubleToString(referencePrice, 8), " . To reproduce the SAME identity chain in a later run "
+            "(e.g. after Manual Approval), set input CeremonyReferencePrice to EXACTLY this printed value, unrounded.");
+
+   Print("F1 fixture re-base: SMOKE_FIXTURE_BASE_PRICE=", DoubleToString(SMOKE_FIXTURE_BASE_PRICE, 2),
+         " ceremony reference used for delta=", DoubleToString(referencePrice, 8),
+         " delta=", DoubleToString(delta, 8));
 
    MarketContext ctx;
    BuildBaseContext(ctx, delta);
