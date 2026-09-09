@@ -163,6 +163,7 @@ input int    LatencyGuardPauseSeconds = 60;    // Pause Duration, Sec (ระย
 
 input group "===== 10. Dashboard ====="
 input bool   ShowDashboardInBacktest = false; // Show Dashboard in Backtest (โชว์ UI ตอน backtest, ช้าลง - เปิดไว้ดูใน Visual Mode เท่านั้น)
+input double DashboardScale      = 1.0;    // Dashboard Scale (0.5=เล็กลงครึ่ง, 1.0=ขนาดจริงของภาพ template, 1.5=ใหญ่ขึ้น)
 input bool   ShowCentEquivalent  = true;   // Show Real-Money Equivalent (โชว์มูลค่าจริงคู่กับบัญชี Cent)
 input double CentDivisor         = 100.0;  // Cent Divisor (หน่วยเงินบัญชี / ค่านี้ = มูลค่าจริง)
 
@@ -3357,14 +3358,21 @@ void InitDashboard()
    LoadTemplatePixelsOnce();
 
    // canvas เดียว (ARGB) - blit พื้นหลังจากภาพ template ก่อน แล้ววาดตัวเลข/สถานะ/กราฟสดทับ
+   // วาดที่ความละเอียดจริง 1:1 (DASH_W x DASH_H) เสมอ - ปรับขนาดที่แสดงบนชาร์ตด้วย
+   // OBJPROP_XSIZE/YSIZE แทน (MT5 stretch บิตแมปให้เอง) ไม่ต้องแก้พิกัดวาดของ panel ไหนเลย
+   double scale = (DashboardScale > 0.1) ? DashboardScale : 1.0;
+   int dispW = (int)MathRound(DASH_W * scale);
+   int dispH = (int)MathRound(DASH_H * scale);
    DashCanvas.CreateBitmapLabel(CANVAS_NAME, 15, 15, DASH_W, DASH_H, COLOR_FORMAT_ARGB_NORMALIZE);
    ObjectSetInteger(0, CANVAS_NAME, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, CANVAS_NAME, OBJPROP_XSIZE, dispW);
+   ObjectSetInteger(0, CANVAS_NAME, OBJPROP_YSIZE, dispH);
    ObjectSetInteger(0, CANVAS_NAME, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, CANVAS_NAME, OBJPROP_BACK, false);
    ObjectSetInteger(0, CANVAS_NAME, OBJPROP_HIDDEN, true);
 
    string btnText = GetUIString("🚨 ปิดรวบทุกไม้ (CLOSE ALL)", "🚨 CLOSE ALL POSITIONS");
-   CreateButton(BTN_CLOSE_ALL, 15 + 14, 15 + DASH_H + 10, DASH_W - 28, 40, btnText, C'220,38,38', clrWhite, 10);
+   CreateButton(BTN_CLOSE_ALL, 15 + 14, 15 + dispH + 10, dispW - 28, 40, btnText, C'220,38,38', clrWhite, 10);
 
    DashCanvas.Erase(0);
    BlitTemplateBackground();
