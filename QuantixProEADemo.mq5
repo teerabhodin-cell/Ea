@@ -3326,12 +3326,18 @@ void LoadTemplatePixelsOnce()
 {
    if(TemplateLoaded) return;
    TemplateLoaded = ResourceReadImage("::Images\\QuantixDashboardTemplate.png", TemplatePixels, TemplateImgW, TemplateImgH);
+   Print("QuantixPro Dashboard: ResourceReadImage loaded=", TemplateLoaded, " W=", TemplateImgW, " H=", TemplateImgH,
+         " arraySize=", ArraySize(TemplatePixels), " lastError=", GetLastError());
    if(TemplateLoaded)
    {
       // ภาพต้นฉบับเป็น RGB ล้วน (ไม่มี alpha channel) - ResourceReadImage() อาจคืนค่า alpha=0
       // (โปร่งใสสนิท) มาให้แทนที่จะเป็น opaque เต็ม ต้องบังคับ alpha=0xFF ทุกพิกเซลเอง
       int total = (int)(TemplateImgW * TemplateImgH);
       for(int i = 0; i < total; i++) TemplatePixels[i] |= 0xFF000000;
+      if(total > 0)
+         Print("QuantixPro Dashboard: sample pixels px[0]=", IntegerToString(TemplatePixels[0], 16),
+               " px[mid]=", IntegerToString(TemplatePixels[total / 2], 16),
+               " DASH_W=", DASH_W, " DASH_H=", DASH_H);
    }
 }
 
