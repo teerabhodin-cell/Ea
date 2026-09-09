@@ -37,7 +37,7 @@ enum ENUM_LOT_TYPE
 };
 
 // สถานะ "ระบบกำลังทำ/รออะไรอยู่" แบบเดียว คำนวณครั้งเดียวต่อรอบ (ดู ComputeSystemDecision) แล้วให้ทั้ง
-// Dashboard (DrawSystemDecisionPanel) อ่านค่าไปแสดงผลอย่างเดียว - กันไม่ให้ลำดับความสำคัญของเงื่อนไข
+// Dashboard (DrawSystemDecisionCard) อ่านค่าไปแสดงผลอย่างเดียว - กันไม่ให้ลำดับความสำคัญของเงื่อนไข
 // ถูกเขียนซ้ำสองที่แล้วหลุดไม่ตรงกัน (บั๊กแบบเดียวกับ blockReason ที่เจอและแก้ไปแล้วก่อนหน้านี้)
 enum ENUM_SYSTEM_DECISION
 {
@@ -3169,11 +3169,9 @@ void GetDecisionLabels(ENUM_SYSTEM_DECISION d, int openPos, string &headTH, stri
 
 // แผงเด่นเดียว - บอกตรงๆ ว่าตอนนี้ระบบกำลังทำ/รออะไรอยู่ (อ่านจาก CurrentDecision ที่คำนวณไว้แล้ว
 // ครั้งเดียวต่อรอบใน UpdateDashboard) พร้อมราคาที่จะเปิดไม้ Buy/Sell ถัดไปให้เห็นในที่เดียว
-int DrawSystemDecisionPanel(int y, int openPos)
+void DrawSystemDecisionCard(int x, int y, int w, int h, int openPos)
 {
-   int cardW = DASH_W - S(14) * 2;
-   int cardH = S(140);
-   DrawCardBG(S(14), y, cardW, cardH, "🧭 " + GetUIString("การตัดสินใจของระบบ", "SYSTEM DECISION"));
+   DrawCardBG(x, y, w, h, "🧭 " + GetUIString("การตัดสินใจของระบบ", "SYSTEM DECISION"));
 
    string headTH, headEN, reasonTH, reasonEN;
    color  clr;
@@ -3181,30 +3179,24 @@ int DrawSystemDecisionPanel(int y, int openPos)
    string headline = GetUIString(headTH, headEN);
    string reason   = GetUIString(reasonTH, reasonEN);
 
-   UIFontSet(SF(22), FW_BOLD);
-   int hw = EstimateTextWidth(headline, SF(22));
-   DashCanvas.TextOut(S(14) + cardW / 2 - hw / 2, y + S(48), headline, ColorToARGB(clr));
+   UIFontSet(SF(19), FW_BOLD);
+   int hw = EstimateTextWidth(headline, SF(19));
+   DashCanvas.TextOut(x + w / 2 - hw / 2, y + S(48), headline, ColorToARGB(clr));
 
-   UIFontSet(SF(13));
-   int rw = EstimateTextWidth(reason, SF(13));
-   DashCanvas.TextOut(S(14) + cardW / 2 - rw / 2, y + S(80), reason, ColorToARGB(C'150,150,170'));
+   UIFontSet(SF(12));
+   int rw = EstimateTextWidth(reason, SF(12));
+   DashCanvas.TextOut(x + w / 2 - rw / 2, y + S(78), reason, ColorToARGB(C'150,150,170'));
 
-   int halfW = (cardW - S(24)) / 2;
-   DrawKV(S(14) + S(12), y + S(112), halfW, GetUIString("ซื้อถัดไป", "NEXT BUY"), DoubleToString(GetNextGridTargetPrice(true), _Digits), C'140,140,160', C'34,197,94', 14);
-   DrawKV(S(14) + S(12) + halfW, y + S(112), halfW, GetUIString("ขายถัดไป", "NEXT SELL"), DoubleToString(GetNextGridTargetPrice(false), _Digits), C'140,140,160', C'239,68,68', 14);
-
-   return y + cardH + S(12);
+   int innerW = w - S(24);
+   DrawKV(x + S(12), y + S(112), innerW, GetUIString("ซื้อถัดไป", "NEXT BUY"), DoubleToString(GetNextGridTargetPrice(true), _Digits), C'140,140,160', C'34,197,94', 13);
+   DrawKV(x + S(12), y + S(136), innerW, GetUIString("ขายถัดไป", "NEXT SELL"), DoubleToString(GetNextGridTargetPrice(false), _Digits), C'140,140,160', C'239,68,68', 13);
 }
 
 // สถานะรวม 5 อย่างของระบบ (EA/Connection/Auto Trading/Hedge/Recovery) แต่ละแถวมีจุดสีบอกสถานะ -
 // แยกจาก DrawServerTimeRow ด้านบน (ซึ่งสรุปสถานะเดียวรวมๆ) ให้เห็นรายละเอียดแยกทีละอย่างชัดเจน
-int DrawSystemStatusPanel(int y)
+void DrawSystemStatusCard(int x, int y, int w, int h)
 {
-   int cardW = DASH_W - S(14) * 2;
-   int rowH  = S(30);
-   int rows  = 5;
-   int cardH = S(44) + rows * rowH + S(10);
-   DrawCardBG(S(14), y, cardW, cardH, "🖥️ " + GetUIString("สถานะระบบ", "SYSTEM STATUS"));
+   DrawCardBG(x, y, w, h, "🖥️ " + GetUIString("สถานะระบบ", "SYSTEM STATUS"));
 
    bool connected   = (bool)TerminalInfoInteger(TERMINAL_CONNECTED);
    bool autoTrading = (bool)TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) && (bool)MQLInfoInteger(MQL_TRADE_ALLOWED);
@@ -3218,71 +3210,83 @@ int DrawSystemStatusPanel(int y)
    labels[3] = GetUIString("ฟอร์ซเฮดจ์", "HEDGE");           dots[3] = hedgeOn     ? C'34,197,94' : C'100,100,120'; vals[3] = hedgeOn     ? "ON" : "OFF";
    labels[4] = GetUIString("โหมดแก้ไม้", "RECOVERY");        dots[4] = recoveryOn  ? C'34,197,94' : C'100,100,120'; vals[4] = recoveryOn  ? "ON" : "OFF";
 
+   int rowH = S(30);
    int ry = y + S(44);
-   for(int i = 0; i < rows; i++)
+   for(int i = 0; i < 5; i++)
    {
-      UIFontSet(SF(14));
-      DashCanvas.FillCircle(S(14) + S(14), ry + S(7), S(5), ColorToARGB(dots[i]));
-      DashCanvas.TextOut(S(14) + S(28), ry, labels[i], ColorToARGB(C'190,190,205'));
-      UIFontSet(SF(14), FW_BOLD);
-      int vw = EstimateTextWidth(vals[i], SF(14));
-      DashCanvas.TextOut(S(14) + cardW - S(14) - vw, ry, vals[i], ColorToARGB(dots[i]));
+      UIFontSet(SF(13));
+      DashCanvas.FillCircle(x + S(14), ry + S(7), S(5), ColorToARGB(dots[i]));
+      DashCanvas.TextOut(x + S(28), ry, labels[i], ColorToARGB(C'190,190,205'));
+      UIFontSet(SF(13), FW_BOLD);
+      int vw = EstimateTextWidth(vals[i], SF(13));
+      DashCanvas.TextOut(x + w - S(14) - vw, ry, vals[i], ColorToARGB(dots[i]));
       ry += rowH;
    }
-
-   return y + cardH + S(12);
 }
 
 // เพดานขาดทุน/เป้ากำไรรายวัน แสดงเป็นแถบ progress 0-100% ของลิมิตที่ตั้งไว้ (ปิดฟีเจอร์ = โชว์ "OFF"
 // เฉยๆ ไม่มีแถบ) รวมสถานะ Max DD Guard และ Volatility ปัจจุบันไว้ในการ์ดเดียวกัน
-int DrawRiskControlPanel(int y)
+void DrawRiskControlCard(int x, int y, int w, int h)
 {
-   int cardW = DASH_W - S(14) * 2;
-   int cardH = S(172);
-   DrawCardBG(S(14), y, cardW, cardH, "🚦 " + GetUIString("คุมความเสี่ยง", "RISK CONTROL"));
+   DrawCardBG(x, y, w, h, "🚦 " + GetUIString("คุมความเสี่ยง", "RISK CONTROL"));
 
    double effLossLimit = ComputeEffectiveThreshold(DailyLossLimit, DailyLossLimitPct, DayStartBalance);
    double effGoal       = ComputeEffectiveThreshold(DailyProfitGoal, DailyProfitGoalPct, DayStartBalance);
    double lossPct = (UseDailyLossLimit && effLossLimit > 0) ? MathMin(100.0, MathAbs(MathMin(0.0, DailyRealizedProfit)) / effLossLimit * 100.0) : 0.0;
    double goalPct = (UseDailyGoalStop  && effGoal > 0)      ? MathMin(100.0, MathMax(0.0, DailyRealizedProfit) / effGoal * 100.0) : 0.0;
 
-   int barX = S(14) + S(12);
-   int barW = cardW - S(24);
+   int barX = x + S(12);
+   int barW = w - S(24);
    int ry   = y + S(44);
 
-   UIFontSet(SF(13));
+   UIFontSet(SF(12));
    DashCanvas.TextOut(barX, ry, GetUIString("ขาดทุนวันนี้", "DAILY LOSS"), ColorToARGB(C'160,160,180'));
    string lossTxt = (UseDailyLossLimit && effLossLimit > 0) ? StringFormat("%.0f / 100", lossPct) : GetUIString("ปิด", "OFF");
-   UIFontSet(SF(13), FW_BOLD);
-   int ltw = EstimateTextWidth(lossTxt, SF(13));
+   UIFontSet(SF(12), FW_BOLD);
+   int ltw = EstimateTextWidth(lossTxt, SF(12));
    DashCanvas.TextOut(barX + barW - ltw, ry, lossTxt, ColorToARGB((UseDailyLossLimit && effLossLimit > 0) ? (lossPct >= 100 ? C'239,68,68' : clrWhite) : C'100,100,120'));
-   ry += S(18);
-   FillRoundedRect(barX, ry, barX + barW, ry + S(8), S(4), ColorToARGB(C'40,40,55'));
-   if(UseDailyLossLimit && effLossLimit > 0 && lossPct > 0) FillRoundedRect(barX, ry, barX + (int)(barW * lossPct / 100.0), ry + S(8), S(4), ColorToARGB(C'239,68,68'));
-   ry += S(26);
+   ry += S(17);
+   FillRoundedRect(barX, ry, barX + barW, ry + S(7), S(3), ColorToARGB(C'40,40,55'));
+   if(UseDailyLossLimit && effLossLimit > 0 && lossPct > 0) FillRoundedRect(barX, ry, barX + (int)(barW * lossPct / 100.0), ry + S(7), S(3), ColorToARGB(C'239,68,68'));
+   ry += S(24);
 
-   UIFontSet(SF(13));
+   UIFontSet(SF(12));
    DashCanvas.TextOut(barX, ry, GetUIString("เป้ากำไรวันนี้", "DAILY GOAL"), ColorToARGB(C'160,160,180'));
    string goalTxt = (UseDailyGoalStop && effGoal > 0) ? StringFormat("%.0f / 100", goalPct) : GetUIString("ปิด", "OFF");
-   UIFontSet(SF(13), FW_BOLD);
-   int gtw = EstimateTextWidth(goalTxt, SF(13));
+   UIFontSet(SF(12), FW_BOLD);
+   int gtw = EstimateTextWidth(goalTxt, SF(12));
    DashCanvas.TextOut(barX + barW - gtw, ry, goalTxt, ColorToARGB((UseDailyGoalStop && effGoal > 0) ? (goalPct >= 100 ? C'34,197,94' : clrWhite) : C'100,100,120'));
-   ry += S(18);
-   FillRoundedRect(barX, ry, barX + barW, ry + S(8), S(4), ColorToARGB(C'40,40,55'));
-   if(UseDailyGoalStop && effGoal > 0 && goalPct > 0) FillRoundedRect(barX, ry, barX + (int)(barW * goalPct / 100.0), ry + S(8), S(4), ColorToARGB(C'34,197,94'));
-   ry += S(30);
+   ry += S(17);
+   FillRoundedRect(barX, ry, barX + barW, ry + S(7), S(3), ColorToARGB(C'40,40,55'));
+   if(UseDailyGoalStop && effGoal > 0 && goalPct > 0) FillRoundedRect(barX, ry, barX + (int)(barW * goalPct / 100.0), ry + S(7), S(3), ColorToARGB(C'34,197,94'));
+   ry += S(28);
 
-   int halfW = (barW - S(20)) / 2;
-   bool ddGuardOn = UseTotalDDGuard || UseMaxDDStop;
-   string ddTxt = ddGuardOn ? GetUIString("เปิดใช้งาน", "ON") : GetUIString("ปิด", "OFF");
-   DrawKV(barX, ry, halfW, GetUIString("Max DD Guard", "MAX DD GUARD"), ddTxt, C'160,160,180', ddGuardOn ? C'34,197,94' : C'100,100,120', 14);
+   DrawKV(barX, ry, barW, GetUIString("Max DD Guard", "MAX DD GUARD"), (UseTotalDDGuard || UseMaxDDStop) ? GetUIString("เปิดใช้งาน", "ON") : GetUIString("ปิด", "OFF"),
+          C'160,160,180', (UseTotalDDGuard || UseMaxDDStop) ? C'34,197,94' : C'100,100,120', 12);
+   ry += S(20);
 
    int liveDistNow2 = GetDynamicGridDistance();
    bool volLow  = (UseMinVolatilityFilter && liveDistNow2 < MinVolatilityPoints);
    bool volHigh = (UseMaxVolatilityFilter && liveDistNow2 > MaxVolatilityPoints);
    string volTxt = volHigh ? GetUIString("สูงเกินไป", "HIGH") : (volLow ? GetUIString("ต่ำเกินไป", "LOW") : GetUIString("ปกติ", "NORMAL"));
    color  volClr = volHigh ? C'239,68,68' : (volLow ? C'251,146,60' : C'34,197,94');
-   DrawKV(barX + halfW + S(20), ry, halfW, GetUIString("ความผันผวน", "VOLATILITY"), volTxt, C'160,160,180', volClr, 14);
+   DrawKV(barX, ry, barW, GetUIString("ความผันผวน", "VOLATILITY"), volTxt, C'160,160,180', volClr, 12);
+}
+
+// 3 การ์ดเรียงแถวเดียวแนวนอน (System Decision | System Status | Risk Control) แทนที่จะวางเต็ม
+// ความกว้างซ้อนกันทีละอัน - ประหยัดพื้นที่แนวตั้งลงไปมาก เพราะเนื้อหาแต่ละอันไม่ได้กว้างขนาดนั้นจริงๆ
+int DrawStatusRow(int y, int openPos)
+{
+   int gap   = S(12);
+   int cardW = (DASH_W - S(14) * 2 - gap * 2) / 3;
+   int cardH = S(204);
+   int x1 = S(14);
+   int x2 = x1 + cardW + gap;
+   int x3 = x2 + cardW + gap;
+
+   DrawSystemDecisionCard(x1, y, cardW, cardH, openPos);
+   DrawSystemStatusCard(x2, y, cardW, cardH);
+   DrawRiskControlCard(x3, y, cardW, cardH);
 
    return y + cardH + S(12);
 }
@@ -3421,7 +3425,7 @@ int DrawNewsCard(int y)
 //+------------------------------------------------------------------+
 double UIScale       = 1.0;
 int    DASH_W_BASE   = 1450;
-int    DASH_H_BASE   = 1850; // เผื่อ Positions panel แสดงเต็ม 6 แถว (สูงสุดที่โชว์ได้) + panel ใหม่ 4 อัน
+int    DASH_H_BASE   = 1600; // เผื่อ Positions panel แสดงเต็ม 6 แถว + แถว System Decision/Status/Risk 3 การ์ดเรียงกัน
 
 int S(double v)  { return (int)MathRound(v * UIScale); }
 // พื้นฟอนต์ต่ำมาก (8px) แค่กันกรณีสุดขั้ว - ถ้าตั้งพื้นสูงกว่านี้ ฟอนต์จะไม่ย่อตามการ์ดที่หดลงจริง
@@ -3522,9 +3526,7 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
    y = DrawStatCardsRow(y, balance, equity, dailyProfit, currentProfit, maxProfit);
    y = DrawEquityFeatureRow(y);
    y = DrawStatsRow(y);
-   y = DrawSystemDecisionPanel(y, openPos);
-   y = DrawSystemStatusPanel(y);
-   y = DrawRiskControlPanel(y);
+   y = DrawStatusRow(y, openPos);
    y = DrawPositionsPanel(y);
    y = DrawNewsCard(y);
 
