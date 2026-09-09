@@ -3340,18 +3340,44 @@ void BlitTemplateBackground()
 // OBJ_BITMAP_LABEL ไม่ stretch ภาพเวลา XSIZE/YSIZE เล็กกว่าต้นฉบับ (แค่ครอปมุมซ้ายบนให้เห็น
 // เท่านั้น) เลยต้อง resample เอง: อ่านทีละพิกเซลจาก DashCanvas (งานร่างความละเอียดเต็ม 1536x1024
 // นอกจอ) แล้วเขียนลง DashDisplayCanvas (ตัวที่แสดงจริงบนชาร์ต ขนาด dispW x dispH ตาม scale)
+// bilinear แทน nearest-neighbor - ตัวหนังสือ/เส้นบางๆ จะเบลอนุ่มแทนที่จะแตกเป็นรอยหยัก
+uint BilinearSample(double sxf, double syf)
+{
+   int x0 = (int)MathFloor(sxf); if(x0 < 0) x0 = 0;
+   int y0 = (int)MathFloor(syf); if(y0 < 0) y0 = 0;
+   int x1 = (x0 + 1 > DASH_W - 1) ? DASH_W - 1 : x0 + 1;
+   int y1 = (y0 + 1 > DASH_H - 1) ? DASH_H - 1 : y0 + 1;
+   double fx = sxf - x0;
+   double fy = syf - y0;
+
+   uint c00 = DashCanvas.PixelGet(x0, y0);
+   uint c10 = DashCanvas.PixelGet(x1, y0);
+   uint c01 = DashCanvas.PixelGet(x0, y1);
+   uint c11 = DashCanvas.PixelGet(x1, y1);
+
+   double a = (((c00 >> 24) & 0xFF) * (1 - fx) + ((c10 >> 24) & 0xFF) * fx) * (1 - fy) + (((c01 >> 24) & 0xFF) * (1 - fx) + ((c11 >> 24) & 0xFF) * fx) * fy;
+   double r = (((c00 >> 16) & 0xFF) * (1 - fx) + ((c10 >> 16) & 0xFF) * fx) * (1 - fy) + (((c01 >> 16) & 0xFF) * (1 - fx) + ((c11 >> 16) & 0xFF) * fx) * fy;
+   double g = (((c00 >> 8)  & 0xFF) * (1 - fx) + ((c10 >> 8)  & 0xFF) * fx) * (1 - fy) + (((c01 >> 8)  & 0xFF) * (1 - fx) + ((c11 >> 8)  & 0xFF) * fx) * fy;
+   double b = (( c00        & 0xFF) * (1 - fx) + ( c10        & 0xFF) * fx) * (1 - fy) + (( c01        & 0xFF) * (1 - fx) + ( c11        & 0xFF) * fx) * fy;
+
+   uint ai = (uint)MathRound(a), ri = (uint)MathRound(r), gi = (uint)MathRound(g), bi = (uint)MathRound(b);
+   return (ai << 24) | (ri << 16) | (gi << 8) | bi;
+}
+
 void ResampleToDisplay(int dispW, int dispH)
 {
    if(dispW <= 0 || dispH <= 0) return;
+   double scaleX = (double)DASH_W / dispW;
+   double scaleY = (double)DASH_H / dispH;
    for(int y = 0; y < dispH; y++)
    {
-      int sy = (int)((long)y * DASH_H / dispH);
-      if(sy >= DASH_H) sy = DASH_H - 1;
+      double syf = (y + 0.5) * scaleY - 0.5;
+      if(syf < 0) syf = 0;
       for(int x = 0; x < dispW; x++)
       {
-         int sx = (int)((long)x * DASH_W / dispW);
-         if(sx >= DASH_W) sx = DASH_W - 1;
-         DashDisplayCanvas.PixelSet(x, y, DashCanvas.PixelGet(sx, sy));
+         double sxf = (x + 0.5) * scaleX - 0.5;
+         if(sxf < 0) sxf = 0;
+         DashDisplayCanvas.PixelSet(x, y, BilinearSample(sxf, syf));
       }
    }
 }
