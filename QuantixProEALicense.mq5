@@ -3394,6 +3394,13 @@ void LoadTemplatePixelsOnce()
 {
    if(TemplateLoaded) return;
    TemplateLoaded = ResourceReadImage("::Images\\QuantixDashboardTemplate.png", TemplatePixels, TemplateImgW, TemplateImgH);
+   if(TemplateLoaded)
+   {
+      // ภาพต้นฉบับเป็น RGB ล้วน (ไม่มี alpha channel) - ResourceReadImage() อาจคืนค่า alpha=0
+      // (โปร่งใสสนิท) มาให้แทนที่จะเป็น opaque เต็ม ต้องบังคับ alpha=0xFF ทุกพิกเซลเอง
+      int total = (int)(TemplateImgW * TemplateImgH);
+      for(int i = 0; i < total; i++) TemplatePixels[i] |= 0xFF000000;
+   }
 }
 
 void BlitTemplateBackground()
