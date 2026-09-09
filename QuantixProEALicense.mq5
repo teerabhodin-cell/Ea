@@ -2643,23 +2643,6 @@ void FillRoundedRect(int x1, int y1, int x2, int y2, int r, uint argb)
    }
 }
 
-// สี่เหลี่ยมตัดมุมเฉียง (chamfered/octagon panel) - ทรงแบบแผง HUD/sci-fi แทนมุมโค้งมนแบบเดิม
-// เติมกากบาทกลางตรงๆ ก่อนแล้วเติมสามเหลี่ยมที่มุมทั้ง 4 ปิดช่องว่างรูปสามเหลี่ยมที่เหลือ
-void FillChamferedRect(int x1, int y1, int x2, int y2, int c, uint argb)
-{
-   int w = x2 - x1, h = y2 - y1;
-   if(c <= 0 || c * 2 > w || c * 2 > h) { DashCanvas.FillRectangle(x1, y1, x2, y2, argb); return; }
-
-   DashCanvas.FillRectangle(x1 + c, y1,     x2 - c, y2,     argb);
-   DashCanvas.FillRectangle(x1,     y1 + c, x1 + c, y2 - c, argb);
-   DashCanvas.FillRectangle(x2 - c, y1 + c, x2,     y2 - c, argb);
-
-   DashCanvas.FillTriangle(x1, y1 + c, x1 + c, y1, x1 + c, y1 + c, argb);
-   DashCanvas.FillTriangle(x2 - c, y1, x2, y1 + c, x2 - c, y1 + c, argb);
-   DashCanvas.FillTriangle(x1, y2 - c, x1 + c, y2, x1 + c, y2 - c, argb);
-   DashCanvas.FillTriangle(x2 - c, y2, x2, y2 - c, x2 - c, y2 - c, argb);
-}
-
 // เงานุ่มด้านล่าง-ขวาของการ์ด (offset เล็กน้อย + ดำโปร่งแสง) ให้การ์ดดูลอยขึ้นมาจากพื้นชาร์ต
 // ต้องวาดก่อนตัวการ์ดเสมอ (อยู่ชั้นล่างสุด ถูกตัวการ์ดทับเกือบหมด เหลือแค่ขอบยื่นออกมาเป็นเงา)
 void DrawPanelShadow(int x1, int y1, int x2, int y2, int r)
@@ -2668,144 +2651,19 @@ void DrawPanelShadow(int x1, int y1, int x2, int y2, int r)
    FillRoundedRect(x1 + off, y1 + off, x2 + off, y2 + off, r, ColorToARGB(clrBlack, 55));
 }
 
-// เรืองแสงขอบพาเนล (glow) - วาดกรอบเส้นบางๆ ซ้อนกันหลายชั้นถอยออกจากขอบจริงทีละพิกเซล ไล่สีจากสี
-// glowColor ไปหาสีพื้นแคนวาส (ผสมไว้ล่วงหน้าด้วย BlendColor เพราะ CCanvas เขียนทับตรงๆ ไม่ blend เอง)
-// ให้เหมือนแผงมีไฟเรืองในธีม HUD/sci-fi แทนกรอบเส้นเรียบแบนแบบเดิม
-// รอบก่อนทำเป็นแถบทึบหนา 6 ชั้นแล้ว "หนัก" เกินไป (ดูเหมือนกรอบทึบหนาทั้งแท่ง ไม่ใช่แสงฟุ้งบางๆ) -
-// กลับมาเป็นเส้นบาง 1px แต่เพิ่ม 2 ชั้นแทน 1 ชั้นเดิม และผสมให้จางกว่าสีจริงเสมอ (ไม่เกิน 65% ความสด)
-// กันไม่ให้ขอบดูเป็นกรอบตันสีเดียวหนาๆ ทั้งที่ตั้งใจให้เป็นแค่ประกายบางๆ รอบขอบ
-void DrawGlowBorder(int x1, int y1, int x2, int y2, color glowColor, int rings = 2)
+void DrawCardBG(int x, int y, int w, int h, string title)
 {
-   for(int i = rings; i >= 1; i--)
-   {
-      double t   = 0.35 + 0.30 * ((double)i / rings);
-      color  c   = BlendColor(glowColor, C'6,9,18', t);
-      int    off = S(i);
-      DashCanvas.Line(x1 - off, y1 - off, x2 + off, y1 - off, ColorToARGB(c));
-      DashCanvas.Line(x1 - off, y2 + off, x2 + off, y2 + off, ColorToARGB(c));
-      DashCanvas.Line(x1 - off, y1 - off, x1 - off, y2 + off, ColorToARGB(c));
-      DashCanvas.Line(x2 + off, y1 - off, x2 + off, y2 + off, ColorToARGB(c));
-   }
-}
-
-// badgeIcon เว้นว่าง ("") = ไม่มีป้ายไอคอน (ใช้กับพาเนลที่ชื่อสั้นอยู่แล้วหรือไม่ต้องการ) - ทุกพาเนลใช้
-// โทนทองเดียวกันหมด (ไม่ไล่สีต่างกันทีละการ์ดแบบที่เคยลองแล้วลูกค้าไม่ชอบ) ให้ความรู้สึกเป็นชุด HUD
-// เดียวกันทั้งแผง ต่างจากเดิมตรงมีแสงเรืองรอบขอบ + ป้ายไอคอนวงกลมแทนตัวอักษร emoji ลอยหน้าหัวข้อ
-// ธีมการ์ดข้อมูลทั้งหมด: ฟ้า electric + ทรงตัดมุมเฉียง (chamfer) แทนทองล้วน+มุมโค้งมนแบบเดิม - ทองสงวนไว้
-// เฉพาะส่วนแบรนด์ (Header/แถบท้าย/แถบสรุปสถิติ) ให้ภาพรวมเป็นคู่สีทอง-ฟ้า ไม่ใช่ทองล้วนทั้งจอเหมือนเดิม
-void DrawCardBG(int x, int y, int w, int h, string title, string badgeIcon = "")
-{
-   color accent = C'56,189,248';
-   DrawGlowBorder(x, y, x + w, y + h, accent, 2);
-
-   int c = S(16);
-   DrawPanelShadow(x, y, x + w, y + h, S(10));
-   FillChamferedRect(x, y, x + w, y + h, c, ColorToARGB(C'12,16,26'));
-   DashCanvas.Line(x + c, y,     x + w - c, y,     ColorToARGB(accent));
-   DashCanvas.Line(x + c, y + h, x + w - c, y + h, ColorToARGB(C'30,45,60'));
-   DashCanvas.Line(x,     y + c, x,         y + h - c, ColorToARGB(C'30,45,60'));
-   DashCanvas.Line(x + w, y + c, x + w,     y + h - c, ColorToARGB(C'30,45,60'));
-   // เส้นทแยงมุมตัด (chamfer stroke) - ให้เห็นเป็น "มุมตัดจริง" ชัดเจน ไม่ใช่แค่มุมที่หายไปเฉยๆ
-   DashCanvas.Line(x + c,     y,         x,         y + c, ColorToARGB(accent));
-   DashCanvas.Line(x + w - c, y,         x + w,     y + c, ColorToARGB(accent));
-   DashCanvas.Line(x,         y + h - c, x + c,     y + h, ColorToARGB(C'30,45,60'));
-   DashCanvas.Line(x + w,     y + h - c, x + w - c, y + h, ColorToARGB(C'30,45,60'));
-
-   int titleX = x + S(18);
-   if(badgeIcon != "")
-   {
-      int bR  = S(15);
-      int bcx = x + S(20) + bR;
-      int bcy = y + S(27);
-      DashCanvas.FillCircle(bcx, bcy, bR, ColorToARGB(BlendColor(accent, clrBlack, 0.5)));
-      DashCanvas.FillCircle(bcx, bcy, (int)(bR * 0.76), ColorToARGB(accent));
-      UIFontSet(SF(17));
-      int ew = EstimateTextWidth(badgeIcon, SF(17));
-      DashCanvas.TextOut(bcx - ew / 2, bcy - S(9), badgeIcon, ColorToARGB(C'8,12,20'));
-      titleX = bcx + bR + S(12);
-   }
-   UIFontSet(SF(18), FW_BOLD);
-   DashCanvas.TextOut(titleX, y + S(18), title, ColorToARGB(C'220,238,252'));
-}
-
-// แท่งความคืบหน้าแบบมุมโค้ง (Target/Daily Loss/Daily Goal/Max DD ฯลฯ) - pct 0..1
-void DrawProgressBar(int x, int y, int w, int h, double pct, color fillColor, color bgColor = C'40,40,58')
-{
-   pct = MathMax(0.0, MathMin(1.0, pct));
-   int r = h / 2;
-   FillRoundedRect(x, y, x + w, y + h, r, ColorToARGB(bgColor));
-   int fw = (int)(w * pct);
-   if(fw >= h) FillRoundedRect(x, y, x + fw, y + h, r, ColorToARGB(fillColor));
-   else if(fw > 0) DashCanvas.FillCircle(x + r, y + r, r, ColorToARGB(fillColor));
-}
-
-// แถวสถานะแบบจุดไฟ + ข้อความ (System Status / Active Filters) - label ชิดซ้าย, จุดสี+ข้อความสถานะชิดขวา
-void DrawStatusLine(int x, int y, int w, string label, string statusTxt, color statusColor)
-{
-   UIFontSet(SF(14));
-   DashCanvas.TextOut(x, y, label, ColorToARGB(C'160,160,180'));
-   UIFontSet(SF(14), FW_BOLD);
-   int sw = EstimateTextWidth(statusTxt, SF(14));
-   DashCanvas.FillCircle(x + w - sw - S(12), y + S(6), S(4), ColorToARGB(statusColor));
-   DashCanvas.TextOut(x + w - sw, y, statusTxt, ColorToARGB(statusColor));
-}
-
-// ตารางโพซิชั่นที่เปิดอยู่จริง (ตัว EA เอง กรองด้วย _Symbol + MagicNumber เหมือน CountPositions) -
-// รวม Total P/L จากทุกไม้เสมอ แต่วาดแถวแค่เท่าที่พื้นที่การ์ดพอ (กริด+มาร์ติงเกลอาจมีไม้เยอะกว่าที่จอแสดงได้)
-void DrawPositionsTable(int x, int y, int w, int h)
-{
-   int colType = x, colLots = x + (int)(w * 0.26), colPrice = x + (int)(w * 0.48), colPL = x + (int)(w * 0.74);
-
-   UIFontSet(SF(11), FW_BOLD);
-   DashCanvas.TextOut(colType,  y, GetUIString("ประเภท", "TYPE"), ColorToARGB(C'130,130,150'));
-   DashCanvas.TextOut(colLots,  y, GetUIString("ล็อต", "LOTS"),  ColorToARGB(C'130,130,150'));
-   DashCanvas.TextOut(colPrice, y, GetUIString("ราคา", "PRICE"), ColorToARGB(C'130,130,150'));
-   DashCanvas.TextOut(colPL,    y, "P/L", ColorToARGB(C'130,130,150'));
-
-   int rowH    = S(22);
-   int rowY    = y + rowH;
-   int maxRows = MathMax(0, (h - rowH - S(24)) / rowH);
-   double totalPL = 0.0;
-   int shown = 0, totalCount = 0;
-
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
-   {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
-      if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
-
-      double pl = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
-      totalPL += pl;
-      totalCount++;
-      if(shown >= maxRows) continue; // นับ Total P/L ต่อไปเรื่อยๆ แต่ไม่วาดแถวเกินพื้นที่การ์ด
-
-      bool  isBuy   = ((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
-      color typeClr = isBuy ? C'34,197,94' : C'239,68,68';
-      UIFontSet(SF(12), FW_BOLD);
-      DashCanvas.TextOut(colType, rowY, isBuy ? "BUY" : "SELL", ColorToARGB(typeClr));
-      UIFontSet(SF(12));
-      DashCanvas.TextOut(colLots,  rowY, DoubleToString(PositionGetDouble(POSITION_VOLUME), 2), ColorToARGB(clrWhite));
-      DashCanvas.TextOut(colPrice, rowY, DoubleToString(PositionGetDouble(POSITION_PRICE_OPEN), _Digits), ColorToARGB(clrWhite));
-      DashCanvas.TextOut(colPL, rowY, (pl >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(pl), 2), ColorToARGB(pl >= 0 ? C'34,197,94' : C'239,68,68'));
-      rowY += rowH;
-      shown++;
-   }
-
-   if(totalCount == 0)
-   {
-      UIFontSet(SF(13));
-      DashCanvas.TextOut(colType, rowY, GetUIString("ไม่มีโพซิชั่นเปิดอยู่", "No open positions"), ColorToARGB(C'100,100,120'));
-   }
-   else if(totalCount > shown)
-   {
-      UIFontSet(SF(11));
-      DashCanvas.TextOut(colType, rowY, "+" + IntegerToString(totalCount - shown) + " " + GetUIString("เพิ่มเติม", "more"), ColorToARGB(C'100,100,120'));
-   }
-
-   UIFontSet(SF(13), FW_BOLD);
-   DashCanvas.TextOut(colType, y + h - S(20), GetUIString("รวม", "TOTAL"), ColorToARGB(C'160,160,180'));
-   string totalTxt = (totalPL >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(totalPL), 2);
-   DashCanvas.TextOut(colPL, y + h - S(20), totalTxt, ColorToARGB(totalPL >= 0 ? C'34,197,94' : C'239,68,68'));
+   int r = S(10);
+   DrawPanelShadow(x, y, x + w, y + h, r);
+   FillRoundedRect(x, y, x + w, y + h, r, ColorToARGB(C'23,23,39'));
+   // กรอบสีม่วงอ่อนด้านบน (โทนเดียวกับแบรนด์ QUANTIX PRO TERMINAL) เข้มกว่าอีก 3 ด้าน เพื่อให้ดู
+   // มีลำดับชั้น (hierarchy) แทนกรอบเทาแบนสีเดียวทั้ง 4 ด้านแบบเดิม
+   DashCanvas.Line(x + r, y,     x + w - r, y,     ColorToARGB(C'96,82,138'));
+   DashCanvas.Line(x + r, y + h, x + w - r, y + h, ColorToARGB(C'52,48,74'));
+   DashCanvas.Line(x,     y + r, x,         y + h - r, ColorToARGB(C'52,48,74'));
+   DashCanvas.Line(x + w, y + r, x + w,     y + h - r, ColorToARGB(C'52,48,74'));
+   UIFontSet(SF(17), FW_BOLD);
+   DashCanvas.TextOut(x + S(13), y + S(13), title, ColorToARGB(C'186,170,224'));
 }
 
 // เกจวงแหวน (donut gauge) ไล่สีเขียว -> ฟ้า ตามสัดส่วน percent (0..1)
@@ -3052,31 +2910,18 @@ int EstimateNumericTextWidth(string text, int fontSize)
 //+------------------------------------------------------------------+
 int DrawHeader(int y)
 {
-   // ป้ายโลโก้วงกลม - วาดด้วย Canvas ไปก่อน (ตัว "Q" เรืองแสงทอง) ตำแหน่ง/ขนาดเผื่อไว้พอดีสำหรับตอนที่
-   // ได้ไฟล์ .png โลโก้จริงมาฝังเป็น #resource แล้ววาดทับจุดนี้แทนทีหลัง
-   int logoR  = S(32);
-   int logoCx = S(14) + logoR, logoCy = y + logoR;
-   DrawGlowBorder(logoCx - logoR, logoCy - logoR, logoCx + logoR, logoCy + logoR, C'255,183,3', 2);
-   DashCanvas.FillCircle(logoCx, logoCy, logoR, ColorToARGB(C'20,16,8'));
-   DashCanvas.FillCircle(logoCx, logoCy, logoR - S(3), ColorToARGB(C'15,17,27'));
-   UIFontSet(SF(28), FW_BOLD);
-   int qw = EstimateTextWidth("Q", SF(28));
-   DashCanvas.TextOut(logoCx - qw / 2, logoCy - S(16), "Q", ColorToARGB(C'255,183,3'));
-
-   int titleX = logoCx + logoR + S(16);
-   UIFontSet(SF(32), FW_BOLD);
-   DashCanvas.TextOut(titleX, y, "QUANTIX PRO", ColorToARGB(clrWhite));
-   DashCanvas.TextOut(titleX, y + S(31), "TERMINAL", ColorToARGB(C'255,183,3'));
+   UIFontSet(SF(34), FW_BOLD);
+   DashCanvas.TextOut(S(14), y, "QUANTIX PRO", ColorToARGB(clrWhite));
+   DashCanvas.TextOut(S(14), y + S(31), "TERMINAL", ColorToARGB(C'168,85,247'));
 
    UIFontSet(SF(15));
-   DashCanvas.TextOut(titleX, y + S(66), GetUIString("แดชบอร์ดวิเคราะห์แบบเรียลไทม์", "MULTI-ANALYTICS DASHBOARD"), ColorToARGB(C'200,170,100'));
+   DashCanvas.TextOut(S(14), y + S(66), GetUIString("แดชบอร์ดวิเคราะห์แบบเรียลไทม์", "MULTI-ANALYTICS DASHBOARD"), ColorToARGB(C'150,120,200'));
 
    int badgeW = S(145), badgeH = S(30);
    int bx = DASH_W - S(14) - badgeW;
-   DrawGlowBorder(bx, y, bx + badgeW, y + badgeH, C'255,183,3', 2);
-   FillRoundedRect(bx, y, bx + badgeW, y + badgeH, S(15), ColorToARGB(C'40,32,16'));
-   DashCanvas.Line(bx + S(4), y, bx + badgeW - S(4), y, ColorToARGB(C'200,170,100'));
-   DashCanvas.Line(bx + S(4), y + badgeH, bx + badgeW - S(4), y + badgeH, ColorToARGB(C'110,90,40'));
+   FillRoundedRect(bx, y, bx + badgeW, y + badgeH, S(15), ColorToARGB(C'34,30,54'));
+   DashCanvas.Line(bx + S(4), y, bx + badgeW - S(4), y, ColorToARGB(C'150,130,200'));
+   DashCanvas.Line(bx + S(4), y + badgeH, bx + badgeW - S(4), y + badgeH, ColorToARGB(C'90,80,120'));
    UIFontSet(SF(15), FW_BOLD);
    DashCanvas.TextOut(bx + S(14), y + S(6), GetUIString("เรียลไทม์", "UI REAL-TIME"), ColorToARGB(clrWhite));
 
@@ -3109,7 +2954,6 @@ int DrawServerTimeRow(int y, int openPos, int pendingOrders)
    else if(!timeAllowed)                           { dotColor = C'239,68,68';  statusTxt = GetUIString("นอกเวลาเทรด", "OFF-TIME"); }
    else if(IsNewsBlackout())                       { dotColor = C'168,85,247'; statusTxt = GetUIString("พักช่วงข่าว", "NEWS PAUSE"); }
    else if(IsDailyLossLimitReached())              { dotColor = C'239,68,68';  statusTxt = GetUIString("ครบขาดทุนวันนี้", "DAILY LOSS HIT"); }
-   else if(IsLatencyGuardActive())                 { dotColor = C'239,68,68';  statusTxt = GetUIString("พักไม้ Latency สูง", "LATENCY GUARD"); }
    else if(IsDailyGoalReached())                   { dotColor = C'34,197,94';  statusTxt = GetUIString("ถึงเป้าวันนี้แล้ว", "DAILY GOAL HIT"); }
    else if(IsVolatilityTooLow())                   { dotColor = C'251,146,60'; statusTxt = GetUIString("ตลาดนิ่งเกินไป", "LOW VOLATILITY"); }
    else if(IsVolatilityTooHigh())                  { dotColor = C'239,68,68';  statusTxt = GetUIString("ตลาดผันผวนสูงเกินไป", "HIGH VOLATILITY"); }
@@ -3123,93 +2967,13 @@ int DrawServerTimeRow(int y, int openPos, int pendingOrders)
    return y + S(38);
 }
 
-// แถวสรุปเชิงตัดสินใจ 4 คอลัมน์ - Risk Level (เกจ) | Active Mode (ป้ายโหมดกริด) | System Status
-// (สถานะจุดไฟ) | System Decision (เหตุผลที่ระบบกำลังทำ/รออะไรอยู่ + ราคาเป้า Buy/Sell ถัดไป) - ตอบคำถาม
-// "ตอนนี้ EA กำลังทำอะไรอยู่" ตรงๆ ในกล่องเดียว แทนที่จะต้องไล่อ่านการ์ดตัวเลขหลายใบแล้วตีความเอง
-int DrawCommandRow(int y, int openPos, int pendingOrders)
-{
-   int cols  = 3;
-   int gap   = S(10);
-   int cardW = (DASH_W - S(14) * 2 - gap * (cols - 1)) / cols;
-   int cardH = S(200);
-   int cx    = S(14);
-
-   double ddLimit = UseTotalDDGuard ? MaxTotalDD_Pct : (UseMaxDDStop ? MaxAllowedDD_Pct : 0.0);
-
-   // คอลัมน์ 1: Risk Level
-   DrawCardBG(cx, y, cardW, cardH, GetUIString("ระดับความเสี่ยง", "RISK LEVEL"), "🎯");
-   {
-      double ratio = (ddLimit > 0) ? (MaxDrawdownPercent / ddLimit) : 0.0;
-      int gcx = cx + cardW / 2, gcy = y + S(58) + S(48);
-      DrawArcGauge(gcx, gcy, S(46), S(11), ratio);
-      string pctTxt = DoubleToString(MathMin(ratio, 9.99) * 100.0, 0) + "%";
-      int pfs = SF(25);
-      UIFontSet(pfs, FW_BOLD);
-      int pw = EstimateNumericTextWidth(pctTxt, pfs);
-      DashCanvas.TextOut(gcx - pw / 2, gcy - (int)(pfs * 0.4), pctTxt, ColorToARGB(clrWhite));
-      string riskLbl = GetUIString("ปลอดภัย", "NORMAL");
-      color  riskClr = C'34,197,94';
-      if(TradingHalted)      { riskLbl = GetUIString("หยุดถาวร", "HALTED");  riskClr = C'239,68,68'; }
-      else if(ratio >= 0.7)  { riskLbl = GetUIString("เฝ้าระวัง", "WARNING"); riskClr = C'251,146,60'; }
-      UIFontSet(SF(13), FW_BOLD);
-      int lw = EstimateTextWidth(riskLbl, SF(13));
-      DashCanvas.TextOut(gcx - lw / 2, gcy + S(38), riskLbl, ColorToARGB(riskClr));
-      string ddLine = "DD " + DoubleToString(MaxDrawdownPercent, 1) + "% / " + (ddLimit > 0 ? DoubleToString(ddLimit, 0) + "%" : "—");
-      UIFontSet(SF(12));
-      int dlw = EstimateTextWidth(ddLine, SF(12));
-      DashCanvas.TextOut(gcx - dlw / 2, y + cardH - S(24), ddLine, ColorToARGB(C'150,150,170'));
-   }
-
-   // คอลัมน์ 2: Active Mode
-   cx += cardW + gap;
-   DrawCardBG(cx, y, cardW, cardH, GetUIString("โหมดที่ทำงาน", "ACTIVE MODE"), "🧭");
-   {
-      string modeTxt = (GridType == GRID_VIRTUAL) ? "VIRTUAL" : (GridType == GRID_VIRTUAL_LIMIT ? "VIRTUAL LIMIT" : "PENDING");
-      int badgeH = S(52);
-      int badgeY = y + S(70);
-      int badgeW = cardW - S(28);
-      int bx = cx + S(14);
-      DrawGlowBorder(bx, badgeY, bx + badgeW, badgeY + badgeH, C'255,183,3', 2);
-      FillRoundedRect(bx, badgeY, bx + badgeW, badgeY + badgeH, S(10), ColorToARGB(C'40,32,16'));
-      UIFontSet(SF(20), FW_BOLD);
-      int mw = EstimateTextWidth(modeTxt, SF(20));
-      DashCanvas.TextOut(cx + cardW / 2 - mw / 2, badgeY + badgeH / 2 - S(10), modeTxt, ColorToARGB(C'230,200,120'));
-
-      string parts = "";
-      if(GridType != GRID_PENDING) parts += GetUIString("กริดเสมือน", "Smart Grid");
-      if(UseBasketBreakeven)       parts += (parts == "" ? "" : " • ") + GetUIString("ล็อกกำไร", "Profit Lock");
-      if(TrailingStopUSD > 0)      parts += (parts == "" ? "" : " • ") + GetUIString("เทรลลิ่ง", "Trailing");
-      UIFontSet(SF(12));
-      int sw2 = EstimateTextWidth(parts, SF(12));
-      DashCanvas.TextOut(cx + cardW / 2 - sw2 / 2, badgeY + badgeH + S(14), parts, ColorToARGB(C'160,160,180'));
-   }
-
-   // คอลัมน์ 3: System Status
-   cx += cardW + gap;
-   DrawCardBG(cx, y, cardW, cardH, GetUIString("สถานะระบบ", "SYSTEM STATUS"), "🖥️");
-   {
-      bool connected = (bool)TerminalInfoInteger(TERMINAL_CONNECTED);
-      bool autoTrade = (bool)TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) && (bool)AccountInfoInteger(ACCOUNT_TRADE_ALLOWED);
-      bool hedgeOn   = UseForceHedgeOnDD || UseForceHedgeOnTime;
-      int lx = cx + S(14), lw3 = cardW - S(28);
-      int ly = y + S(48), lstep = S(30);
-      DrawStatusLine(lx, ly, lw3, "EA", TradingHalted ? GetUIString("หยุด", "HALTED") : GetUIString("ทำงาน", "RUNNING"), TradingHalted ? C'239,68,68' : C'34,197,94'); ly += lstep;
-      DrawStatusLine(lx, ly, lw3, GetUIString("การเชื่อมต่อ", "Connection"), connected ? "OK" : GetUIString("ขาด", "LOST"), connected ? C'34,197,94' : C'239,68,68'); ly += lstep;
-      DrawStatusLine(lx, ly, lw3, GetUIString("เทรดอัตโนมัติ", "Auto Trading"), autoTrade ? "ON" : "OFF", autoTrade ? C'34,197,94' : C'239,68,68'); ly += lstep;
-      DrawStatusLine(lx, ly, lw3, GetUIString("ฟอร์ซเฮดจ์", "Hedge"), hedgeOn ? "ON" : "OFF", hedgeOn ? C'34,197,94' : C'120,120,135'); ly += lstep;
-      DrawStatusLine(lx, ly, lw3, GetUIString("โหมดแก้ไม้", "Recovery"), UseRecoveryMode ? "ON" : "OFF", UseRecoveryMode ? C'34,197,94' : C'120,120,135');
-   }
-
-   return y + cardH + S(12);
-}
-
 // 6 การ์ดสถิติเรียงแถวเดียวแนวนอน: Account | Performance | Basket | Orders | Grid | Risk
 int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, double currentProfit, double maxProfit)
 {
    int cols   = 6;
    int gap    = S(10);
    int cardW  = (DASH_W - S(14) * 2 - gap * (cols - 1)) / cols;
-   int cardH  = S(288);
+   int cardH  = S(258);
    int innerW = cardW - S(24);
    int rowStep = S(29);
 
@@ -3229,13 +2993,9 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    int cx = S(14);
 
    // คอลัมน์ 1: ข้อมูลบัญชี
-   DrawCardBG(cx, y, cardW, cardH, GetUIString("บัญชี", "ACCOUNT"), "👤");
+   DrawCardBG(cx, y, cardW, cardH, "👤 " + GetUIString("บัญชี", "ACCOUNT"));
    int ry = y + S(44);
    DrawKV(cx + S(12), ry, innerW, GetUIString("ยอดเงิน", "Balance"), "$" + DoubleToString(balance, 2), C'160,160,180', clrWhite); ry += rowStep;
-   if(IsCentAccount() && CentDivisor > 0)
-   {
-      DrawKV(cx + S(12), ry, innerW, GetUIString("มูลค่าจริง", "Real Value"), "≈$" + DoubleToString(balance / CentDivisor, 2), C'160,160,180', C'251,193,7'); ry += rowStep;
-   }
    DrawKV(cx + S(12), ry, innerW, GetUIString("มูลค่าสุทธิ", "Equity"), "$" + DoubleToString(equity, 2), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("หลักประกัน", "Margin"), "$" + DoubleToString(margin, 2), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ประกันเหลือ", "Free Mgn"), "$" + DoubleToString(freeMargin, 2), C'160,160,180', clrWhite); ry += rowStep;
@@ -3243,16 +3003,13 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
 
    // คอลัมน์ 2: ผลงานวันนี้
    cx += cardW + gap;
-   DrawCardBG(cx, y, cardW, cardH, GetUIString("ผลงานวันนี้", "TODAY"), "📅");
+   DrawCardBG(cx, y, cardW, cardH, "📅 " + GetUIString("ผลงานวันนี้", "TODAY"));
    int gcx = cx + cardW / 2;
    int gcy = y + S(44) + S(58);
-   // ใช้เป้าที่ "มีผลจริง" (เล็กกว่าระหว่าง $ กับ % ถ้าเปิดพร้อมกัน) แทน DailyProfitGoal ดิบๆ
-   // เกจ/ตัวเลขจะได้ตรงกับเงื่อนไขที่ IsDailyGoalReached() ใช้จริงเป๊ะ ไม่ใช่แค่ค่า $ ที่อาจปิดอยู่
-   double effDailyGoal = ComputeEffectiveThreshold(DailyProfitGoal, DailyProfitGoalPct, DayStartBalance);
-   double dailyPct = (effDailyGoal > 0) ? (dailyProfit / effDailyGoal) : 0.0;
+   double dailyPct = (DailyProfitGoal > 0) ? (dailyProfit / DailyProfitGoal) : 0.0;
    DrawArcGauge(gcx, gcy, S(48), S(11), dailyPct);
    string pctTxt = StringFormat("%+.1f%%", dailyPct * 100.0);
-   int pctFs = SF(24);
+   int pctFs = SF(23);
    UIFontSet(pctFs, FW_BOLD);
    int pw = EstimateNumericTextWidth(pctTxt, pctFs);
    DashCanvas.TextOut(gcx - pw / 2, gcy - (int)(pctFs * 0.42), pctTxt, ColorToARGB(dailyProfit >= 0 ? C'34,197,94' : C'239,68,68'));
@@ -3261,11 +3018,11 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
           (dailyProfit >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(dailyProfit), 2), C'160,160,180', dailyProfit >= 0 ? C'34,197,94' : C'239,68,68');
    py2 += rowStep;
    DrawKV(cx + S(12), py2, innerW, GetUIString("เป้าหมาย", "Goal"),
-          "$" + DoubleToString(effDailyGoal, 0) + " (" + DoubleToString(MathMax(0, dailyPct * 100.0), 0) + "%)", C'160,160,180', clrWhite);
+          "$" + DoubleToString(DailyProfitGoal, 0) + " (" + DoubleToString(MathMax(0, dailyPct * 100.0), 0) + "%)", C'160,160,180', clrWhite);
 
    // คอลัมน์ 3: สถานะบาสเก็ต
    cx += cardW + gap;
-   DrawCardBG(cx, y, cardW, cardH, GetUIString("บาสเก็ต", "BASKET"), "📦");
+   DrawCardBG(cx, y, cardW, cardH, "📦 " + GetUIString("บาสเก็ต", "BASKET"));
    ry = y + S(44);
    DrawKV(cx + S(12), ry, innerW, GetUIString("กำไรลอย", "Floating"), (currentProfit >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(currentProfit), 2), C'160,160,180', currentProfit >= 0 ? C'34,197,94' : C'239,68,68'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("สูงสุด", "Peak"), "+$" + DoubleToString(maxProfit, 2), C'160,160,180', C'34,197,94'); ry += rowStep;
@@ -3277,7 +3034,7 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
 
    // คอลัมน์ 4: ข้อมูลออเดอร์
    cx += cardW + gap;
-   DrawCardBG(cx, y, cardW, cardH, GetUIString("ออเดอร์", "ORDERS"), "📋");
+   DrawCardBG(cx, y, cardW, cardH, "📋 " + GetUIString("ออเดอร์", "ORDERS"));
    ry = y + S(44);
    DrawKV(cx + S(12), ry, innerW, GetUIString("ไม้ Buy", "Buy"), IntegerToString(buyCount), C'160,160,180', C'34,197,94'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ไม้ Sell", "Sell"), IntegerToString(sellCount), C'160,160,180', C'239,68,68'); ry += rowStep;
@@ -3292,16 +3049,11 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    color liveDistClr = liveDistHigh ? C'239,68,68' : (liveDistLow ? C'251,146,60' : clrWhite);
    DrawKV(cx + S(12), ry, innerW, GetUIString("ระยะ Grid ปัจจุบัน", "Current Distance"), IntegerToString(liveDistNow) + " P", C'160,160,180', liveDistClr); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, "ATR", (UseATRDistance ? IntegerToString(GetCurrentATRPoints()) + " P" : "—"), C'160,160,180', clrWhite); ry += rowStep;
-   DrawKV(cx + S(12), ry, innerW, GetUIString("สเปรด", "Spread"), IntegerToString(adjSpread) + " P", C'160,160,180', adjSpread > MaxSpreadAllowed * m_multiplier ? C'239,68,68' : clrWhite); ry += rowStep;
-   // Execution quality ของไม้ล่าสุด - ช่วยแยกแยะว่าอาการ "ราคาไม่ตรง/ผลต่างจากบัญชีอื่น" มาจาก
-   // ping/สลิปเพจของ execution จริง ไม่ใช่บั๊ก EA (ดู RecordFillStats ด้านบน)
-   color latencyClr = (LastFillLatencyMs == 0) ? clrWhite : (LastFillLatencyMs > 800 ? C'239,68,68' : (LastFillLatencyMs > 300 ? C'251,146,60' : C'34,197,94'));
-   string execTxt = (LastFillLatencyMs == 0) ? "—" : DoubleToString(LastFillSlippagePoints, 1) + "P / " + IntegerToString((int)LastFillLatencyMs) + "ms";
-   DrawKV(cx + S(12), ry, innerW, GetUIString("สลิป/ปิงล่าสุด", "Last Slip/Ping"), execTxt, C'160,160,180', latencyClr);
+   DrawKV(cx + S(12), ry, innerW, GetUIString("สเปรด", "Spread"), IntegerToString(adjSpread) + " P", C'160,160,180', adjSpread > MaxSpreadAllowed * m_multiplier ? C'239,68,68' : clrWhite);
 
    // คอลัมน์ 5: สถานะกริด
    cx += cardW + gap;
-   DrawCardBG(cx, y, cardW, cardH, GetUIString("กริด", "GRID"), "⚙️");
+   DrawCardBG(cx, y, cardW, cardH, "⚙️ " + GetUIString("กริด", "GRID"));
    ry = y + S(44);
    string gridModeLabel = (GridType == GRID_VIRTUAL) ? "VIRTUAL" : (GridType == GRID_VIRTUAL_LIMIT ? "VIRTUAL LIMIT" : "PENDING");
    DrawKV(cx + S(12), ry, innerW, GetUIString("โหมด", "Mode"), gridModeLabel, C'160,160,180', C'251,193,7'); ry += rowStep;
@@ -3315,7 +3067,7 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
 
    // คอลัมน์ 6: บริหารความเสี่ยง
    cx += cardW + gap;
-   DrawCardBG(cx, y, cardW, cardH, GetUIString("ความเสี่ยง", "RISK"), "🛡️");
+   DrawCardBG(cx, y, cardW, cardH, "🛡️ " + GetUIString("ความเสี่ยง", "RISK"));
    ry = y + S(44);
    DrawKV(cx + S(12), ry, innerW, GetUIString("ย่อตัวสูงสุด", "Max DD"), DoubleToString(MaxDrawdownPercent, 2) + "%", C'160,160,180', MaxDrawdownPercent > 5 ? C'239,68,68' : C'34,197,94'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ลิมิต", "DD Limit"), (ddLimit > 0 ? DoubleToString(ddLimit, 1) + "%" : "—"), C'160,160,180', clrWhite); ry += rowStep;
@@ -3331,17 +3083,16 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    return y + cardH + S(12);
 }
 
-// แถวที่สอง: กราฟราคา+กริด (ซ้าย) + สรุปกำไร (กลาง) + กริดฟีเจอร์ที่ใช้งาน (ขวา) เรียงข้างกันแนวนอน
+// แถวที่สอง: กราฟเส้นทุน (ซ้าย) + กริดฟีเจอร์ที่ใช้งาน (ขวา) เรียงข้างกันแนวนอน
 int DrawEquityFeatureRow(int y)
 {
    int gap   = S(12);
-   int totalW = DASH_W - S(14) * 2 - gap * 2;
-   int eqW   = (int)(totalW * 0.42);
-   int psW   = (int)(totalW * 0.20);
-   int ftW   = totalW - eqW - psW;
+   int totalW = DASH_W - S(14) * 2 - gap;
+   int eqW   = (int)(totalW * 0.58);
+   int ftW   = totalW - eqW;
    int rowH  = S(265);
 
-   DrawCardBG(S(14), y, eqW, rowH, GetUIString("กราฟเส้นทุน", "EQUITY CURVE"), "📈");
+   DrawCardBG(S(14), y, eqW, rowH, "📈 " + GetUIString("กราฟเส้นทุน", "EQUITY CURVE"));
    int chartY = y + S(44);
    int chartH = rowH - S(44) - S(32);
    DrawEquityCurveChart(S(14) + S(10), chartY, eqW - S(20), chartH);
@@ -3350,23 +3101,8 @@ int DrawEquityFeatureRow(int y)
    int tw = EstimateTextWidth(ddTxt, SF(14));
    DashCanvas.TextOut(S(14) + eqW - S(14) - tw, y + rowH - S(27), ddTxt, ColorToARGB(C'239,68,68'));
 
-   // คอลัมน์กลาง: สรุปกำไรวันนี้/สัปดาห์นี้/เดือนนี้/รวมทั้งหมด (นับเฉพาะบาสเก็ตที่ปิดรอบแล้วจริงเหมือน
-   // การ์ด TODAY เดิม) - ไม่มีกราฟย่อยซ้ำ เพราะกราฟเส้นทุนตัวเต็มอยู่ในการ์ดซ้ายแล้ว
-   int psx = S(14) + eqW + gap;
-   DrawCardBG(psx, y, psW, rowH, GetUIString("สรุปกำไร", "PROFIT SUMMARY"), "💰");
-   {
-      int psy = y + S(56);
-      int innerPsW = psW - S(24);
-      int psStep = (rowH - S(56) - S(20)) / 4;
-      DrawKV(psx + S(12), psy, innerPsW, GetUIString("วันนี้", "Today"), (DailyRealizedProfit >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(DailyRealizedProfit), 2), C'160,160,180', DailyRealizedProfit >= 0 ? C'34,197,94' : C'239,68,68', 16); psy += psStep;
-      DrawKV(psx + S(12), psy, innerPsW, GetUIString("สัปดาห์นี้", "This Week"), (WeeklyRealizedProfit >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(WeeklyRealizedProfit), 2), C'160,160,180', WeeklyRealizedProfit >= 0 ? C'34,197,94' : C'239,68,68', 16); psy += psStep;
-      DrawKV(psx + S(12), psy, innerPsW, GetUIString("เดือนนี้", "This Month"), (MonthlyRealizedProfit >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(MonthlyRealizedProfit), 2), C'160,160,180', MonthlyRealizedProfit >= 0 ? C'34,197,94' : C'239,68,68', 16); psy += psStep;
-      double totalRealized = StatsSumWinProfit - StatsSumLossAmount;
-      DrawKV(psx + S(12), psy, innerPsW, GetUIString("รวมทั้งหมด", "All-Time"), (totalRealized >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(totalRealized), 2), C'160,160,180', totalRealized >= 0 ? C'34,197,94' : C'239,68,68', 16);
-   }
-
-   int fx = S(14) + eqW + psW + gap * 2;
-   DrawCardBG(fx, y, ftW, rowH, GetUIString("ฟีเจอร์ที่ใช้งาน", "ACTIVE FEATURES"), "🧩");
+   int fx = S(14) + eqW + gap;
+   DrawCardBG(fx, y, ftW, rowH, "🧩 " + GetUIString("ฟีเจอร์ที่ใช้งาน", "ACTIVE FEATURES"));
    int cols  = 4;
    int cellW = (ftW - S(20)) / cols;
    int row1Y = y + S(46);
@@ -3388,122 +3124,17 @@ int DrawEquityFeatureRow(int y)
    return y + rowH + S(12);
 }
 
-// แปลง CurrentDecision (คำนวณไว้แล้วครั้งเดียวใน UpdateDashboard ผ่าน ComputeSystemDecision) เป็น
-// ข้อความ/สีสำหรับแสดงผล - ฟังก์ชันนี้เป็นแค่ "ตัวแปล" ไม่มีการตัดสินใจเงื่อนไขใดๆ ในตัวเอง
-void GetDecisionLabels(ENUM_SYSTEM_DECISION d, int openPos, string &headTH, string &headEN, string &reasonTH, string &reasonEN, color &clr)
-{
-   switch(d)
-   {
-      case DECISION_HALTED:          headTH = "หยุดทำงานถาวร";        headEN = "EA HALTED";             reasonTH = "หยุดเปิดไม้ใหม่ถาวรตามเงื่อนไขที่ตั้งไว้";       reasonEN = "New entries stopped permanently by a configured stop."; clr = C'239,68,68';  break;
-      case DECISION_CLOSING:         headTH = "กำลังปิดไม้";           headEN = "CLOSING POSITIONS";     reasonTH = "กำลังปิดบาสเก็ตปัจจุบันตามเงื่อนไข";            reasonEN = "Closing the current basket now.";                       clr = C'251,146,60'; break;
-      case DECISION_LATENCY_GUARD:   headTH = "พักไม้ (Latency สูง)";  headEN = "LATENCY GUARD ACTIVE";  reasonTH = "Execution ช้าต่อเนื่องหลายไม้ พักเปิดไม้ชั่วคราว"; reasonEN = "Slow execution detected repeatedly - pausing entries."; clr = C'239,68,68';  break;
-      case DECISION_NEWS_BLOCK:      headTH = "พักช่วงข่าว";           headEN = "NEWS BLACKOUT";         reasonTH = "อยู่ในช่วงเวลาห้ามเปิดไม้รอบข่าวสำคัญ";          reasonEN = "Inside the news blackout window.";                      clr = C'168,85,247'; break;
-      case DECISION_DAILY_LOSS:      headTH = "ครบขาดทุนวันนี้";        headEN = "DAILY LOSS HIT";        reasonTH = "ขาดทุนที่ปิดรอบแล้ววันนี้ถึงเพดานที่ตั้งไว้";      reasonEN = "Today's realized loss hit the configured limit.";       clr = C'239,68,68';  break;
-      case DECISION_TIME_BLOCK:      headTH = "นอกเวลาเทรด";          headEN = "OUTSIDE TRADING HOURS"; reasonTH = "อยู่นอกช่วงเวลาที่อนุญาตให้เปิดไม้ใหม่";          reasonEN = "Outside the allowed trading-hours window.";              clr = C'239,68,68';  break;
-      case DECISION_DAILY_GOAL:      headTH = "ถึงเป้ากำไรวันนี้";       headEN = "DAILY GOAL REACHED";    reasonTH = "กำไรที่ปิดรอบแล้ววันนี้ถึงเป้าแล้ว หยุดเปิดไม้ใหม่"; reasonEN = "Today's realized profit hit the goal.";                clr = C'34,197,94';  break;
-      case DECISION_VOLATILITY_LOW:  headTH = "ตลาดนิ่งเกินไป";         headEN = "LOW VOLATILITY";        reasonTH = "ความผันผวนต่ำกว่าเกณฑ์ที่ตั้งไว้";               reasonEN = "Volatility is below the configured floor.";             clr = C'251,146,60'; break;
-      case DECISION_VOLATILITY_HIGH: headTH = "ตลาดผันผวนสูงเกินไป";    headEN = "HIGH VOLATILITY";       reasonTH = "ความผันผวนสูงกว่าเกณฑ์ที่ตั้งไว้";               reasonEN = "Volatility is above the configured ceiling.";           clr = C'239,68,68';  break;
-      case DECISION_MANAGING_BASKET: headTH = "กำลังบริหารบาสเก็ต";      headEN = "MANAGING BASKET";       reasonTH = "มีไม้เปิดอยู่ " + IntegerToString(openPos) + " ไม้ - รอราคาแตะชั้นถัดไป/เป้ากำไร"; reasonEN = IntegerToString(openPos) + " position(s) open - watching next level or target."; clr = C'56,189,248'; break;
-      default:                       headTH = "รอราคาแตะชั้นกริด";       headEN = "WAITING FOR GRID LEVEL"; reasonTH = "ราคายังไม่แตะจุดเปิดไม้แรกของกริด";              reasonEN = "Price has not reached the next grid entry level yet."; clr = C'251,193,7'; break;
-   }
-}
-
-// แผงเด่นตรงกลาง - บอกตรงๆ ว่าตอนนี้ระบบกำลังทำ/รออะไรอยู่ (อ่านจาก CurrentDecision ที่คำนวณไว้แล้ว
-// ครั้งเดียวต่อรอบ) พร้อมราคาเป้า Buy/Sell ถัดไปตัวใหญ่ - เป็นจุดสนใจหลักของแถวนี้ตามที่ผู้ใช้ต้องการ
-void DrawSystemDecisionPanel(int x, int y, int w, int h, int openPos)
-{
-   DrawCardBG(x, y, w, h, GetUIString("การตัดสินใจของระบบ", "SYSTEM DECISION"), "🧠");
-
-   string headTH, headEN, reasonTH, reasonEN;
-   color  clr;
-   GetDecisionLabels(CurrentDecision, openPos, headTH, headEN, reasonTH, reasonEN, clr);
-
-   UIFontSet(SF(20), FW_BOLD);
-   string headTxt = GetUIString(headTH, headEN);
-   int hw = EstimateTextWidth(headTxt, SF(20));
-   DashCanvas.TextOut(x + w / 2 - hw / 2, y + S(54), headTxt, ColorToARGB(clr));
-
-   UIFontSet(SF(13));
-   string reasonTxt = GetUIString(reasonTH, reasonEN);
-   int rw = EstimateTextWidth(reasonTxt, SF(13));
-   DashCanvas.TextOut(x + w / 2 - rw / 2, y + S(82), reasonTxt, ColorToARGB(C'160,160,180'));
-
-   double nb = GetNextGridTargetPrice(true), ns = GetNextGridTargetPrice(false);
-   int halfW = w / 2;
-   int numY  = y + h - S(66);
-   UIFontSet(SF(13));
-   DashCanvas.TextOut(x + S(26), numY, GetUIString("Buy ถัดไป", "NEXT BUY"), ColorToARGB(C'160,160,180'));
-   DashCanvas.TextOut(x + halfW + S(10), numY, GetUIString("Sell ถัดไป", "NEXT SELL"), ColorToARGB(C'160,160,180'));
-   UIFontSet(SF(22), FW_BOLD);
-   DashCanvas.TextOut(x + S(26), numY + S(20), "↑ " + DoubleToString(nb, _Digits), ColorToARGB(C'34,197,94'));
-   DashCanvas.TextOut(x + halfW + S(10), numY + S(20), "↓ " + DoubleToString(ns, _Digits), ColorToARGB(C'239,68,68'));
-}
-
-// แถวใหม่: บริหารความเสี่ยง (แท่งความคืบหน้า Daily Loss/Daily Goal/Max DD + สถานะฟิลเตอร์ตลาด) ซ้าย
-// + การตัดสินใจของระบบเด่นตรงกลาง + ตารางโพซิชั่นที่เปิดอยู่จริงขวา
-int DrawRiskPositionsRow(int y, int openPos)
-{
-   int gap    = S(12);
-   int totalW = DASH_W - S(14) * 2 - gap * 2;
-   int rcW    = (int)(totalW * 0.29);
-   int sdW    = (int)(totalW * 0.40);
-   int ptW    = totalW - rcW - sdW;
-   int rowH   = S(230);
-
-   DrawCardBG(S(14), y, rcW, rowH, GetUIString("บริหารความเสี่ยง", "RISK CONTROL"), "🛡️");
-   {
-      double effLoss  = ComputeEffectiveThreshold(DailyLossLimit, DailyLossLimitPct, DayStartBalance);
-      double effGoal  = ComputeEffectiveThreshold(DailyProfitGoal, DailyProfitGoalPct, DayStartBalance);
-      double ddLimit2 = UseTotalDDGuard ? MaxTotalDD_Pct : (UseMaxDDStop ? MaxAllowedDD_Pct : 0.0);
-      double lossPct  = (UseDailyLossLimit && effLoss > 0) ? MathMin(1.0, MathAbs(MathMin(DailyRealizedProfit, 0.0)) / effLoss) : 0.0;
-      double goalPct  = (effGoal > 0) ? MathMin(1.0, MathMax(DailyRealizedProfit, 0.0) / effGoal) : 0.0;
-      double ddPct    = (ddLimit2 > 0) ? MathMin(1.0, MaxDrawdownPercent / ddLimit2) : 0.0;
-      string offTxt   = GetUIString("ปิดอยู่", "OFF");
-
-      int bx = S(14) + S(14), bw = rcW - S(28);
-      int by = y + S(50);
-      UIFontSet(SF(12));
-      DashCanvas.TextOut(bx, by, GetUIString("ขาดทุนวันนี้ ", "Daily Loss ") + (effLoss > 0 ? DoubleToString(MathAbs(MathMin(DailyRealizedProfit, 0.0)), 0) + "/" + DoubleToString(effLoss, 0) : offTxt), ColorToARGB(C'160,160,180'));
-      DrawProgressBar(bx, by + S(18), bw, S(10), lossPct, C'239,68,68');
-      by += S(46);
-      DashCanvas.TextOut(bx, by, GetUIString("เป้ากำไรวันนี้ ", "Daily Goal ") + (effGoal > 0 ? DoubleToString(MathMax(DailyRealizedProfit, 0.0), 0) + "/" + DoubleToString(effGoal, 0) : offTxt), ColorToARGB(C'160,160,180'));
-      DrawProgressBar(bx, by + S(18), bw, S(10), goalPct, C'34,197,94');
-      by += S(46);
-      DashCanvas.TextOut(bx, by, "Max DD " + (ddLimit2 > 0 ? DoubleToString(MaxDrawdownPercent, 1) + "%/" + DoubleToString(ddLimit2, 0) + "%" : offTxt), ColorToARGB(C'160,160,180'));
-      DrawProgressBar(bx, by + S(18), bw, S(10), ddPct, C'251,146,60');
-      by += S(46);
-
-      bool lowVol    = UseMinVolatilityFilter && IsVolatilityTooLow();
-      bool highVol   = UseMaxVolatilityFilter && IsVolatilityTooHigh();
-      int  adjSpread = (int)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-      bool spreadBad = adjSpread > MaxSpreadAllowed * m_multiplier;
-      DrawStatusLine(bx, by, bw, GetUIString("ความผันผวน", "Volatility"), lowVol ? GetUIString("นิ่งไป", "LOW") : (highVol ? GetUIString("แรงไป", "HIGH") : GetUIString("ปกติ", "NORMAL")), (lowVol || highVol) ? C'251,146,60' : C'34,197,94'); by += S(24);
-      DrawStatusLine(bx, by, bw, GetUIString("สเปรด", "Spread"), spreadBad ? GetUIString("แย่", "BAD") : GetUIString("ดี", "GOOD"), spreadBad ? C'239,68,68' : C'34,197,94'); by += S(24);
-      DrawStatusLine(bx, by, bw, GetUIString("กัน Gap", "Gap Guard"), UseGapProtection ? "ON" : "OFF", UseGapProtection ? C'34,197,94' : C'120,120,135');
-   }
-
-   int sdx = S(14) + rcW + gap;
-   DrawSystemDecisionPanel(sdx, y, sdW, rowH, openPos);
-
-   int px = sdx + sdW + gap;
-   DrawCardBG(px, y, ptW, rowH, GetUIString("โพซิชั่นปัจจุบัน", "CURRENT POSITIONS"), "📑");
-   DrawPositionsTable(px + S(14), y + S(50), ptW - S(28), rowH - S(66));
-
-   return y + rowH + S(12);
-}
-
 int DrawStatsRow(int y)
 {
    int cardW = DASH_W - S(14) * 2;
    int cardH = S(84);
    int r = S(10);
-   DrawGlowBorder(S(14), y, S(14) + cardW, y + cardH, C'255,183,3', 2);
    DrawPanelShadow(S(14), y, S(14) + cardW, y + cardH, r);
    FillRoundedRect(S(14), y, S(14) + cardW, y + cardH, r, ColorToARGB(C'23,23,39'));
-   DashCanvas.Line(S(14) + r, y,     S(14) + cardW - r, y,     ColorToARGB(C'160,130,60'));
-   DashCanvas.Line(S(14) + r, y + cardH, S(14) + cardW - r, y + cardH, ColorToARGB(C'70,60,35'));
-   DashCanvas.Line(S(14),         y + r, S(14),         y + cardH - r, ColorToARGB(C'70,60,35'));
-   DashCanvas.Line(S(14) + cardW, y + r, S(14) + cardW, y + cardH - r, ColorToARGB(C'70,60,35'));
+   DashCanvas.Line(S(14) + r, y,     S(14) + cardW - r, y,     ColorToARGB(C'96,82,138'));
+   DashCanvas.Line(S(14) + r, y + cardH, S(14) + cardW - r, y + cardH, ColorToARGB(C'52,48,74'));
+   DashCanvas.Line(S(14),         y + r, S(14),         y + cardH - r, ColorToARGB(C'52,48,74'));
+   DashCanvas.Line(S(14) + cardW, y + r, S(14) + cardW, y + cardH - r, ColorToARGB(C'52,48,74'));
 
    double winRate = (StatsTotalBaskets > 0) ? (StatsWinCount * 100.0 / StatsTotalBaskets) : 0.0;
    double avgWin   = (StatsWinCount  > 0) ? (StatsSumWinProfit  / StatsWinCount)  : 0.0;
@@ -3533,9 +3164,9 @@ int DrawStatsRow(int y)
    for(int i = 0; i < 6; i++)
    {
       int cx = S(14) + colW * i + colW / 2;
-      UIFontSet(SF(22), FW_BOLD);
-      int vw = EstimateTextWidth(values[i], SF(22));
-      DashCanvas.TextOut(cx - vw / 2, y + S(14), values[i], ColorToARGB(valColors[i]));
+      UIFontSet(SF(20), FW_BOLD);
+      int vw = EstimateTextWidth(values[i], SF(20));
+      DashCanvas.TextOut(cx - vw / 2, y + S(15), values[i], ColorToARGB(valColors[i]));
 
       UIFontSet(SF(14));
       int lw = EstimateTextWidth(labels[i], SF(14));
@@ -3545,31 +3176,11 @@ int DrawStatsRow(int y)
    return y + cardH + S(12);
 }
 
-// แถบแบรนด์บางๆ ท้ายแดชบอร์ด - ชื่อรุ่น/License ฝั่งซ้าย + สโลแกนฝั่งขวา ให้ความรู้สึกเป็นสินค้าที่จบ
-// ครบชุดเหมือนภาพอ้างอิง แทนที่จะจบด้วยการ์ดข่าวเฉยๆ
-int DrawTickerBar(int y)
-{
-   int cardW = DASH_W - S(14) * 2;
-   int cardH = S(44);
-   DrawGlowBorder(S(14), y, S(14) + cardW, y + cardH, C'255,183,3', 2);
-   FillRoundedRect(S(14), y, S(14) + cardW, y + cardH, S(8), ColorToARGB(C'15,17,27'));
-   DashCanvas.Line(S(14), y, S(14) + cardW, y, ColorToARGB(C'255,183,3'));
-
-   UIFontSet(SF(13), FW_BOLD);
-   DashCanvas.TextOut(S(28), y + S(13), "QUANTIX PRO EA V8", ColorToARGB(C'230,200,120'));
-
-   string tagline = GetUIString("เทรดฉลาดกว่า ไม่ใช่หนักกว่า", "TRADE SMARTER, NOT HARDER");
-   int tw2 = EstimateTextWidth(tagline, SF(13));
-   DashCanvas.TextOut(S(14) + cardW - S(14) - tw2, y + S(13), tagline, ColorToARGB(C'160,160,180'));
-
-   return y + cardH + S(12);
-}
-
 int DrawNewsCard(int y)
 {
    int cardW = DASH_W - S(14) * 2;
    int cardH = S(162);
-   DrawCardBG(S(14), y, cardW, cardH, GetUIString("ข่าวและการแจ้งเตือน", "NEWS & ALERTS"), "📰");
+   DrawCardBG(S(14), y, cardW, cardH, "📰 " + GetUIString("ข่าวและการแจ้งเตือน", "NEWS & ALERTS"));
 
    int ry = y + S(46);
    bool any = false;
@@ -3608,7 +3219,7 @@ int DrawNewsCard(int y)
 //+------------------------------------------------------------------+
 double UIScale       = 1.0;
 int    DASH_W_BASE   = 1450;
-int    DASH_H_BASE   = 1650;
+int    DASH_H_BASE   = 1095;
 
 int S(double v)  { return (int)MathRound(v * UIScale); }
 // พื้นฟอนต์ต่ำมาก (8px) แค่กันกรณีสุดขั้ว - ถ้าตั้งพื้นสูงกว่านี้ ฟอนต์จะไม่ย่อตามการ์ดที่หดลงจริง
@@ -3625,7 +3236,7 @@ double ComputeUIScale()
    double scaleH = (chartH - 40.0) / (double)DASH_H_BASE;
    double scaleW = (chartW - 60.0) / (double)DASH_W_BASE; // แนวนอนกว้างขึ้น ต้องเช็คความกว้างชาร์ตด้วย ไม่งั้นล้นด้านข้าง
    double scale  = MathMin(scaleH, scaleW);
-   // UIScaleMultiplier: ตัวคูณเพิ่มเติมที่ผู้ใช้ปรับเองได้ (default 1.0) เผื่อ auto-fit ตามขนาดจอแล้วยังเล็กไป
+   // UIScaleMultiplier: ตัวคูณเพิ่มเติมที่ผู้ใช้ปรับเองได้ (default 1.3) เผื่อ auto-fit ตามขนาดจอแล้วยังเล็กไป
    // ถ้าปรับเพิ่มมากไป panel อาจใหญ่กว่าที่จอมองเห็นได้พอดี - ลดค่านี้ลงได้จาก Inputs
    scale *= UIScaleMultiplier;
    // วาดใหม่ทุกครั้งที่ resolution เปลี่ยน (ไม่ใช่ stretch บิตแมปเดิม) ขยายเกิน 1.0 ได้โดยไม่เบลอ
@@ -3695,7 +3306,7 @@ void InitDashboard()
    string btnText = GetUIString("🚨 ปิดรวบทุกไม้ (CLOSE ALL)", "🚨 CLOSE ALL POSITIONS");
    CreateButton(BTN_CLOSE_ALL, 15 + S(14), 15 + DASH_H - S(54), DASH_W - S(28), S(40), btnText, C'220,38,38', clrWhite, SF(10));
 
-   DashCanvas.Erase(ColorToARGB(C'6,9,18'));
+   DashCanvas.Erase(ColorToARGB(C'8,8,16'));
    DashCanvas.Update();
 }
 
@@ -3729,10 +3340,7 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
    {
       DayStartDay          = nowDt.day_of_year;
       DailyRealizedProfit  = 0.0; // ขึ้นวันใหม่ - ล้างยอดกำไรวันนี้ แม้จะยังไม่มีบาสเก็ตปิดเลยก็ตาม
-      DayStartBalance      = balance; // balance ด้านบนคือ AccountInfoDouble(ACCOUNT_BALANCE) สดของ tick นี้
    }
-   if(CheckAndRollWeek(nowDt, WeekStartDay)) WeeklyRealizedProfit = 0.0;
-   if(nowDt.mon != MonthStartMonth) { MonthStartMonth = nowDt.mon; MonthlyRealizedProfit = 0.0; }
    // การ์ด Today อัปเดตเฉพาะตอนบาสเก็ตปิดจริง (ดู ClearEverythingAsync) ไม่ใช่ floating P/L เรียลไทม์
    double dailyProfit = DailyRealizedProfit;
 
@@ -3741,20 +3349,15 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
    // ผูกกับ event ปิดบาสเก็ตเหมือน Stats* ด้านบน เลยต้องมีจุดเซฟ periodic แยกต่างหาก
    PersistAllStats();
 
-   DashCanvas.Erase(ColorToARGB(C'6,9,18'));
+   DashCanvas.Erase(ColorToARGB(C'8,8,16'));
 
    int y = S(14);
-   CurrentDecision = ComputeSystemDecision(openPos);
-
    y = DrawHeader(y);
    y = DrawInfoBar(y);
    y = DrawServerTimeRow(y, openPos, pendingOrders);
-   y = DrawCommandRow(y, openPos, pendingOrders);
    y = DrawStatCardsRow(y, balance, equity, dailyProfit, currentProfit, maxProfit);
    y = DrawEquityFeatureRow(y);
-   y = DrawRiskPositionsRow(y, openPos);
    y = DrawStatsRow(y);
-   y = DrawTickerBar(y);
    y = DrawNewsCard(y);
 
    DashCanvas.Update();
