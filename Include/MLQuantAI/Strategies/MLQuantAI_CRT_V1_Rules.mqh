@@ -224,6 +224,37 @@ bool CRT_ResolveZone(const MarketContext &ctx, int sweepBarIndex, int mssBarInde
 }
 
 //---------------------------------------------------------------------
+// Geometric consistency gate (CRT_V1 Integrity Amendment A1-R1, contract
+// §7A/§8) - finding a zone kind (FVG or OB) is necessary but not
+// sufficient. The resolved zone's midpoint (the same value §8's formula
+// uses as entry_hint) must lie strictly on the correct side of
+// swept_level for the direction being evaluated, or the entry/sl/tp
+// formulas in §8 (ToTradeCandidate.mqh) would derive a candidate that
+// violates the domain invariant every downstream consumer already
+// enforces (RiskSizing_ValidateInput/
+// CandidateProjection_ValidateNumericalIntegrity):
+//   bullish: (zoneLow+zoneHigh)/2 > swept_level
+//   bearish: (zoneLow+zoneHigh)/2 < swept_level
+// Deliberately NOT a whole-zone containment check (an earlier draft of
+// this gate required the entire zone to sit on one side of swept_level
+// and was withdrawn - see Docs/PhaseB_B5_CRTContract.md §7A - because
+// the sealed Test_Fixture_Bearish_Valid_OBFallback fixture proves a
+// resolved OB zone may legitimately cross swept_level, on the sweep bar
+// itself, while its midpoint - and therefore the derived entry/sl/tp -
+// stays fully valid). Strict inequality only - an exact midpoint touch
+// is invalid, the same convention every other boundary check in this
+// file already uses (CRT_IsSweepLow/High, CRT_CloseBackInside,
+// CRT_ConfirmMSS are all strict, never a touch). Applies uniformly to
+// every resolved zone kind - not an OB-specific patch, per the
+// amendment's own scope.
+//---------------------------------------------------------------------
+bool CRT_IsZoneGeometricallyConsistent(bool bullish, double sweptLevel, double zoneLow, double zoneHigh)
+{
+   double zoneMid = (zoneLow + zoneHigh) * 0.5;
+   return bullish ? (zoneMid > sweptLevel) : (zoneMid < sweptLevel);
+}
+
+//---------------------------------------------------------------------
 // Expiry (contract section 9): reuses the existing, sealed
 // TradeCandidate_ComputeExpiryTime - no new expiry primitive, just a
 // boolean "has this candidate expired as of currentClosedBarTime" wrapper,
@@ -300,9 +331,12 @@ void CRT_DetectV1(const MarketContext &ctx, CRTDetectionResult &result)
       double zoneLow, zoneHigh;
       if(!CRT_ResolveZone(ctx, sweepIdx, mssBarIndex, bullish, zoneKind, zoneLow, zoneHigh)) continue;
 
+      double sweptLevel = bullish ? ctx.pdl : ctx.pdh;
+      if(!CRT_IsZoneGeometricallyConsistent(bullish, sweptLevel, zoneLow, zoneHigh)) continue;
+
       result.detected = true;
       result.side = bullish ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-      result.swept_level = bullish ? ctx.pdl : ctx.pdh;
+      result.swept_level = sweptLevel;
       result.mss_confirmation_price = ctx.trigger_tf_recent[mssBarIndex].close;
       result.mss_confirmation_bar_time = ctx.trigger_tf_recent[mssBarIndex].time;
       result.resolved_zone_kind = zoneKind;

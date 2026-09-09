@@ -312,6 +312,40 @@ candidate is created (this is the "MSS but no valid FVG/OB retest"
 fixture in Commit 3's list). `resolved_zone_kind` records which one won —
 exactly one, never both (§2's bit-4/bit-5 XOR invariant).
 
+**Geometric consistency gate (CRT_V1 Integrity Amendment A1-R1, additive
+to the frozen §8 formulas below — see §8's precondition note):** finding
+a zone kind (FVG or OB) is necessary but not sufficient for a successful
+resolution. A resolved zone MAY cross `swept_level` — validity is NOT
+determined by requiring the entire zone to lie on one side of
+`swept_level` (an earlier draft of this gate required exactly that and
+was withdrawn before implementation: `Test_Fixture_Bearish_Valid_OBFallback`,
+already sealed in Commit 3's test corpus, resolves an Order Block equal
+to the sweep bar itself, whose range necessarily crosses `swept_level`
+by construction — the sweep bar's own extreme is what makes it a sweep
+— while the candidate it produces is fully valid). Validity is
+determined instead by the derived entry reference — the same midpoint
+§8's formula already computes as `entry_hint`:
+
+```
+entry_reference = (resolved_zone_low + resolved_zone_high) / 2
+
+bullish: entry_reference > swept_level
+bearish: entry_reference < swept_level
+```
+
+An exact touch (`entry_reference == swept_level`) is **not** a valid
+resolution — strict inequality only, the same convention every other
+CRT_V1 boundary check already uses (sweep/close-back-inside/MSS are all
+strict, never a touch). If the resolved zone's midpoint fails this
+check, resolution for that direction fails closed exactly as if no
+qualifying FVG/OB had been found at all — `CRT_DetectV1()` does not set
+`result.detected = true` for that direction and moves on to the next.
+
+This gate applies uniformly to every resolved zone regardless of
+`resolved_zone_kind` — it governs the same midpoint value that both FVG
+and OB feed into identically via §8's `entry_hint` formula, not a defect
+specific to one zone kind.
+
 **Frozen parameters** (strategy policy, not architecture — conservative
 defaults chosen specifically to unblock implementation; these are the
 values `CRT_V1_RULES_VERSION = "CRT_V1"` means from here on, and changing
@@ -324,6 +358,17 @@ parameters shape):
 #define MLQUANTAI_CRT_V1_EXPIRY_AFTER_BARS  12   // TradeCandidate_ComputeExpiryTime's expiry_after_bars
 // minimum FVG gap: strictly greater than 0.0 (any non-zero 3-candle gap qualifies, no ATR-multiple floor)
 ```
+
+**Precondition (CRT_V1 Integrity Amendment A1-R1):** the formulas below
+may only be evaluated for a `resolved_zone` that has already passed
+§7A's geometric consistency gate (the same midpoint the gate checks is
+what `entry_hint` below recomputes — they are the same value evaluated
+twice, not two different quantities). That gate — not these formulas —
+is what guarantees the resulting `entry_hint`/`sl_hint`/`tp_hint`
+satisfy the domain invariant every downstream consumer already enforces
+(`RiskSizing_ValidateInput`, `CandidateProjection_ValidateNumericalIntegrity`):
+`BUY: sl_hint < entry_hint < tp_hint`, `SELL: sl_hint > entry_hint > tp_hint`.
+The formulas themselves are unchanged by this amendment.
 
 `entry_hint`/`sl_hint`/`tp_hint` derivation from the resolved zone
 (`resolved_zone_high`/`resolved_zone_low`, `swept_level`,
