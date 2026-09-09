@@ -260,12 +260,25 @@ int EventStore_ReadAllLines(string fileName, string &outLines[])
    if(reuseOpenHandle)
       FileSeek(handle, 0, SEEK_SET);
 
+   // Amortized-doubling growth: resizing by exactly 1 element per line (the
+   // prior behavior) is O(n) individual ArrayResize calls - on a large
+   // store (real case: 190k+ lines) this exhausted the allocator (VirtualAlloc
+   // failure) and crashed with an array-out-of-range write. Doubling the
+   // capacity instead of the count drops that to O(log n) resizes; the
+   // trailing ArrayResize(outLines, count) below trims back to the exact
+   // count so every caller's observable result (both the returned count and
+   // ArraySize(outLines)) is unchanged.
    int count = 0;
+   int capacity = 0;
    while(!FileIsEnding(handle))
    {
       string line = FileReadString(handle);
       if(line == "" && FileIsEnding(handle)) break; // trailing blank read at EOF, not a real line
-      ArrayResize(outLines, count+1);
+      if(count >= capacity)
+      {
+         capacity = (capacity == 0) ? 4096 : capacity * 2;
+         ArrayResize(outLines, capacity);
+      }
       outLines[count] = line;
       count++;
    }
@@ -274,6 +287,8 @@ int EventStore_ReadAllLines(string fileName, string &outLines[])
       FileSeek(handle, 0, SEEK_END); // restore append position
    else
       FileClose(handle);
+
+   ArrayResize(outLines, count);
 
    return count;
 }
