@@ -34,13 +34,21 @@
 #include <MLQuantAI/Execution/MLQuantAI_RecoveryReconciliationStartup.mqh>
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_Contract.mqh>
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_ToTradeCandidate.mqh>
+#include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_EventEmission.mqh>
 #include <MLQuantAI/Market/MLQuantAI_FeatureSnapshotBuilder.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_FeatureSnapshotEventEmission.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_ModelArtifactEventEmission.mqh>
 #include <MLQuantAI/Core/MLQuantAI_RiskSizing.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_RiskPlanEventEmission.mqh>
 #include <MLQuantAI/AI/MLQuantAI_AIDecisionBuilder.mqh>
+#include <MLQuantAI/AI/MLQuantAI_AIDecisionEventEmission.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_EligibilityBuilder.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_EligibilityEventEmission.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_ExecutionRequestBuilder.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_SafetyGate.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_EnvironmentIdentitySnapshot.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_ExecutionDiscoveryGuard.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_ExecutionLineageObservation.mqh>
 
 input group "=== System ==="
 input bool   DebugMode                   = false;
@@ -393,6 +401,18 @@ int OnInit()
    if(!approvalReport.ok)
       LogWarn("C2 manual-approval gate stays disabled this session - startup approval rebuild failed: " + approvalReport.first_error);
 
+   // C6.2/C6.3 Wave 1 (frozen chat-history contracts, no separate Docs/
+   // file yet): reset the in-session Layer A discovery registry, then
+   // run the read-only Layer B "discover the past" observation pass.
+   // Placed here because ExecutionRequestProjection/DryRunResultProjection
+   // (via BrokerSubmissionAudit_StartupRebuild above) and
+   // ManualApprovalProjection/SubmissionAttemptProjection (via the two
+   // StartupRebuild calls above) are all guaranteed populated by this
+   // point. Log-only - no authority, no EventStore write, never fails
+   // EA initialization.
+   ExecutionDiscoverySession_Reset();
+   ExecutionLineageObservation_LogAll();
+
    // C3.4 startup-readiness (Docs/PhaseC_C3_TransactionReconciliationContract.md,
    // sections 25-27, frozen): rebuilds the C3.3 deferred-matching read
    // model once, at startup only. Unlike the two calls directly above,
@@ -622,9 +642,14 @@ void OnTick()
    // -> execution-request -> safety-gate chain, Strategy Tester only. Stub
    // AI inference (no ONNX model exists yet) - real InferenceResult contract
    // shape, synthetic model identity, referentially matched to the real
-   // FeatureSnapshot it's built from. Stops at SafetyGate_Evaluate() -
-   // never calls BrokerSubmission_Submit()/OrderSend()/EventStore_Log* -
-   // diagnostic-only, no execution authority, per the C5.0 design freeze.
+   // FeatureSnapshot it's built from. As of C6.2/C6.3 Wave 1, the
+   // execution_request_id is discovered (Layer A/B) before any content is
+   // built, and - only when genuinely missing from both - durably emitted
+   // via ExecutionDiscovery_EmitAndRegister() (EXECUTION_REQUEST_CREATED +
+   // EXECUTION_DRY_RUN_COMPLETED). Still stops there: never calls
+   // BrokerSubmission_Submit()/OrderSend() anywhere - diagnostic dry-run
+   // only, no execution/broker authority, per the C5.0 design freeze
+   // (which bounded broker reachability, not durability).
    if(!MQLInfoInteger(MQL_TESTER)) return;
 
    CRTDetectionResult crtResult;
@@ -638,12 +663,54 @@ void OnTick()
       return;
    }
 
+   // C6.2/C6.3 Wave 1 discover-before-emit gate (frozen chat-history
+   // contracts, no separate Docs/ file yet): derive execution_request_id
+   // via the PURE Ids_* identity chain - candidate_id plus fixed
+   // policy-version strings only, matching exactly what
+   // EligibilityBuilder/AIDecisionBuilder/RiskSizing/ExecutionRequestBuilder
+   // themselves compute internally (verified against their real source).
+   // No live balance read, no FeatureSnapshot/RiskPlan/AIDecision/
+   // EligibilityDecision/ExecutionRequest content build happens before
+   // this check - if the identity is already known (either layer), the
+   // rest of this pipeline never runs at all this tick.
+   string c5EligibilityDecisionId = Ids_EligibilityDecisionId(c5Candidate.candidate_id, InpC5EligibilityPolicyVersion);
+   string c5AIDecisionId          = Ids_AIDecisionId(c5Candidate.candidate_id, "STUB_NO_MODEL_V1", InpC5AIDecisionPolicyVersion);
+   string c5RiskPlanId            = Ids_RiskPlanId(c5Candidate.candidate_id, InpC5SizingRulesVersion);
+   string c5ExecutionRequestId    = Ids_ExecutionRequestId(c5Candidate.candidate_id, c5EligibilityDecisionId,
+                                                             c5AIDecisionId, c5RiskPlanId, InpC5ExecutionPolicyVersion);
+
+   ExecutionDiscoveryResult c5Discovery;
+   ExecutionDiscovery_Resolve(c5ExecutionRequestId, c5Discovery);
+   if(c5Discovery.resolution == EXEC_DISCOVERY_FOUND_SESSION)
+   {
+      LogInfo("C5.0 TEST FIXTURE: execution_request_id=" + c5ExecutionRequestId +
+              " already emitted this session (Layer A) - observing, not re-emitting.");
+      return;
+   }
+   if(c5Discovery.resolution == EXEC_DISCOVERY_FOUND_DURABLE)
+   {
+      LogInfo("C5.0 TEST FIXTURE: execution_request_id=" + c5ExecutionRequestId +
+              " already durable (Layer B) - observing, not re-emitting.");
+      return;
+   }
+
+   // C6-W1-REMEDIATION-01 (frozen chat-history authorization, no separate
+   // Docs/ file yet): missing from both layers - now cross the emission
+   // boundary for real, durable lineage top to bottom. Every *_Emit*
+   // call below is sealed, existing infrastructure (same functions every
+   // Tests/*.mq5 fixture in this project already calls) - this fixture
+   // simply never called them before. Each one self-dedupes via its own
+   // live-sync ProjectionRecord guard, independent of the discovery
+   // guard above.
+   CRT_EmitCandidateCreated(c5Candidate, ctx.symbol_spec.digits);
+
    FeatureSnapshot c5Snapshot;
    if(!Candidate_ToFeatureSnapshot(c5Candidate, ctx, c5Snapshot))
    {
       LogWarn("C5.0 TEST FIXTURE stopped: FEATURE_SNAPSHOT_BUILD_FAILED candidate_id=" + c5Candidate.candidate_id);
       return;
    }
+   FeatureSnapshot_EmitFeatureSnapshotCreated(c5Snapshot);
 
    RiskContext c5RiskCtx;
    RiskContext_Init(c5RiskCtx);
@@ -660,21 +727,47 @@ void OnTick()
       LogWarn("C5.0 TEST FIXTURE stopped: RISK_PLAN_BUILD_FAILED candidate_id=" + c5Candidate.candidate_id);
       return;
    }
+   RiskPlan_EmitRiskPlanCreated(c5RiskPlan);
+
+   // Built BEFORE c5StubInference (reordered per INV-C6-W1-RST-001
+   // iteration 2): c5StubInference.model_registry_hash/model_artifact_hash
+   // must reference this struct's own real, already-registered fields -
+   // never a separately hardcoded literal - or AIDecisionProjection's
+   // model-registry lineage check (which compares the AI decision's
+   // declared hash against the actual ModelArtifactProjection record)
+   // rejects it on any restart rebuild.
+   ModelArtifact c5StubModel;
+   ModelArtifact_Init(c5StubModel);
+   c5StubModel.model_registry_id  = "STUB_NO_MODEL_V1";
+   c5StubModel.model_id           = "STUB_NO_MODEL_V1";
+   c5StubModel.model_version      = "STUB";
+   c5StubModel.model_artifact_hash = "STUB_NO_MODEL_V1";
+   c5StubModel.feature_schema_version = c5Snapshot.feature_schema_version; // reuse the real value this exact snapshot already carries - not invented
+   c5StubModel.training_dataset_id    = "STUB_NO_MODEL_V1"; // no training dataset - this is the no-model stub, same identity literal as model_id/model_artifact_hash
+   c5StubModel.training_dataset_hash  = "STUB_NO_MODEL_V1";
+   c5StubModel.model_target           = "STUB_NO_MODEL_V1";
+   c5StubModel.input_schema_version   = "STUB_V1";
+   c5StubModel.output_schema_version  = "STUB_V1";
+   c5StubModel.runtime_framework      = "NONE";
+   c5StubModel.runtime_version        = "STUB";
+   c5StubModel.promotion_state        = MODEL_PROMOTION_DRAFT;
+   c5StubModel.model_registry_hash    = ModelArtifact_ComputeHash(c5StubModel);
+   ModelArtifact_EmitModelArtifactRegistered(c5StubModel);
 
    InferenceResult c5StubInference;
    InferenceResult_Init(c5StubInference);
-   c5StubInference.model_registry_id     = "STUB_NO_MODEL_V1";
-   c5StubInference.model_registry_hash   = "STUB_NO_MODEL_V1";
-   c5StubInference.model_artifact_hash   = "STUB_NO_MODEL_V1";
+   c5StubInference.model_registry_id     = c5StubModel.model_registry_id;
+   c5StubInference.model_registry_hash   = c5StubModel.model_registry_hash;  // canonical hash just registered above - not a separate literal
+   c5StubInference.model_artifact_hash   = c5StubModel.model_artifact_hash;
    c5StubInference.feature_snapshot_id   = c5Snapshot.feature_snapshot_id;
    c5StubInference.feature_snapshot_hash = c5Snapshot.feature_snapshot_hash;
    c5StubInference.feature_vector_hash   = c5Snapshot.feature_vector_hash;
-   c5StubInference.output_schema_version = "STUB_V1";
+   c5StubInference.output_schema_version = c5StubModel.output_schema_version;
    ArrayResize(c5StubInference.output_values, 1);
    c5StubInference.output_values[0] = (float)InpC5StubPSuccess;
    c5StubInference.output_hash      = InferenceResult_ComputeOutputHash(c5StubInference);
-   c5StubInference.runtime_framework = "NONE";
-   c5StubInference.runtime_version   = "STUB";
+   c5StubInference.runtime_framework = c5StubModel.runtime_framework;
+   c5StubInference.runtime_version   = c5StubModel.runtime_version;
 
    AIDecisionPolicy c5AIPolicy;
    AIDecisionPolicy_Init(c5AIPolicy);
@@ -688,6 +781,7 @@ void OnTick()
       LogWarn("C5.0 TEST FIXTURE stopped: AI_DECISION_BUILD_FAILED candidate_id=" + c5Candidate.candidate_id + " reason=" + c5AIReason);
       return;
    }
+   AIDecision_EmitAIDecisionCreated(c5AIDecision);
 
    EligibilityContext c5EligCtx;
    EligibilityContext_Init(c5EligCtx);
@@ -710,6 +804,12 @@ void OnTick()
       LogWarn("C5.0 TEST FIXTURE stopped: ELIGIBILITY_DECISION_BUILD_FAILED candidate_id=" + c5Candidate.candidate_id + " reason=" + c5EligReason);
       return;
    }
+   // REJECTED durably transitions the candidate to CANDIDATE_REJECTED_BY_RISK
+   // (sealed, inside this call) - no extra branch needed here:
+   // ExecutionRequestBuilder's own eligibility.decision != ELIGIBLE guard
+   // (verified against source) already stops this fixture at the existing
+   // EXECUTION_REQUEST_BUILD_FAILED path below, exactly as it does today.
+   EligibilityDecision_EmitDecisionAndWireLifecycle(c5EligDecision, c5EligCtx, c5Candidate);
 
    ExecutionPolicy c5ExecPolicy;
    ExecutionPolicy_Init(c5ExecPolicy);
@@ -730,14 +830,32 @@ void OnTick()
       return;
    }
 
-   DryRunExecutionResult c5GateResult;
-   if(!SafetyGate_Evaluate(c5ExecRequest, c5ExecPolicy, c5GateResult))
+   // Integrity check: the discovery guard's pure Ids_* derivation above
+   // (computed before any of this pipeline ran) must match the identity
+   // the real builder chain just produced. A mismatch means the pure
+   // derivation has drifted from ExecutionRequestBuilder's real logic -
+   // fail closed rather than emit under a possibly-wrong identity.
+   if(c5ExecRequest.execution_request_id != c5ExecutionRequestId)
    {
-      LogWarn("C5.0 TEST FIXTURE stopped: SAFETY_GATE_EVALUATE_STRUCTURAL_FAILURE candidate_id=" + c5Candidate.candidate_id);
+      LogError("C5.0 TEST FIXTURE: execution_request_id mismatch - pre-derived (" + c5ExecutionRequestId +
+               ") != built (" + c5ExecRequest.execution_request_id + ") for candidate_id=" + c5Candidate.candidate_id +
+               " - discovery guard's pure Ids_* derivation has drifted from the real builder chain. Aborting, not emitting.");
+      return;
+   }
+
+   DryRunExecutionResult c5GateResult;
+   bool c5EmitOk = ExecutionDiscovery_EmitAndRegister(c5ExecRequest, c5ExecPolicy, c5GateResult);
+   if(!c5EmitOk)
+   {
+      LogWarn("C5.0 TEST FIXTURE: ExecutionDiscovery_EmitAndRegister returned false for execution_request_id=" +
+              c5ExecRequest.execution_request_id + " candidate_id=" + c5Candidate.candidate_id +
+              " - request may still be durably recorded (see ExecutionRequestEventEmission.mqh's own "
+              "failure-mode rule); Layer A registration already applied regardless.");
       return;
    }
 
    LogInfo("C5.0 TEST FIXTURE: candidate_id=" + c5Candidate.candidate_id +
+           " execution_request_id=" + c5ExecRequest.execution_request_id +
            " decision=" + (c5GateResult.decision == SAFETY_GATE_ACCEPTED ? "ACCEPTED" : "REJECTED") +
            " reason=" + ReasonCodeToString(c5GateResult.reason_code));
 }
