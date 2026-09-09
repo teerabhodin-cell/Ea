@@ -3421,7 +3421,7 @@ int DrawNewsCard(int y)
 //+------------------------------------------------------------------+
 double UIScale       = 1.0;
 int    DASH_W_BASE   = 1450;
-int    DASH_H_BASE   = 1095;
+int    DASH_H_BASE   = 1850; // เผื่อ Positions panel แสดงเต็ม 6 แถว (สูงสุดที่โชว์ได้) + panel ใหม่ 4 อัน
 
 int S(double v)  { return (int)MathRound(v * UIScale); }
 // พื้นฟอนต์ต่ำมาก (8px) แค่กันกรณีสุดขั้ว - ถ้าตั้งพื้นสูงกว่านี้ ฟอนต์จะไม่ย่อตามการ์ดที่หดลงจริง
