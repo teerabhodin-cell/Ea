@@ -10,7 +10,7 @@
 // Template ดาชบอร์ดจริง (ออกแบบเป็นภาพ ไม่ใช่วาดด้วย Canvas primitive) - ต้องมีไฟล์
 // Images\QuantixDashboardTemplate.png วางไว้ในโฟลเดอร์เดียวกับไฟล์ .mq5 นี้ตอน compile
 // ถึงจะฝัง resource ได้สำเร็จ (ไฟล์อยู่ในโฟลเดอร์ Images ของ repo แล้ว)
-#resource "\\Images\\QuantixDashboardTemplate.png"
+#resource "Images\\QuantixDashboardTemplate.png"
 
 CTrade trade;
 
@@ -3395,6 +3395,8 @@ void InitDashboard()
    ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_XDISTANCE, 15);
    ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_YDISTANCE, 15);
    ObjectSetString(0, BG_BITMAP_NAME, OBJPROP_BMPFILE, "::Images\\QuantixDashboardTemplate.png");
+   ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_XSIZE, DASH_W);
+   ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_YSIZE, DASH_H);
    ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_BACK, false);
    ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_HIDDEN, true);
