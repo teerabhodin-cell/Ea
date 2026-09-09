@@ -253,15 +253,19 @@ double   StatsSumLossAmount  = 0.0; // เก็บเป็นค่าบว�
 string   UI_PREFIX       = "QX_PRO_";
 string   BTN_CLOSE_ALL   = "QX_PRO_BtnCloseAll";
 string   CANVAS_NAME     = "QX_PRO_Canvas";
-string   BG_BITMAP_NAME  = "QX_PRO_Background";
 
-// --- Dashboard: พื้นหลังเป็นภาพ template จริง (BG_BITMAP_NAME, OBJ_BITMAP_LABEL จาก
-// resource ที่ฝังไว้ด้านบนไฟล์) + DashCanvas เป็นชั้นโปร่งใส (ARGB) ซ้อนทับตำแหน่งเดียวกัน
-// วาดเฉพาะตัวเลข/สถานะ/กราฟสดๆ ทับลงไป กรอบ/มุม/เส้นประดับทั้งหมดมาจากภาพ ไม่ใช่วาดเอง -
-// ขนาดคงที่ 1:1 พิกเซลตามภาพเสมอ (ภาพ raster ขยาย/ย่อแล้วเบลอ เลยไม่ auto-fit จอเหมือนเดิมอีกต่อไป)
+// --- Dashboard: DashCanvas เดียว วาดพื้นหลัง (pixel ของภาพ template จริง อ่านจาก resource
+// ด้วย ResourceReadImage() ครั้งเดียวแล้ว cache ไว้ที่ TemplatePixels[]) แล้ว blit ทับใหม่ทุกรอบ
+// update ก่อนวาดตัวเลข/สถานะ/กราฟสดๆ ทับลงไป - ไม่ใช้ OBJ_BITMAP_LABEL แยกซ้อนกันอีกต่อไป
+// (เจอปัญหา bitmap label ไม่ยอมแสดงผลบน object ที่ซ้อนกับ canvas) กรอบ/มุม/เส้นประดับทั้งหมด
+// มาจากภาพ ไม่ใช่วาดเอง - ขนาดคงที่ 1:1 พิกเซลตามภาพเสมอ (ภาพ raster ขยาย/ย่อแล้วเบลอ)
 CCanvas  DashCanvas;
 int      DASH_W = 1536;
 int      DASH_H = 1024;
+uint     TemplatePixels[];
+uint     TemplateImgW = 0;
+uint     TemplateImgH = 0;
+bool     TemplateLoaded = false;
 
 #define EQUITY_HISTORY_MAX 120
 double   EquityHistoryBuf[EQUITY_HISTORY_MAX];
@@ -2545,8 +2549,8 @@ void CreateButton(string name, int x, int y, int w, int h, string text, color bg
 //+------------------------------------------------------------------+
 //| Canvas drawing helpers - pixel-level drawing via CCanvas, used   |
 //| to overlay live numbers/graphs/status on top of the fixed        |
-//| template background (BG_BITMAP_NAME). No frame/border/shadow     |
-//| drawing here anymore - the template image already has all of    |
+//| template background (blitted each cycle via BlitTemplateBackground).|
+//| No frame/border/shadow drawing here anymore - the template image |
 //| that baked in; these helpers only draw the CONTENT inside each   |
 //| panel (text, gauge fill, chart lines, table rows, progress bars).|
 //+------------------------------------------------------------------+
@@ -3313,27 +3317,39 @@ void DrawTickerContent()
 }
 
 //+------------------------------------------------------------------+
+//| Template background: อ่าน pixel จาก resource ครั้งเดียว cache ไว้ |
+//| แล้ว blit ทับ DashCanvas ทุกรอบ update (แทน OBJ_BITMAP_LABEL แยก  |
+//| object ที่ไม่ยอมแสดงผลตอนซ้อนกับ canvas บนบาง build)              |
+//+------------------------------------------------------------------+
+void LoadTemplatePixelsOnce()
+{
+   if(TemplateLoaded) return;
+   TemplateLoaded = ResourceReadImage("::Images\\QuantixDashboardTemplate.png", TemplatePixels, TemplateImgW, TemplateImgH);
+}
+
+void BlitTemplateBackground()
+{
+   if(!TemplateLoaded || TemplateImgW == 0 || TemplateImgH == 0) return;
+   int w = (int)MathMin(TemplateImgW, (uint)DASH_W);
+   int h = (int)MathMin(TemplateImgH, (uint)DASH_H);
+   for(int y = 0; y < h; y++)
+   {
+      int row = y * (int)TemplateImgW;
+      for(int x = 0; x < w; x++)
+         DashCanvas.PixelSet(x, y, TemplatePixels[row + x]);
+   }
+}
+
+//+------------------------------------------------------------------+
 //| Dashboard lifecycle                                              |
 //+------------------------------------------------------------------+
 void InitDashboard()
 {
    if(IsTestingMode && !ShowDashboardInBacktest) return;
    DeleteDashboard();
+   LoadTemplatePixelsOnce();
 
-   // ชั้นล่าง: ภาพ template จริง (คงที่ ไม่ responsive scale เพราะ raster ขยาย/ย่อแล้วเบลอ)
-   ObjectCreate(0, BG_BITMAP_NAME, OBJ_BITMAP_LABEL, 0, 0, 0);
-   ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_XDISTANCE, 15);
-   ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_YDISTANCE, 15);
-   ObjectSetString(0, BG_BITMAP_NAME, OBJPROP_BMPFILE, 0, "::Images\\QuantixDashboardTemplate.png");
-   ObjectSetString(0, BG_BITMAP_NAME, OBJPROP_BMPFILE, 1, "::Images\\QuantixDashboardTemplate.png");
-   ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_XSIZE, DASH_W);
-   ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_YSIZE, DASH_H);
-   ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_SELECTABLE, false);
-   ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_BACK, false);
-   ObjectSetInteger(0, BG_BITMAP_NAME, OBJPROP_HIDDEN, true);
-
-   // ชั้นบน: canvas โปร่งใส (ARGB) ตำแหน่ง/ขนาดเดียวกันเป๊ะ วาดเฉพาะตัวเลข/สถานะ/กราฟสดทับ
+   // canvas เดียว (ARGB) - blit พื้นหลังจากภาพ template ก่อน แล้ววาดตัวเลข/สถานะ/กราฟสดทับ
    DashCanvas.CreateBitmapLabel(CANVAS_NAME, 15, 15, DASH_W, DASH_H, COLOR_FORMAT_ARGB_NORMALIZE);
    ObjectSetInteger(0, CANVAS_NAME, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, CANVAS_NAME, OBJPROP_SELECTABLE, false);
@@ -3344,6 +3360,7 @@ void InitDashboard()
    CreateButton(BTN_CLOSE_ALL, 15 + 14, 15 + DASH_H + 10, DASH_W - 28, 40, btnText, C'220,38,38', clrWhite, 10);
 
    DashCanvas.Erase(0);
+   BlitTemplateBackground();
    DashCanvas.Update();
    ChartRedraw();
 }
@@ -3351,7 +3368,7 @@ void InitDashboard()
 void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, int openPos, int pendingOrders)
 {
    if(IsTestingMode && !ShowDashboardInBacktest) return;
-   if(ObjectFind(0, CANVAS_NAME) < 0 || ObjectFind(0, BG_BITMAP_NAME) < 0) InitDashboard();
+   if(ObjectFind(0, CANVAS_NAME) < 0) InitDashboard();
 
    double equity  = AccountInfoDouble(ACCOUNT_EQUITY);
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -3395,6 +3412,7 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
    CurrentDecision = ComputeSystemDecision(openPos);
 
    DashCanvas.Erase(0);
+   BlitTemplateBackground();
 
    DrawHeaderContent();
    DrawAccountOverviewPanel();
@@ -3418,7 +3436,6 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
 void DeleteDashboard()
 {
    DashCanvas.Destroy();
-   ObjectDelete(0, BG_BITMAP_NAME);
    for(int i = ObjectsTotal(0) - 1; i >= 0; i--)
    {
       string name = ObjectName(0, i);
