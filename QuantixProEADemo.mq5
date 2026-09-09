@@ -3291,97 +3291,6 @@ int DrawStatusRow(int y, int openPos)
    return y + cardH + S(12);
 }
 
-// ตารางโพซิชั่นที่เปิดอยู่จริง (symbol/magic เดียวกับ EA นี้เท่านั้น) - โชว์สูงสุด maxRows แถว
-// (มากกว่านั้นสรุปเป็น "+N more") แต่ยอดรวม TOTAL นับจากโพซิชั่นทั้งหมดจริง ไม่ใช่แค่ที่โชว์
-int DrawPositionsPanel(int y)
-{
-   int cardW   = DASH_W - S(14) * 2;
-   int rowH    = S(26);
-   int maxRows = 6;
-
-   int    cnt      = 0;
-   double totalPL  = 0.0;
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
-   {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
-      if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
-      cnt++;
-      totalPL += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
-   }
-
-   int shownRows  = MathMax(1, MathMin(cnt, maxRows));
-   int extraLine  = (cnt > maxRows) ? 1 : 0;
-   int cardH = S(44) + S(24) + (shownRows + extraLine) * rowH + S(36);
-   DrawCardBG(S(14), y, cardW, cardH, "📋 " + GetUIString("โพซิชั่นปัจจุบัน", "CURRENT POSITIONS"));
-
-   int colType  = S(14) + S(14);
-   int colLots  = S(14) + (int)(cardW * 0.35);
-   int colPrice = S(14) + (int)(cardW * 0.55);
-   int colPLx   = S(14) + cardW - S(14);
-
-   int ry = y + S(40);
-   UIFontSet(SF(12), FW_BOLD);
-   DashCanvas.TextOut(colType,  ry, GetUIString("ประเภท", "TYPE"), ColorToARGB(C'140,140,160'));
-   DashCanvas.TextOut(colLots,  ry, GetUIString("ล็อต", "LOTS"),   ColorToARGB(C'140,140,160'));
-   DashCanvas.TextOut(colPrice, ry, GetUIString("ราคา", "PRICE"),  ColorToARGB(C'140,140,160'));
-   string plHead = GetUIString("กำไร/ขาดทุน", "P/L");
-   int plhw = EstimateTextWidth(plHead, SF(12));
-   DashCanvas.TextOut(colPLx - plhw, ry, plHead, ColorToARGB(C'140,140,160'));
-   ry += S(24);
-
-   if(cnt == 0)
-   {
-      UIFontSet(SF(14));
-      DashCanvas.TextOut(colType, ry, GetUIString("ไม่มีโพซิชั่นเปิดอยู่", "No open positions"), ColorToARGB(C'100,100,120'));
-      ry += rowH;
-   }
-   else
-   {
-      int shown = 0;
-      for(int i = PositionsTotal() - 1; i >= 0 && shown < maxRows; i--)
-      {
-         ulong ticket = PositionGetTicket(i);
-         if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
-         if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
-
-         bool   isBuy      = ((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
-         double vol        = PositionGetDouble(POSITION_VOLUME);
-         double openPrice  = PositionGetDouble(POSITION_PRICE_OPEN);
-         double pl         = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
-
-         UIFontSet(SF(13), FW_BOLD);
-         DashCanvas.TextOut(colType, ry, isBuy ? "BUY" : "SELL", ColorToARGB(isBuy ? C'34,197,94' : C'239,68,68'));
-         UIFontSet(SF(13));
-         DashCanvas.TextOut(colLots, ry, DoubleToString(vol, 2), ColorToARGB(clrWhite));
-         DashCanvas.TextOut(colPrice, ry, DoubleToString(openPrice, _Digits), ColorToARGB(clrWhite));
-         string plTxt = (pl >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(pl), 2);
-         int plw = EstimateTextWidth(plTxt, SF(13));
-         DashCanvas.TextOut(colPLx - plw, ry, plTxt, ColorToARGB(pl >= 0 ? C'34,197,94' : C'239,68,68'));
-
-         ry += rowH;
-         shown++;
-      }
-      if(cnt > maxRows)
-      {
-         UIFontSet(SF(11));
-         string moreTxt = "+" + IntegerToString(cnt - maxRows) + " " + GetUIString("ไม้เพิ่มเติม", "more");
-         DashCanvas.TextOut(colType, ry, moreTxt, ColorToARGB(C'100,100,120'));
-         ry += rowH;
-      }
-   }
-
-   DashCanvas.Line(S(14) + S(12), ry, S(14) + cardW - S(12), ry, ColorToARGB(C'52,48,74'));
-   ry += S(10);
-   UIFontSet(SF(14), FW_BOLD);
-   DashCanvas.TextOut(colType, ry, GetUIString("รวม", "TOTAL"), ColorToARGB(C'160,160,180'));
-   string totTxt = (totalPL >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(totalPL), 2);
-   int totw = EstimateTextWidth(totTxt, SF(14));
-   DashCanvas.TextOut(colPLx - totw, ry, totTxt, ColorToARGB(totalPL >= 0 ? C'34,197,94' : C'239,68,68'));
-
-   return y + cardH + S(12);
-}
-
 int DrawNewsCard(int y)
 {
    int cardW = DASH_W - S(14) * 2;
@@ -3452,17 +3361,11 @@ double ComputeUIScale()
    return scale;
 }
 
-// ความสูง "เนื้อหาจริง" ที่ต้องใช้ ณ ตอนนี้ - รวมทุก section ตามลำดับเดียวกับที่วาดจริงใน
-// UpdateDashboard() ทุกตัวคงที่ ยกเว้น Positions panel ที่แปรผันตามจำนวนไม้ที่เปิดอยู่จริง (posCount)
-// ทำให้ DASH_H ไม่ต้องเผื่อพื้นที่ตายตัวสำหรับกรณีเลวร้ายสุดตลอดเวลา (ว่างเปล่าตอนไม้น้อย) หรือเสี่ยง
-// ล้นตอนไม้เยอะ - ต้องแก้ตัวเลขที่นี่คู่กันเสมอถ้าปรับความสูงใน Draw* ฟังก์ชันไหนด้านบน
-int ComputeDashboardContentHeight(int posCount)
+// ความสูง "เนื้อหาจริง" ที่ต้องใช้ - รวมทุก section ตามลำดับเดียวกับที่วาดจริงใน UpdateDashboard()
+// (ทุกอันคงที่ตอนนี้ ไม่มี section ไหนแปรผันตามข้อมูลแล้ว) - ต้องแก้ตัวเลขที่นี่คู่กันเสมอถ้าปรับ
+// ความสูงใน Draw* ฟังก์ชันไหนด้านบน
+int ComputeDashboardContentHeight()
 {
-   int maxRows   = 6;
-   int shownRows = MathMax(1, MathMin(posCount, maxRows));
-   int extraLine = (posCount > maxRows) ? 1 : 0;
-   int posCardH  = S(44) + S(24) + (shownRows + extraLine) * S(26) + S(36);
-
    int h = S(14);          // จุดเริ่ม y (DrawHeader)
    h += S(90);              // DrawHeader
    h += S(46);              // DrawInfoBar
@@ -3471,7 +3374,6 @@ int ComputeDashboardContentHeight(int posCount)
    h += S(265) + S(12);     // DrawEquityFeatureRow
    h += S(84)  + S(12);     // DrawStatsRow
    h += S(204) + S(12);     // DrawStatusRow
-   h += posCardH + S(12);   // DrawPositionsPanel
    h += S(162) + S(14);     // DrawNewsCard
    return h;
 }
@@ -3486,9 +3388,7 @@ void InitDashboard()
 
    UIScale = ComputeUIScale();
    DASH_W  = S(DASH_W_BASE);
-   int buyCnt0, sellCnt0; double totalLots0;
-   CountPositions(buyCnt0, sellCnt0, totalLots0);
-   DASH_H = ComputeDashboardContentHeight(buyCnt0 + sellCnt0) + S(68); // +68 = พื้นที่ปุ่ม CLOSE ALL ด้านล่าง
+   DASH_H  = ComputeDashboardContentHeight() + S(68); // +68 = พื้นที่ปุ่ม CLOSE ALL ด้านล่าง
 
    DashCanvas.CreateBitmapLabel(CANVAS_NAME, 15, 15, DASH_W, DASH_H, COLOR_FORMAT_ARGB_NORMALIZE);
    ObjectSetInteger(0, CANVAS_NAME, OBJPROP_CORNER, CORNER_LEFT_UPPER);
@@ -3506,14 +3406,8 @@ void InitDashboard()
 void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, int openPos, int pendingOrders)
 {
    if(IsTestingMode && !ShowDashboardInBacktest) return;
-
-   int buyCntChk, sellCntChk; double totalLotsChk;
-   CountPositions(buyCntChk, sellCntChk, totalLotsChk);
-   int neededH = ComputeDashboardContentHeight(buyCntChk + sellCntChk) + S(68);
-
    if(ObjectFind(0, CANVAS_NAME) < 0) InitDashboard();
    else if(MathAbs(ComputeUIScale() - UIScale) >= 0.03) InitDashboard(); // ขนาดหน้าต่างชาร์ตเปลี่ยนพอสมควร - สร้าง canvas ใหม่ที่ความละเอียดใหม่
-   else if(MathAbs(neededH - DASH_H) > S(40)) InitDashboard(); // จำนวนไม้เปิดเปลี่ยนพอที่ความสูงเนื้อหาจริงจะต่างจาก canvas เดิมเห็นได้ชัด - รีไซส์ให้พอดี
 
    double equity  = AccountInfoDouble(ACCOUNT_EQUITY);
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -3560,7 +3454,6 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
    y = DrawEquityFeatureRow(y);
    y = DrawStatsRow(y);
    y = DrawStatusRow(y, openPos);
-   y = DrawPositionsPanel(y);
    y = DrawNewsCard(y);
 
    DashCanvas.Update();
