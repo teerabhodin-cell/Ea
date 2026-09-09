@@ -2671,20 +2671,20 @@ void DrawPanelShadow(int x1, int y1, int x2, int y2, int r)
 // เรืองแสงขอบพาเนล (glow) - วาดกรอบเส้นบางๆ ซ้อนกันหลายชั้นถอยออกจากขอบจริงทีละพิกเซล ไล่สีจากสี
 // glowColor ไปหาสีพื้นแคนวาส (ผสมไว้ล่วงหน้าด้วย BlendColor เพราะ CCanvas เขียนทับตรงๆ ไม่ blend เอง)
 // ให้เหมือนแผงมีไฟเรืองในธีม HUD/sci-fi แทนกรอบเส้นเรียบแบนแบบเดิม
-// เดิมวาดแค่เส้นบาง 1px ต่อชั้น แทบมองไม่เห็นตอนย่อขนาดจริงบนชาร์ต - เปลี่ยนเป็นแถบทึบหนา S(2) ต่อชั้น
-// ระยะห่างชั้นละ S(2) รวม 6 ชั้น (กว้างสุด S(12)) ให้เห็นเป็น "แสงฟุ้ง" ชัดเจนจริง ไม่ใช่เส้นจางๆ
-void DrawGlowBorder(int x1, int y1, int x2, int y2, color glowColor, int rings = 6)
+// รอบก่อนทำเป็นแถบทึบหนา 6 ชั้นแล้ว "หนัก" เกินไป (ดูเหมือนกรอบทึบหนาทั้งแท่ง ไม่ใช่แสงฟุ้งบางๆ) -
+// กลับมาเป็นเส้นบาง 1px แต่เพิ่ม 2 ชั้นแทน 1 ชั้นเดิม และผสมให้จางกว่าสีจริงเสมอ (ไม่เกิน 65% ความสด)
+// กันไม่ให้ขอบดูเป็นกรอบตันสีเดียวหนาๆ ทั้งที่ตั้งใจให้เป็นแค่ประกายบางๆ รอบขอบ
+void DrawGlowBorder(int x1, int y1, int x2, int y2, color glowColor, int rings = 2)
 {
-   int bw = S(2);
    for(int i = rings; i >= 1; i--)
    {
-      double t   = (double)(i - 1) / rings;
+      double t   = 0.35 + 0.30 * ((double)i / rings);
       color  c   = BlendColor(glowColor, C'6,9,18', t);
-      int    off = S(i * 2);
-      DashCanvas.FillRectangle(x1 - off, y1 - off - bw, x2 + off, y1 - off,      ColorToARGB(c));
-      DashCanvas.FillRectangle(x1 - off, y2 + off,       x2 + off, y2 + off + bw, ColorToARGB(c));
-      DashCanvas.FillRectangle(x1 - off - bw, y1 - off, x1 - off, y2 + off,      ColorToARGB(c));
-      DashCanvas.FillRectangle(x2 + off,       y1 - off, x2 + off + bw, y2 + off, ColorToARGB(c));
+      int    off = S(i);
+      DashCanvas.Line(x1 - off, y1 - off, x2 + off, y1 - off, ColorToARGB(c));
+      DashCanvas.Line(x1 - off, y2 + off, x2 + off, y2 + off, ColorToARGB(c));
+      DashCanvas.Line(x1 - off, y1 - off, x1 - off, y2 + off, ColorToARGB(c));
+      DashCanvas.Line(x2 + off, y1 - off, x2 + off, y2 + off, ColorToARGB(c));
    }
 }
 
@@ -2696,7 +2696,7 @@ void DrawGlowBorder(int x1, int y1, int x2, int y2, color glowColor, int rings =
 void DrawCardBG(int x, int y, int w, int h, string title, string badgeIcon = "")
 {
    color accent = C'56,189,248';
-   DrawGlowBorder(x, y, x + w, y + h, accent, 6);
+   DrawGlowBorder(x, y, x + w, y + h, accent, 2);
 
    int c = S(16);
    DrawPanelShadow(x, y, x + w, y + h, S(10));
@@ -3056,7 +3056,7 @@ int DrawHeader(int y)
    // ได้ไฟล์ .png โลโก้จริงมาฝังเป็น #resource แล้ววาดทับจุดนี้แทนทีหลัง
    int logoR  = S(32);
    int logoCx = S(14) + logoR, logoCy = y + logoR;
-   DrawGlowBorder(logoCx - logoR, logoCy - logoR, logoCx + logoR, logoCy + logoR, C'255,183,3', 4);
+   DrawGlowBorder(logoCx - logoR, logoCy - logoR, logoCx + logoR, logoCy + logoR, C'255,183,3', 2);
    DashCanvas.FillCircle(logoCx, logoCy, logoR, ColorToARGB(C'20,16,8'));
    DashCanvas.FillCircle(logoCx, logoCy, logoR - S(3), ColorToARGB(C'15,17,27'));
    UIFontSet(SF(28), FW_BOLD);
@@ -3073,7 +3073,7 @@ int DrawHeader(int y)
 
    int badgeW = S(145), badgeH = S(30);
    int bx = DASH_W - S(14) - badgeW;
-   DrawGlowBorder(bx, y, bx + badgeW, y + badgeH, C'255,183,3', 4);
+   DrawGlowBorder(bx, y, bx + badgeW, y + badgeH, C'255,183,3', 2);
    FillRoundedRect(bx, y, bx + badgeW, y + badgeH, S(15), ColorToARGB(C'40,32,16'));
    DashCanvas.Line(bx + S(4), y, bx + badgeW - S(4), y, ColorToARGB(C'200,170,100'));
    DashCanvas.Line(bx + S(4), y + badgeH, bx + badgeW - S(4), y + badgeH, ColorToARGB(C'110,90,40'));
@@ -3169,7 +3169,7 @@ int DrawCommandRow(int y, int openPos, int pendingOrders)
       int badgeY = y + S(70);
       int badgeW = cardW - S(28);
       int bx = cx + S(14);
-      DrawGlowBorder(bx, badgeY, bx + badgeW, badgeY + badgeH, C'255,183,3', 4);
+      DrawGlowBorder(bx, badgeY, bx + badgeW, badgeY + badgeH, C'255,183,3', 2);
       FillRoundedRect(bx, badgeY, bx + badgeW, badgeY + badgeH, S(10), ColorToARGB(C'40,32,16'));
       UIFontSet(SF(20), FW_BOLD);
       int mw = EstimateTextWidth(modeTxt, SF(20));
@@ -3497,7 +3497,7 @@ int DrawStatsRow(int y)
    int cardW = DASH_W - S(14) * 2;
    int cardH = S(84);
    int r = S(10);
-   DrawGlowBorder(S(14), y, S(14) + cardW, y + cardH, C'255,183,3', 4);
+   DrawGlowBorder(S(14), y, S(14) + cardW, y + cardH, C'255,183,3', 2);
    DrawPanelShadow(S(14), y, S(14) + cardW, y + cardH, r);
    FillRoundedRect(S(14), y, S(14) + cardW, y + cardH, r, ColorToARGB(C'23,23,39'));
    DashCanvas.Line(S(14) + r, y,     S(14) + cardW - r, y,     ColorToARGB(C'160,130,60'));
@@ -3551,7 +3551,7 @@ int DrawTickerBar(int y)
 {
    int cardW = DASH_W - S(14) * 2;
    int cardH = S(44);
-   DrawGlowBorder(S(14), y, S(14) + cardW, y + cardH, C'255,183,3', 4);
+   DrawGlowBorder(S(14), y, S(14) + cardW, y + cardH, C'255,183,3', 2);
    FillRoundedRect(S(14), y, S(14) + cardW, y + cardH, S(8), ColorToARGB(C'15,17,27'));
    DashCanvas.Line(S(14), y, S(14) + cardW, y, ColorToARGB(C'255,183,3'));
 
