@@ -49,12 +49,19 @@
 input bool I_Understand_This_May_Open_A_Real_Position = false; // must be set true to run - script aborts otherwise
 
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_ToTradeCandidate.mqh>
+#include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_EventEmission.mqh>
 #include <MLQuantAI/Core/MLQuantAI_RiskSizing.mqh>
 #include <MLQuantAI/Market/MLQuantAI_FeatureSnapshotBuilder.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_FeatureSnapshotEventEmission.mqh>
 #include <MLQuantAI/AI/MLQuantAI_ModelArtifactBuilder.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_ModelArtifactEventEmission.mqh>
 #include <MLQuantAI/AI/MLQuantAI_AIDecisionBuilder.mqh>
+#include <MLQuantAI/AI/MLQuantAI_AIDecisionEventEmission.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_EligibilityBuilder.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_EligibilityEventEmission.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_RiskPlanEventEmission.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_ExecutionRequestBuilder.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_ExecutionRequestEventEmission.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_BrokerSubmissionAdapter.mqh>
 
 // C6.6-RA-03 F1 (QA-authorized, ceremony tooling only): the fixture below
@@ -180,13 +187,42 @@ bool BuildAcceptedRequest(TradeCandidate &c, ExecutionRequest &req, ExecutionPol
    Fixture_Bullish_Valid(ctx.trigger_tf_recent, anchor, t0, delta);
    ctx.anchor_bar_time = anchor;
 
+   // C6.6-RA-05 (QA-authorized, ceremony tooling only): durable upstream
+   // lineage. Mirrors the proven pattern from
+   // Tests/MLQuantAI_Test_C3_3_TransactionMatchingProjection.mq5's own
+   // BuildDurableSubmittedRequest() - C1.3's ExecutionAuditProjection
+   // orphan-check (staged by BrokerSubmissionAuditProjection/
+   // ManualApprovalProjection as a black-box gate) requires every
+   // upstream layer durably present in this exact event store, not just
+   // the final EXECUTION_REQUEST_CREATED (RA-04 alone was not enough).
+   // No _Emit*/EventStore/C3.x/ManualApproval/EnvironmentLock/
+   // BrokerSubmission_Submit() implementation is touched - every call
+   // below is the same, unmodified, already-sealed emitter every other
+   // C1/C2 test file already uses, fed this run's own real lineage
+   // values (never fabricated IDs).
+   if(!EventStore_LogSystem(EventTypeToString(EVENT_TYPE_MARKET_CONTEXT_READY), "market context built", MarketContext_ToJsonFragment(ctx)))
+   {
+      Print("ABORTED (RA-05): failed to log MARKET_CONTEXT_READY");
+      return false;
+   }
+
    CRTDetectionResult r;
    CRT_DetectV1(ctx, r);
    if(!r.detected) { Print("smoke: CRT fixture did not detect - aborting"); return false; }
    if(!CRT_ToTradeCandidate(ctx, r, c)) { Print("smoke: CRT_ToTradeCandidate failed - aborting"); return false; }
+   if(!CRT_EmitCandidateCreated(c, ctx.symbol_spec.digits))
+   {
+      Print("ABORTED (RA-05): failed to log CANDIDATE_CREATED");
+      return false;
+   }
 
    FeatureSnapshot snapshot;
    if(!Candidate_ToFeatureSnapshot(c, ctx, snapshot)) return false;
+   if(!FeatureSnapshot_EmitFeatureSnapshotCreated(snapshot))
+   {
+      Print("ABORTED (RA-05): failed to log FEATURE_SNAPSHOT_CREATED");
+      return false;
+   }
 
    ModelArtifact artifact;
    if(!ModelArtifact_Build("MODEL_smoke", "v1", "hash_artifact_smoke",
@@ -194,6 +230,11 @@ bool BuildAcceptedRequest(TradeCandidate &c, ExecutionRequest &req, ExecutionPol
                              "SETUP_QUALITY_V1", "INPUT_SCHEMA_V1", "OUTPUT_SCHEMA_V1",
                              "ONNXRuntime", "1.16.0", MODEL_PROMOTION_PROMOTED, artifact))
       return false;
+   if(!ModelArtifact_EmitModelArtifactRegistered(artifact))
+   {
+      Print("ABORTED (RA-05): failed to log MODEL_ARTIFACT_REGISTERED");
+      return false;
+   }
 
    InferenceResult inference;
    InferenceResult_Init(inference);
@@ -217,10 +258,20 @@ bool BuildAcceptedRequest(TradeCandidate &c, ExecutionRequest &req, ExecutionPol
    aiPolicy.allow_threshold         = 0.70;
    AIDecision decision; string aiReasonDetail;
    if(!AIDecision_Build(inference, snapshot, aiPolicy, decision, aiReasonDetail)) return false;
+   if(!AIDecision_EmitAIDecisionCreated(decision))
+   {
+      Print("ABORTED (RA-05): failed to log AI_DECISION_CREATED");
+      return false;
+   }
 
    RiskContext riskCtx; BuildValidRiskContext(riskCtx);
    RiskPlan plan;
    if(!Candidate_ToRiskPlan(c, riskCtx, plan)) return false;
+   if(!RiskPlan_EmitRiskPlanCreated(plan))
+   {
+      Print("ABORTED (RA-05): failed to log RISK_PLAN_CREATED");
+      return false;
+   }
 
    EligibilityContext eligContext;
    EligibilityContext_Init(eligContext);
@@ -251,6 +302,11 @@ bool BuildAcceptedRequest(TradeCandidate &c, ExecutionRequest &req, ExecutionPol
       Print("smoke: EligibilityDecision was not ELIGIBLE (", eligReasonDetail, ") - aborting");
       return false;
    }
+   if(!EligibilityDecision_EmitDecisionAndWireLifecycle(eligDecision, eligContext, c))
+   {
+      Print("ABORTED (RA-05): failed to log eligibility decision / lifecycle wiring");
+      return false;
+   }
 
    ExecutionPolicy_Init(policy);
    policy.execution_policy_version = "EXECPOLICY_C2_SMOKE_V1";
@@ -264,7 +320,22 @@ bool BuildAcceptedRequest(TradeCandidate &c, ExecutionRequest &req, ExecutionPol
    policy.max_deviation_points = 20.0;
 
    string rd;
-   return ExecutionRequest_Build(c, eligDecision, decision, plan, policy, req, rd);
+   if(!ExecutionRequest_Build(c, eligDecision, decision, plan, policy, req, rd))
+   {
+      Print("ABORTED: ExecutionRequest_Build failed - ", rd);
+      return false;
+   }
+
+   // RA-05 lineage diagnostic (QA-authorized): every durable ID this
+   // chain produced, for cross-reference against the event store after
+   // the run.
+   Print("RA-05 durable lineage: candidate_id=", c.candidate_id,
+         " feature_snapshot_id=", snapshot.feature_snapshot_id,
+         " model_registry_id=", artifact.model_registry_id,
+         " risk_plan_id=", plan.risk_plan_id,
+         " eligibility_decision=", EligibilityDecisionToString(eligDecision.decision));
+
+   return true;
 }
 
 void OnStart()
@@ -288,17 +359,54 @@ void OnStart()
       return;
    }
 
+   // C6.6-RA-05 (QA-authorized, ceremony tooling only): EventStore must be
+   // OPEN before BuildAcceptedRequest() runs, since that function now
+   // durably emits the full upstream lineage chain (RA-05) itself -
+   // moved ahead of the fixture-build call below (was previously opened
+   // AFTER, back when BuildAcceptedRequest() was still pure/in-memory-only).
+   string file = "MLQuantAI_SmokeTest_C2_2.jsonl";
+   EventStore_Open(file);
+
    TradeCandidate candidate;
    ExecutionRequest req;
    ExecutionPolicy policy;
    if(!BuildAcceptedRequest(candidate, req, policy))
    {
       Print("ABORTED: could not build a valid ExecutionRequest fixture - see prior Print lines.");
+      EventStore_Close();
       return;
    }
 
-   string file = "MLQuantAI_SmokeTest_C2_2.jsonl";
-   EventStore_Open(file);
+   // C6.6-RA-04 (QA-authorized, ceremony tooling only): durably emit the
+   // execution request BEFORE any registry rebuild or Manual Approval
+   // bootstrap. Without this, ExecutionRequest_Build() above only ever
+   // produced an in-memory struct - no EXECUTION_REQUEST_CREATED/
+   // EXECUTION_DRY_RUN_COMPLETED line ever reached this event store, so
+   // ManualApprovalProjection_ApplyLineWithLineage()'s own orphan-check
+   // (ExecutionRequestProjection_TryGet()) could never find this
+   // execution_request_id - any grant for it was structurally doomed to
+   // reject as "orphan" no matter how many times it was retried. Calls
+   // the same, unmodified, already-sealed ExecutionRequest_EmitAndEvaluate()
+   // every other C1/C2 test file already uses (e.g.
+   // Tests/MLQuantAI_Test_C3_3_TransactionMatchingProjection.mq5's own
+   // BuildDurableSubmittedRequest()) - no change to that function, to
+   // ManualApprovalProjection/Registry, EnvironmentLock, BrokerSubmission_
+   // Submit(), or any C3.x file. Per QA's explicit stop condition: if this
+   // does not durably complete with SAFETY_GATE_ACCEPTED, abort here -
+   // never proceed toward Manual Approval on an unproven request.
+   DryRunExecutionResult dryRunResult;
+   bool emitOk = ExecutionRequest_EmitAndEvaluate(req, policy, dryRunResult);
+   Print("RA-04 durable execution-request emission: EmitAndEvaluate durability=", (emitOk ? "true" : "false"),
+         " dry-run decision=", SafetyGateDecisionToString(dryRunResult.decision),
+         " reason_code=", ReasonCodeToString(dryRunResult.reason_code));
+   if(!emitOk || dryRunResult.decision != SAFETY_GATE_ACCEPTED)
+   {
+      Print("ABORTED (RA-04 stop condition): ExecutionRequest_EmitAndEvaluate did not durably complete with "
+            "SAFETY_GATE_ACCEPTED - stopping before Manual Approval bootstrap. No registry rebuild, no "
+            "BrokerSubmission_Submit() attempt this run.");
+      EventStore_Close();
+      return;
+   }
 
    // Realistic startup sequence, same calls MLQuantAI.mq5's own OnInit
    // makes - both registries default fail-closed, so without these
