@@ -62,6 +62,7 @@
 // machine. See both files' own headers for the full contract.
 #include <MLQuantAI/Execution/MLQuantAI_CeremonyCommandMailbox.mqh>
 #include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_CeremonyCommandEventEmission.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_EntryCompatibilityDiagnosticEmission.mqh>
 
 input group "=== System ==="
 input bool   DebugMode                   = false;
@@ -1154,6 +1155,98 @@ void SubmitOrderCommand(CeremonyCommand &cmd)
                           cmd.command_id, rec.execution_request_id, (int)result.order_ticket, (int)result.deal_ticket, (int)result.retcode));
 }
 
+// RA-30.3 (QA-frozen Read-Only Entry Compatibility Diagnostic): NEVER
+// calls BrokerSubmission_Submit()/BrokerSubmission_RecordAttempt()/
+// OrderSend(), never writes SubmissionAttemptRegistry, never transitions
+// to CEREMONY_STATE_SUBMISSION_IN_PROGRESS - deliberately NOT gated by
+// CeremonyCommandRegistry_HasUnresolvedSubmission() (RA-31.2 condition B
+// applies only to new SUBMIT_ORDER commands per that condition's own
+// stated scope; this command has no broker mutation to make worse).
+//
+// Reconstruction mirrors SubmitOrderCommand() above (RA-30.3 point 4)
+// through the ExecutionRequest fields, then adds the one extra step
+// SubmitOrderCommand() does not need: recomputing the request's own hash
+// and refusing to evaluate on any mismatch, so this diagnostic can never
+// silently evaluate a different request than the one identified by
+// cmd.target_execution_request_id.
+void EvaluateEntryCompatibilityCommand(CeremonyCommand &cmd)
+{
+   ExecutionRequestProjectionRecord rec;
+   if(!ExecutionRequestProjection_TryGet(cmd.target_execution_request_id, rec))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_COMMAND_RECEIVED, "execution_request_not_found", ""); return; }
+
+   CandidateProjectionRecord candRec;
+   if(!CandidateProjection_TryGet(rec.candidate_id, candRec))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_COMMAND_RECEIVED, "candidate_projection_not_found", ""); return; }
+
+   ExecutionRequest req;
+   ExecutionRequest_Init(req);
+   req.execution_request_id       = rec.execution_request_id;
+   req.execution_request_hash     = rec.execution_request_hash;
+   req.candidate_id               = rec.candidate_id;
+   req.candidate_hash             = candRec.candidate_hash;
+   req.risk_plan_id               = rec.risk_plan_id;
+   req.plan_hash                  = rec.plan_hash;
+   req.ai_decision_id             = rec.ai_decision_id;
+   req.ai_decision_hash           = rec.ai_decision_hash;
+   req.eligibility_decision_id    = rec.eligibility_decision_id;
+   req.eligibility_decision_hash  = rec.eligibility_decision_hash;
+   req.execution_policy_version   = rec.execution_policy_version;
+   req.correlation_id             = rec.correlation_id;
+   req.submit_attempt             = rec.submit_attempt;
+   req.side                       = rec.side;
+   req.planned_entry              = rec.planned_entry;
+   req.planned_sl                 = rec.planned_sl;
+   req.planned_tp                 = rec.planned_tp;
+   req.lot_size                   = rec.lot_size;
+   req.risk_amount                = rec.risk_amount;
+
+   // RA-30.3 point 4 (QA-frozen): reconstruction hash check - refuse to
+   // evaluate on any mismatch, before EntryCompatibilityGate_Evaluate()
+   // is ever called.
+   string recomputedHash = ExecutionRequest_ComputeHash(req);
+   if(recomputedHash != rec.execution_request_hash)
+   {
+      CeremonyCommand_Fail(cmd, CEREMONY_STATE_COMMAND_RECEIVED, "hash_mismatch_reconstruction_error",
+                            "reconstructed ExecutionRequest hash does not match the durable projection's own hash - refusing to evaluate");
+      return;
+   }
+
+   EntryCompatibilityDiagnosticResult diag;
+   if(!EntryCompatibilityDiagnostic_Evaluate(req, diag))
+   {
+      CeremonyCommand_Fail(cmd, CEREMONY_STATE_COMMAND_RECEIVED, diag.structural_failure_reason, "");
+      return;
+   }
+
+   if(!EventStore_LogEntryCompatibilityEvaluated(cmd.command_id, diag))
+   {
+      CeremonyCommand_Fail(cmd, CEREMONY_STATE_COMMAND_RECEIVED, "entry_compatibility_event_write_failed", "");
+      return;
+   }
+
+   cmd.result_execution_request_id      = rec.execution_request_id;
+   cmd.result_execution_request_hash    = rec.execution_request_hash;
+   cmd.result_correlation_id            = rec.correlation_id;
+   cmd.result_candidate_id              = rec.candidate_id;
+   cmd.result_execution_reference_price = diag.execution_reference_price;
+   cmd.result_planned_stop_distance     = diag.planned_stop_distance;
+   cmd.result_realized_stop_distance    = diag.realized_stop_distance;
+   cmd.result_planned_risk_money        = diag.planned_risk_money;
+   cmd.result_realized_risk_money       = diag.realized_risk_money;
+   cmd.result_risk_divergence_pct       = diag.risk_divergence_pct;
+   cmd.result_directional_constraint_ok = diag.directional_constraint_ok ? 1 : 0;
+   cmd.result_gate_decision             = SafetyGateDecisionToString(diag.gate_decision);
+
+   CeremonyCommand_Complete(cmd, CEREMONY_STATE_COMMAND_RECEIVED, CEREMONY_STATE_ENTRY_COMPATIBILITY_EVALUATED,
+                             ReasonCodeToString(diag.gate_reason_code), rec.execution_request_id);
+
+   LogInfo(StringFormat("RA-30.3 EVALUATE_ENTRY_COMPATIBILITY complete: command_id=%s execution_request_id=%s "
+                          "gate_result=%s risk_divergence_pct=%.4f directional_ok=%s",
+                          cmd.command_id, rec.execution_request_id, SafetyGateDecisionToString(diag.gate_decision),
+                          diag.risk_divergence_pct, diag.directional_constraint_ok ? "true" : "false"));
+}
+
 // RA-32.1 diagnostic amendment (QA-authorized): trigger is purely
 // diagnostic - "OnTick" or "OnTimer", identifying which caller's call
 // site below actually drove this particular claim. Logged ONLY on a
@@ -1174,6 +1267,7 @@ void RA31_ProcessCeremonyCommand(string trigger)
       case CEREMONY_COMMAND_TYPE_RUN_C22_CEREMONY_FIXTURE: RunC22CeremonyFixtureCommand(cmd); break;
       case CEREMONY_COMMAND_TYPE_GRANT_MANUAL_APPROVAL:    GrantManualApprovalCommand(cmd);   break;
       case CEREMONY_COMMAND_TYPE_SUBMIT_ORDER:             SubmitOrderCommand(cmd);           break;
+      case CEREMONY_COMMAND_TYPE_EVALUATE_ENTRY_COMPATIBILITY: EvaluateEntryCompatibilityCommand(cmd); break;
       default:
          CeremonyCommand_Fail(cmd, CEREMONY_STATE_COMMAND_RECEIVED, "unhandled_command_type", "");
          break;

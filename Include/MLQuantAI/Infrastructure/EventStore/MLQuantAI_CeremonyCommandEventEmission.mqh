@@ -54,7 +54,18 @@ enum ENUM_CEREMONY_COMMAND_STATE
    CEREMONY_STATE_SUBMISSION_IN_PROGRESS,
    CEREMONY_STATE_SUBMISSION_COMPLETE,
    CEREMONY_STATE_OBSERVATION_COMPLETE,
-   CEREMONY_STATE_COMMAND_FAILED
+   CEREMONY_STATE_COMMAND_FAILED,
+
+   // RA-30.3 (QA-frozen Read-Only Entry Compatibility Diagnostic):
+   // terminal state for EVALUATE_ENTRY_COMPATIBILITY only. Reached
+   // directly from COMMAND_RECEIVED in a single synchronous call - no
+   // intermediate non-terminal state exists for this command type (see
+   // MLQuantAI_EntryCompatibilityDiagnosticEmission.mqh). Whether the
+   // gate itself accepted or rejected is carried in the
+   // ENTRY_COMPATIBILITY_EVALUATED event's own gate_result field, not
+   // encoded as a separate command state - same convention as
+   // APPROVAL_RECORDED.
+   CEREMONY_STATE_ENTRY_COMPATIBILITY_EVALUATED
 };
 
 string CeremonyCommandState_ToString(ENUM_CEREMONY_COMMAND_STATE s)
@@ -70,6 +81,7 @@ string CeremonyCommandState_ToString(ENUM_CEREMONY_COMMAND_STATE s)
       case CEREMONY_STATE_SUBMISSION_COMPLETE:    return "SUBMISSION_COMPLETE";
       case CEREMONY_STATE_OBSERVATION_COMPLETE:   return "OBSERVATION_COMPLETE";
       case CEREMONY_STATE_COMMAND_FAILED:         return "COMMAND_FAILED";
+      case CEREMONY_STATE_ENTRY_COMPATIBILITY_EVALUATED: return "ENTRY_COMPATIBILITY_EVALUATED";
    }
    return "UNKNOWN";
 }
@@ -85,6 +97,7 @@ ENUM_CEREMONY_COMMAND_STATE CeremonyCommandState_FromString(string s)
    if(s == "SUBMISSION_COMPLETE")    return CEREMONY_STATE_SUBMISSION_COMPLETE;
    if(s == "OBSERVATION_COMPLETE")   return CEREMONY_STATE_OBSERVATION_COMPLETE;
    if(s == "COMMAND_FAILED")         return CEREMONY_STATE_COMMAND_FAILED;
+   if(s == "ENTRY_COMPATIBILITY_EVALUATED") return CEREMONY_STATE_ENTRY_COMPATIBILITY_EVALUATED;
    return CEREMONY_STATE_UNKNOWN;
 }
 
@@ -95,7 +108,8 @@ ENUM_CEREMONY_COMMAND_STATE CeremonyCommandState_FromString(string s)
 bool CeremonyCommandState_IsTerminal(ENUM_CEREMONY_COMMAND_STATE s)
 {
    return s == CEREMONY_STATE_COMMAND_REJECTED || s == CEREMONY_STATE_APPROVAL_RECORDED
-       || s == CEREMONY_STATE_OBSERVATION_COMPLETE || s == CEREMONY_STATE_COMMAND_FAILED;
+       || s == CEREMONY_STATE_OBSERVATION_COMPLETE || s == CEREMONY_STATE_COMMAND_FAILED
+       || s == CEREMONY_STATE_ENTRY_COMPATIBILITY_EVALUATED;
 }
 
 //---------------------------------------------------------------------

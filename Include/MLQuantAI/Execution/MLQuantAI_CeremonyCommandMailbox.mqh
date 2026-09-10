@@ -68,7 +68,15 @@ enum ENUM_CEREMONY_COMMAND_TYPE
    CEREMONY_COMMAND_TYPE_UNKNOWN,
    CEREMONY_COMMAND_TYPE_RUN_C22_CEREMONY_FIXTURE,
    CEREMONY_COMMAND_TYPE_GRANT_MANUAL_APPROVAL,
-   CEREMONY_COMMAND_TYPE_SUBMIT_ORDER
+   CEREMONY_COMMAND_TYPE_SUBMIT_ORDER,
+
+   // RA-30.3 (QA-frozen Read-Only Entry Compatibility Diagnostic): reuses
+   // the existing target_execution_request_id/expected_ea_binding_nonce/
+   // expected_eventstore_filename request fields verbatim - no new
+   // request field added for this command type. Never reaches
+   // BrokerSubmission_Submit()/OrderSend() - see
+   // MLQuantAI_EntryCompatibilityDiagnosticEmission.mqh.
+   CEREMONY_COMMAND_TYPE_EVALUATE_ENTRY_COMPATIBILITY
 };
 
 string CeremonyCommandType_ToString(ENUM_CEREMONY_COMMAND_TYPE t)
@@ -78,6 +86,7 @@ string CeremonyCommandType_ToString(ENUM_CEREMONY_COMMAND_TYPE t)
       case CEREMONY_COMMAND_TYPE_RUN_C22_CEREMONY_FIXTURE: return "RUN_C22_CEREMONY_FIXTURE";
       case CEREMONY_COMMAND_TYPE_GRANT_MANUAL_APPROVAL:    return "GRANT_MANUAL_APPROVAL";
       case CEREMONY_COMMAND_TYPE_SUBMIT_ORDER:             return "SUBMIT_ORDER";
+      case CEREMONY_COMMAND_TYPE_EVALUATE_ENTRY_COMPATIBILITY: return "EVALUATE_ENTRY_COMPATIBILITY";
    }
    return "UNKNOWN";
 }
@@ -87,6 +96,7 @@ ENUM_CEREMONY_COMMAND_TYPE CeremonyCommandType_FromString(string s)
    if(s == "RUN_C22_CEREMONY_FIXTURE") return CEREMONY_COMMAND_TYPE_RUN_C22_CEREMONY_FIXTURE;
    if(s == "GRANT_MANUAL_APPROVAL")    return CEREMONY_COMMAND_TYPE_GRANT_MANUAL_APPROVAL;
    if(s == "SUBMIT_ORDER")             return CEREMONY_COMMAND_TYPE_SUBMIT_ORDER;
+   if(s == "EVALUATE_ENTRY_COMPATIBILITY") return CEREMONY_COMMAND_TYPE_EVALUATE_ENTRY_COMPATIBILITY;
    return CEREMONY_COMMAND_TYPE_UNKNOWN;
 }
 
@@ -167,6 +177,18 @@ struct CeremonyCommand
    long                         result_order_ticket;
    long                         result_deal_ticket;
    int                          result_retcode;
+
+   // RA-30.3 (additive - QA-frozen condition A): result fields for
+   // EVALUATE_ENTRY_COMPATIBILITY only. Every pre-existing field above is
+   // unchanged in meaning/serialization.
+   double                       result_execution_reference_price;
+   double                       result_planned_stop_distance;
+   double                       result_realized_stop_distance;
+   double                       result_planned_risk_money;
+   double                       result_realized_risk_money;
+   double                       result_risk_divergence_pct;
+   int                          result_directional_constraint_ok;  // 0/1
+   string                       result_gate_decision;               // "ACCEPTED"/"REJECTED"
 };
 
 void CeremonyCommand_Init(CeremonyCommand &c)
@@ -191,6 +213,15 @@ void CeremonyCommand_Init(CeremonyCommand &c)
    c.result_order_ticket            = 0;
    c.result_deal_ticket             = 0;
    c.result_retcode                 = 0;
+
+   c.result_execution_reference_price = 0.0;
+   c.result_planned_stop_distance     = 0.0;
+   c.result_realized_stop_distance    = 0.0;
+   c.result_planned_risk_money        = 0.0;
+   c.result_realized_risk_money       = 0.0;
+   c.result_risk_divergence_pct       = 0.0;
+   c.result_directional_constraint_ok = 0;
+   c.result_gate_decision             = "";
 }
 
 string CeremonyCommand_ToJson(const CeremonyCommand &c)
@@ -215,7 +246,15 @@ string CeremonyCommand_ToJson(const CeremonyCommand &c)
    s += "\"result_correlation_id\":\""          + EventSerializer_Escape(c.result_correlation_id) + "\",";
    s += "\"result_order_ticket\":"              + IntegerToString(c.result_order_ticket) + ",";
    s += "\"result_deal_ticket\":"                + IntegerToString(c.result_deal_ticket) + ",";
-   s += "\"result_retcode\":"                    + IntegerToString(c.result_retcode);
+   s += "\"result_retcode\":"                    + IntegerToString(c.result_retcode) + ",";
+   s += "\"result_execution_reference_price\":" + CanonicalDouble(c.result_execution_reference_price) + ",";
+   s += "\"result_planned_stop_distance\":"     + CanonicalDouble(c.result_planned_stop_distance) + ",";
+   s += "\"result_realized_stop_distance\":"    + CanonicalDouble(c.result_realized_stop_distance) + ",";
+   s += "\"result_planned_risk_money\":"        + CanonicalDouble(c.result_planned_risk_money) + ",";
+   s += "\"result_realized_risk_money\":"       + CanonicalDouble(c.result_realized_risk_money) + ",";
+   s += "\"result_risk_divergence_pct\":"       + CanonicalDouble(c.result_risk_divergence_pct) + ",";
+   s += "\"result_directional_constraint_ok\":" + IntegerToString(c.result_directional_constraint_ok) + ",";
+   s += "\"result_gate_decision\":\""           + EventSerializer_Escape(c.result_gate_decision) + "\"";
    s += "}";
    return s;
 }
@@ -243,6 +282,14 @@ void CeremonyCommand_FromJson(string json, CeremonyCommand &out)
    out.result_order_ticket            = EventSerializer_GetLong(json, "result_order_ticket");
    out.result_deal_ticket             = EventSerializer_GetLong(json, "result_deal_ticket");
    out.result_retcode                 = EventSerializer_GetInt(json, "result_retcode");
+   out.result_execution_reference_price = EventSerializer_GetDouble(json, "result_execution_reference_price");
+   out.result_planned_stop_distance     = EventSerializer_GetDouble(json, "result_planned_stop_distance");
+   out.result_realized_stop_distance    = EventSerializer_GetDouble(json, "result_realized_stop_distance");
+   out.result_planned_risk_money        = EventSerializer_GetDouble(json, "result_planned_risk_money");
+   out.result_realized_risk_money       = EventSerializer_GetDouble(json, "result_realized_risk_money");
+   out.result_risk_divergence_pct       = EventSerializer_GetDouble(json, "result_risk_divergence_pct");
+   out.result_directional_constraint_ok = EventSerializer_GetInt(json, "result_directional_constraint_ok");
+   out.result_gate_decision             = EventSerializer_GetStr(json, "result_gate_decision");
 }
 
 //---------------------------------------------------------------------

@@ -348,7 +348,17 @@ enum ENUM_EVENT_TYPE
    // this type's provenance is always "reconstructed from broker history
    // after the fact" and must never be reported/counted as if it were a
    // live L3 capture. Same append-at-end rule as every entry above.
-   EVENT_TYPE_BROKER_TRANSACTION_RECOVERED_FROM_HISTORY
+   EVENT_TYPE_BROKER_TRANSACTION_RECOVERED_FROM_HISTORY,
+
+   // RA-30.3 (QA-frozen Read-Only Entry Compatibility Diagnostic): the
+   // durable result of one EntryCompatibilityGate_Evaluate() call issued
+   // via an EVALUATE_ENTRY_COMPATIBILITY ceremony command - never written
+   // as part of a real submission (see MLQuantAI_EntryCompatibilityDiagnosticEmission.mqh).
+   // Deliberately a DIFFERENT event type from EVENT_TYPE_BROKER_TRANSACTION_OBSERVED
+   // (RA-30.3 condition D) - this event never carries a broker transaction
+   // and must never be interpreted as L3 by any parser/replay. Same
+   // append-at-end rule as every entry above.
+   EVENT_TYPE_ENTRY_COMPATIBILITY_EVALUATED
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -394,6 +404,7 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED: return "TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED";
       case EVENT_TYPE_CEREMONY_COMMAND_STATE_CHANGED:        return "CEREMONY_COMMAND_STATE_CHANGED";
       case EVENT_TYPE_BROKER_TRANSACTION_RECOVERED_FROM_HISTORY: return "BROKER_TRANSACTION_RECOVERED_FROM_HISTORY";
+      case EVENT_TYPE_ENTRY_COMPATIBILITY_EVALUATED:      return "ENTRY_COMPATIBILITY_EVALUATED";
    }
    return "UNKNOWN";
 }
@@ -439,6 +450,7 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED") return EVENT_TYPE_TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED;
    if(s == "CEREMONY_COMMAND_STATE_CHANGED")        return EVENT_TYPE_CEREMONY_COMMAND_STATE_CHANGED;
    if(s == "BROKER_TRANSACTION_RECOVERED_FROM_HISTORY") return EVENT_TYPE_BROKER_TRANSACTION_RECOVERED_FROM_HISTORY;
+   if(s == "ENTRY_COMPATIBILITY_EVALUATED")             return EVENT_TYPE_ENTRY_COMPATIBILITY_EVALUATED;
    return EVENT_TYPE_UNKNOWN;
 }
 
