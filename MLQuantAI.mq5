@@ -682,6 +682,18 @@ int OnInit()
            EventStoreHealth_IsSafeMode() ? ("ENGAGED - " + EventStoreHealth_Reason()) : "clear",
            g_Proj_RuntimeState.candidates_created));
 
+   // RA-32.1 (QA-frozen Control-Plane Timer Trigger, trigger-layer only -
+   // no EventStore/mailbox/gate/L1-L3 semantics touched): OnTick() alone
+   // cannot drive RA31_ProcessCeremonyCommand() when there is no live
+   // market tick (a genuinely closed market, not just a quiet one) - a
+   // ceremony command would sit PENDING indefinitely with no tick to
+   // notice it. EventTimer runs on wall-clock time regardless of tick
+   // flow, so command claiming works the same whether the market is open
+   // or closed. Started last in OnInit, after every other startup step
+   // has already succeeded, so a timer never fires before the EA's own
+   // registries/projections are ready.
+   EventSetTimer(2);
+
    return INIT_SUCCEEDED;
 }
 
@@ -1142,12 +1154,20 @@ void SubmitOrderCommand(CeremonyCommand &cmd)
                           cmd.command_id, rec.execution_request_id, (int)result.order_ticket, (int)result.deal_ticket, (int)result.retcode));
 }
 
-// The one function OnTick() calls every tick (see call site above).
-void RA31_ProcessCeremonyCommand()
+// RA-32.1 diagnostic amendment (QA-authorized): trigger is purely
+// diagnostic - "OnTick" or "OnTimer", identifying which caller's call
+// site below actually drove this particular claim. Logged ONLY on a
+// successful claim (never on the "nothing to do" early return, so this
+// adds no per-tick/per-timer-fire log spam) - this is what lets RA-32.1
+// be verified deterministically instead of inferred from timing alone.
+void RA31_ProcessCeremonyCommand(string trigger)
 {
    CeremonyCommand cmd;
    if(!CeremonyCommand_TryClaim(g_EventStoreFileName, g_RA31_EABindingNonce, cmd))
       return;
+
+   LogInfo(StringFormat("RA-31 command claimed: trigger=%s command_id=%s command_type=%s",
+                          trigger, cmd.command_id, CeremonyCommandType_ToString(cmd.command_type)));
 
    switch(cmd.command_type)
    {
@@ -1160,8 +1180,30 @@ void RA31_ProcessCeremonyCommand()
    }
 }
 
+// RA-32.1 (QA-frozen Control-Plane Timer Trigger): fires every 2s on
+// wall-clock time (EventSetTimer(2) in OnInit), independent of whether
+// any market tick has arrived - this is what lets a ceremony command get
+// claimed even while the market is fully closed. Deliberately calls the
+// EXACT SAME RA31_ProcessCeremonyCommand() OnTick() also calls (below) -
+// no separate/duplicate command-processing path exists. Safe to fire
+// alongside OnTick() for the same pending command because
+// CeremonyCommand_TryClaim() (MLQuantAI_CeremonyCommandEventEmission.mqh)
+// is already idempotent on both its own guards: it only ever acts on a
+// mailbox whose status is still PENDING (a command already CLAIMED or
+// terminal by either trigger is a no-op for the other), and it refuses
+// any command_id already present in the durable registry regardless of
+// mailbox state. MQL5 itself never runs OnTick()/OnTimer() concurrently
+// on the same program (single-threaded event dispatch) - so there is not
+// even a race to guard against, only the ordinary "second call sees
+// already-claimed state" case RA-31's own regression already covers.
+void OnTimer()
+{
+   RA31_ProcessCeremonyCommand("OnTimer");
+}
+
 void OnDeinit(const int reason)
 {
+   EventKillTimer(); // RA-32.1: stop the wall-clock command-poll timer - no orphan timer survives this EA instance
    EventStore_LogSystem(EventTypeToString(EVENT_TYPE_SYSTEM_STOPPED), "EA deinit, reason=" + IntegerToString(reason));
    EventStore_Close();
    FeatureEngine_Deinit();
@@ -1189,7 +1231,7 @@ void OnTick()
    // ceremony command mailbox every tick, BEFORE the bar-close gate below
    // - a ceremony command must not wait up to one whole trigger-timeframe
    // bar to even be noticed. Cheap when idle (one small file read).
-   RA31_ProcessCeremonyCommand();
+   RA31_ProcessCeremonyCommand("OnTick");
 
    // Phase B B3: build one immutable MarketContext per new CLOSED trigger
    // bar and log MARKET_CONTEXT_READY - this is the start of the
