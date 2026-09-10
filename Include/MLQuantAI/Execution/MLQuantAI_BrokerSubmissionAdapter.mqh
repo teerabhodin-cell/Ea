@@ -57,6 +57,18 @@
 //| BrokerSubmissionEnvironmentLock_Evaluate() instead - see              |
 //| Docs/PhaseC_C2_ManualApprovalContract.md's "A real wiring gap found  |
 //| while implementing this round" section.                              |
+//|                                                                       |
+//| RA-13 amendment (Entry Compatibility Gate, per                       |
+//| Docs/PhaseC_C2_4_EntryPriceCompatibilityContract.md and the RA-12    |
+//| amendment to Docs/PhaseC_C2_1_BrokerSubmissionContract.md):          |
+//| BrokerSubmission_Submit() now calls EntryCompatibilityGate_Evaluate()|
+//| immediately after the environment-lock re-validation and before      |
+//| request construction - on BLOCK, returns false exactly like every    |
+//| other pre-construction gate rejection (no event, no OrderSend, no    |
+//| state change, no RiskPlan/ExecutionRequest mutation). On PASS, the   |
+//| gate's own captured execution_reference_price is passed straight     |
+//| through to BrokerSubmission_BuildTradeRequest() - this function      |
+//| never re-reads the market price itself, per C2.4 AC-10.              |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_BROKERSUBMISSIONADAPTER_MQH__
 #define __MLQUANTAI_BROKERSUBMISSIONADAPTER_MQH__
@@ -66,6 +78,7 @@
 #include "MLQuantAI_BrokerSubmissionBuilder.mqh"
 #include "MLQuantAI_ExecutionSubmissionContract.mqh"
 #include "MLQuantAI_EnvironmentLockGate.mqh"
+#include "MLQuantAI_EntryCompatibilityGate.mqh"
 
 // MqlTradeResult also contains a string member (comment) - same
 // ZeroMemory pitfall as MqlTradeRequest_ZeroInit above, same fix.
@@ -276,9 +289,29 @@ bool BrokerSubmission_Submit(TradeCandidate &candidate, const ExecutionRequest &
       return false; // gate rejected - no event, no OrderSend, no state change
    }
 
+   // RA-13: Entry Compatibility Gate - captures execution_reference_price
+   // exactly once (BUY=ASK, SELL=BID) and checks it against planned_entry/
+   // planned_sl's realized-risk divergence, per C2.4 §7/§8. On BLOCK: no
+   // event, no OrderSend, no state change, no RiskPlan/ExecutionRequest
+   // mutation - identical shape to every other pre-construction gate
+   // rejection above. On PASS: the captured price is bound below, passed
+   // straight into BrokerSubmission_BuildTradeRequest with no intervening
+   // reread (C2.4 AC-10).
+   EntryCompatibilityResult entryCompatResult;
+   if(!EntryCompatibilityGate_Evaluate(request, entryCompatResult))
+      return false; // structural failure inside the gate itself
+
+   if(entryCompatResult.decision != SAFETY_GATE_ACCEPTED)
+   {
+      outResult.reason_code = entryCompatResult.reason_code;
+      return false; // gate blocked - no event, no OrderSend, no state change
+   }
+
    MqlTradeRequest tradeRequest;
    ENUM_REASON_CODE buildRejectReason;
-   if(!BrokerSubmission_BuildTradeRequest(request, policy, gateResult.observed_symbol, tradeRequest, buildRejectReason))
+   if(!BrokerSubmission_BuildTradeRequest(request, policy, gateResult.observed_symbol,
+                                            entryCompatResult.execution_reference_price,
+                                            tradeRequest, buildRejectReason))
    {
       outResult.reason_code = buildRejectReason;
       return false; // construction failed - no event, no OrderSend, no state change

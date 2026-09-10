@@ -123,6 +123,21 @@ enum ENUM_REASON_CODE
    // enum's append-only discipline.
    REASON_ORDER_CANCELLED,
 
+   // RA-13 (Entry Compatibility Gate, per
+   // Docs/PhaseC_C2_4_EntryPriceCompatibilityContract.md §6/§8/AC-09
+   // and Docs/PhaseC_C2_1_BrokerSubmissionContract.md's RA-12
+   // amendment): the bound execution_reference_price's realized-risk
+   // divergence from planned_risk_money exceeded the +/-10% gate
+   // threshold (C2.4 §8), OR the directional hard constraint failed
+   // (the reference price is on the wrong side of planned_sl). A
+   // pre-submission block - no OrderSend is ever attempted - and
+   // deliberately distinct from every broker-side rejection reason
+   // above (REASON_BROKER_REJECT/REASON_INVALID_STOPS/
+   // REASON_INSUFFICIENT_MARGIN/REASON_REQUOTE), per AC-09. Appended
+   // at the tail, before REASON_COUNT, per this enum's append-only
+   // discipline.
+   REASON_ENTRY_PRICE_DEVIATION_EXCEEDED,
+
    REASON_COUNT
 };
 
@@ -179,6 +194,7 @@ string ReasonCodeToString(ENUM_REASON_CODE r)
       case REASON_EXECUTION_VOLUME_BELOW_MINIMUM:       return "EXECUTION_VOLUME_BELOW_MINIMUM";
       case REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED: return "EXECUTION_MANUAL_APPROVAL_NOT_GRANTED";
       case REASON_ORDER_CANCELLED:                       return "ORDER_CANCELLED";
+      case REASON_ENTRY_PRICE_DEVIATION_EXCEEDED:        return "ENTRY_PRICE_DEVIATION_EXCEEDED";
    }
    return "UNKNOWN";
 }
@@ -244,6 +260,7 @@ ENUM_REASON_CODE ReasonCodeFromString(string s)
    if(s == "EXECUTION_VOLUME_BELOW_MINIMUM")      return REASON_EXECUTION_VOLUME_BELOW_MINIMUM;
    if(s == "EXECUTION_MANUAL_APPROVAL_NOT_GRANTED") return REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED;
    if(s == "ORDER_CANCELLED")                     return REASON_ORDER_CANCELLED;
+   if(s == "ENTRY_PRICE_DEVIATION_EXCEEDED")      return REASON_ENTRY_PRICE_DEVIATION_EXCEEDED;
    return REASON_NONE;
 }
 

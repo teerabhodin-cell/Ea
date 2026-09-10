@@ -11,6 +11,15 @@
 //| is a read, never a mutation), so both can be exercised by the      |
 //| automated regression suite with zero risk of opening a real        |
 //| position.                                                          |
+//|                                                                     |
+//| RA-13 amendment: price is no longer derived by this file's own     |
+//| SymbolInfoDouble(SYMBOL_ASK/SYMBOL_BID) read - that clause of the   |
+//| "Order construction" section was superseded by the RA-12-frozen    |
+//| amendment (see that doc's own "RA-12 amendment" section). Price is |
+//| now a bound value the Entry Compatibility Gate already captured    |
+//| once (MLQuantAI_EntryCompatibilityGate.mqh), passed straight       |
+//| through here unchanged - see BrokerSubmission_BuildTradeRequest's  |
+//| own comment below.                                                 |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_BROKERSUBMISSIONBUILDER_MQH__
 #define __MLQUANTAI_BROKERSUBMISSIONBUILDER_MQH__
@@ -59,8 +68,22 @@ void MqlTradeRequest_ZeroInit(MqlTradeRequest &r)
 // ORDER_TIME_GTC are a minimal, conservative implementation default
 // needed for OrderSend to be well-formed at all, flagged here for
 // review rather than silently assumed frozen.
+//
+// RA-13 amendment (per the RA-12-frozen amendment to
+// Docs/PhaseC_C2_1_BrokerSubmissionContract.md, implementing
+// Docs/PhaseC_C2_4_EntryPriceCompatibilityContract.md §7/AC-10):
+// boundExecutionReferencePrice is the value the Entry Compatibility
+// Gate (MLQuantAI_EntryCompatibilityGate.mqh) already captured ONCE,
+// earlier in the same submission attempt, as SYMBOL_ASK (BUY) or
+// SYMBOL_BID (SELL). This function MUST NOT call
+// SymbolInfoDouble(..., SYMBOL_ASK/SYMBOL_BID) to derive price itself
+// - doing so would silently discard the Gate's PASS verdict and
+// reopen the exact time-of-check-to-time-of-use gap C2.4 §7 exists to
+// close. outTradeRequest.price is set to this bound value, unchanged -
+// the only validation performed here is that it is a structurally
+// sane (positive) number, never a re-derivation from the market.
 bool BrokerSubmission_BuildTradeRequest(const ExecutionRequest &req, const ExecutionPolicy &policy,
-                                          string observedSymbolAtGate,
+                                          string observedSymbolAtGate, double boundExecutionReferencePrice,
                                           MqlTradeRequest &outTradeRequest, ENUM_REASON_CODE &outRejectReason)
 {
    MqlTradeRequest_ZeroInit(outTradeRequest);
@@ -79,21 +102,17 @@ bool BrokerSubmission_BuildTradeRequest(const ExecutionRequest &req, const Execu
       return false;
    }
 
-   double bid = SymbolInfoDouble(freshSymbol, SYMBOL_BID);
-   double ask = SymbolInfoDouble(freshSymbol, SYMBOL_ASK);
-   if(bid <= 0.0 || ask <= 0.0)
+   if(boundExecutionReferencePrice <= 0.0)
    {
       outRejectReason = REASON_ERROR_INTERNAL;
       return false;
    }
 
-   double price = (req.side == ORDER_TYPE_BUY) ? ask : bid;
-
    outTradeRequest.action      = TRADE_ACTION_DEAL;
    outTradeRequest.symbol      = freshSymbol;
    outTradeRequest.volume      = req.lot_size;
    outTradeRequest.type        = req.side;
-   outTradeRequest.price       = price;
+   outTradeRequest.price       = boundExecutionReferencePrice;
    outTradeRequest.sl          = req.planned_sl;
    outTradeRequest.tp          = req.planned_tp;
    outTradeRequest.deviation   = (ulong)policy.max_deviation_points;

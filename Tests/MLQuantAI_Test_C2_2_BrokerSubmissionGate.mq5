@@ -24,6 +24,14 @@
 //| real demo account is therefore safe: no position is ever opened. A   |
 //| separate, explicitly opt-in real-submit smoke test script is the     |
 //| only place BrokerSubmission_Submit may be called.                    |
+//|                                                                      |
+//| RA-13 amendment: BrokerSubmission_BuildTradeRequest's own tests      |
+//| below were updated for its new boundExecutionReferencePrice          |
+//| parameter (Docs/PhaseC_C2_4_EntryPriceCompatibilityContract.md §7,   |
+//| the RA-12 amendment to Docs/PhaseC_C2_1_BrokerSubmissionContract.md).|
+//| The Entry Compatibility Gate itself (MLQuantAI_EntryCompatibilityGate|
+//| .mqh) is NOT tested here - see the separate                          |
+//| Tests/MLQuantAI_Test_EntryCompatibilityGate.mq5.                     |
 //+------------------------------------------------------------------+
 #property copyright "MLQuantAI"
 #property script_show_inputs
@@ -365,6 +373,14 @@ void Test_Gate_IdempotencyInsideEvaluate()
 //=====================================================================
 // BrokerSubmission_BuildTradeRequest
 //=====================================================================
+// RA-13: an arbitrary sentinel, deliberately NOT derived from any live
+// SymbolInfoDouble(SYMBOL_ASK/SYMBOL_BID) read. Used below as the bound
+// execution_reference_price so the price assertion proves pass-through
+// (Builder used exactly this value) rather than merely "Builder read
+// something that happened to match a simultaneous independent read" -
+// a strictly stronger, race-free proof that no reread occurred.
+#define TEST_SENTINEL_BOUND_PRICE 918273.645
+
 void Test_Build_SymbolMismatchRejects()
 {
    Print("--- Build: a symbol that no longer matches what the gate observed rejects, request left zeroed ---");
@@ -372,7 +388,7 @@ void Test_Build_SymbolMismatchRejects()
    Check(BuildAcceptedRequest(req, policy, "SYMMISMATCH", 7), "sanity: request built");
 
    MqlTradeRequest tr; ENUM_REASON_CODE reason;
-   Check(!BrokerSubmission_BuildTradeRequest(req, policy, "SOME_OTHER_SYMBOL_XYZ", tr, reason),
+   Check(!BrokerSubmission_BuildTradeRequest(req, policy, "SOME_OTHER_SYMBOL_XYZ", TEST_SENTINEL_BOUND_PRICE, tr, reason),
          "build fails when observedSymbolAtGate differs from the real current _Symbol");
    Check(reason == REASON_EXECUTION_SYMBOL_NOT_ALLOWED, "reason_code is REASON_EXECUTION_SYMBOL_NOT_ALLOWED");
    Check(tr.symbol == "", "outTradeRequest.symbol left zeroed on a rejected build");
@@ -386,7 +402,8 @@ void Test_Build_NonMarketSideRejects()
    req.side = ORDER_TYPE_BUY_LIMIT;
 
    MqlTradeRequest tr; ENUM_REASON_CODE reason;
-   Check(!BrokerSubmission_BuildTradeRequest(req, policy, _Symbol, tr, reason), "build fails for a non-market side");
+   Check(!BrokerSubmission_BuildTradeRequest(req, policy, _Symbol, TEST_SENTINEL_BOUND_PRICE, tr, reason),
+         "build fails for a non-market side");
    Check(reason == REASON_EXECUTION_ORDER_TYPE_NOT_MARKET, "reason_code is REASON_EXECUTION_ORDER_TYPE_NOT_MARKET");
 }
 
@@ -398,13 +415,18 @@ void Test_Build_ValidRequest_FieldsFrozenShape()
    Check(req.side == ORDER_TYPE_BUY || req.side == ORDER_TYPE_SELL, "sanity: side is a real market side");
 
    MqlTradeRequest tr; ENUM_REASON_CODE reason;
-   Check(BrokerSubmission_BuildTradeRequest(req, policy, _Symbol, tr, reason), "build succeeds");
+   Check(BrokerSubmission_BuildTradeRequest(req, policy, _Symbol, TEST_SENTINEL_BOUND_PRICE, tr, reason), "build succeeds");
    Check(tr.action == TRADE_ACTION_DEAL, "action == TRADE_ACTION_DEAL");
    Check(tr.symbol == _Symbol, "symbol == the real current _Symbol");
    Check(tr.volume == req.lot_size, "volume == req.lot_size, immutable");
    Check(tr.type == req.side, "type == req.side");
-   double expectedPrice = (req.side == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   Check(tr.price == expectedPrice, "price == fresh Ask (BUY) or Bid (SELL) - never req.planned_entry");
+   // RA-13 / C2.4 AC-10: price is EXACTLY the bound value passed in - not
+   // a fresh SymbolInfoDouble(SYMBOL_ASK/SYMBOL_BID) read. Since
+   // TEST_SENTINEL_BOUND_PRICE cannot coincide with any real live quote,
+   // this is a deterministic, race-free proof that BrokerSubmission_
+   // BuildTradeRequest performs no independent market-price reread.
+   Check(tr.price == TEST_SENTINEL_BOUND_PRICE,
+         "price == the bound execution_reference_price passed in, unchanged (AC-10) - never a fresh Ask/Bid reread, never req.planned_entry");
    Check(tr.sl == req.planned_sl, "sl == req.planned_sl, immutable");
    Check(tr.tp == req.planned_tp, "tp == req.planned_tp, immutable");
    Check(tr.deviation == (ulong)policy.max_deviation_points, "deviation == policy.max_deviation_points, immutable");
@@ -413,13 +435,30 @@ void Test_Build_ValidRequest_FieldsFrozenShape()
    Check(StringLen(tr.comment) <= 21, "comment stays under MT5's comment length limit");
 }
 
-void Test_Build_InvalidBidAskRejects()
+// RA-13 amendment: this branch changed shape entirely. Before RA-13,
+// Builder read bid/ask itself and this scenario ("SymbolInfoDouble
+// returning <= 0") was undocumented/unreachable on a live connected
+// terminal - "verified by inspection" only. After RA-13, Builder no
+// longer reads the market at all; it validates its OWN caller-supplied
+// boundExecutionReferencePrice parameter instead, which a real,
+// deterministic automated test CAN now drive directly (no live-terminal
+// caveat needed).
+void Test_Build_InvalidBoundPriceRejects()
 {
-   Print("--- Build: SymbolInfoDouble returning <= 0 for bid/ask is treated as invalid (documented, not independently reproducible in a live terminal) ---");
-   Check(true, "verified by inspection: BrokerSubmission_BuildTradeRequest checks bid <= 0.0 || ask <= 0.0 "
-               "and rejects with REASON_ERROR_INTERNAL before touching outTradeRequest.price - not reproducible "
-               "as a live automated check since a connected terminal always reports a real positive bid/ask for "
-               "a valid, subscribed symbol");
+   Print("--- Build: a non-positive bound execution_reference_price is rejected with REASON_ERROR_INTERNAL, request left zeroed ---");
+   ExecutionRequest req; ExecutionPolicy policy;
+   Check(BuildAcceptedRequest(req, policy, "INVALIDBOUND", 10), "sanity: request built");
+
+   MqlTradeRequest tr; ENUM_REASON_CODE reason;
+   Check(!BrokerSubmission_BuildTradeRequest(req, policy, _Symbol, 0.0, tr, reason),
+         "build fails when boundExecutionReferencePrice == 0.0");
+   Check(reason == REASON_ERROR_INTERNAL, "reason_code is REASON_ERROR_INTERNAL");
+   Check(tr.symbol == "", "outTradeRequest.symbol left zeroed on a rejected build");
+
+   MqlTradeRequest tr2; ENUM_REASON_CODE reason2;
+   Check(!BrokerSubmission_BuildTradeRequest(req, policy, _Symbol, -1.25, tr2, reason2),
+         "build fails when boundExecutionReferencePrice < 0.0");
+   Check(reason2 == REASON_ERROR_INTERNAL, "reason_code is REASON_ERROR_INTERNAL");
 }
 
 //=====================================================================
@@ -813,8 +852,10 @@ void Test_NoBrokerMutation_StructuralProof()
                "BrokerSubmission_RecordAttempt/BrokerSubmission_ProcessSendResult (in MLQuantAI_BrokerSubmissionAdapter.mqh) "
                "contain no OrderSend/CTrade/PositionOpen/PositionClose/OrderModify call anywhere - BrokerSubmissionGate_Evaluate "
                "only reads AccountInfoInteger(ACCOUNT_TRADE_MODE) plus the sealed, unmodified SafetyGate_Evaluate's own "
-               "read-only checks, BrokerSubmission_BuildTradeRequest only reads _Symbol/SymbolInfoDouble (both read-only "
-               "market queries), RecordAttempt only writes the pre-side-effect audit event, and ProcessSendResult takes "
+               "read-only checks, BrokerSubmission_BuildTradeRequest only reads _Symbol (a read-only market query) and "
+               "otherwise consumes its caller-bound execution_reference_price parameter rather than reading the market "
+               "itself (RA-13 amendment - see that function's own header comment), RecordAttempt only writes the "
+               "pre-side-effect audit event, and ProcessSendResult takes "
                "orderSendReturned/tradeResult as caller-supplied input parameters rather than ever calling OrderSend "
                "itself. The real OrderSend() call lives exclusively inside the thin BrokerSubmission_Submit() wrapper in "
                "MLQuantAI_BrokerSubmissionAdapter.mqh, which this test suite never calls - see this file's own header "
@@ -858,7 +899,7 @@ void OnStart()
    Test_Build_SymbolMismatchRejects();
    Test_Build_NonMarketSideRejects();
    Test_Build_ValidRequest_FieldsFrozenShape();
-   Test_Build_InvalidBidAskRejects();
+   Test_Build_InvalidBoundPriceRejects();
 
    Test_Classify_AcceptedRetcodes();
    Test_Classify_ExplicitRejectionRetcodes();
