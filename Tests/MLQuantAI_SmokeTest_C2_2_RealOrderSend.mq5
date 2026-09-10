@@ -16,11 +16,14 @@
 //| confirmation input BEFORE even attempting, as a second, independent  |
 //| layer, never relying on the gate alone.                              |
 //|                                                                       |
-//| The fixture candidate this script builds reuses the same synthetic   |
-//| CRT-detection fixture as the automated suite (price scale ~100-104,  |
-//| NOT real XAUUSD price levels) for its planned_sl/planned_tp - so a   |
-//| real OrderSend call is very likely to be broker-rejected             |
-//| (TRADE_RETCODE_INVALID_STOPS or similar), which is the SAFE,         |
+//| The fixture candidate this script builds derives its planned_sl/     |
+//| planned_tp from a synthetic CRT-detection fixture, re-based near     |
+//| real XAUUSD price levels (RA-06) with a ~$100.10 stop distance       |
+//| (RA-23 - see SMOKE_FIXTURE_BASE_PRICE's own comment; RA-22's Fixture |
+//| Validity Report explains why the original ~$1.10 distance couldn't  |
+//| survive real ceremony timing). A real OrderSend call may still be    |
+//| broker-rejected (TRADE_RETCODE_INVALID_STOPS/_INVALID_FILL or        |
+//| similar), which remains a SAFE,                                      |
 //| EXPECTED, and still fully informative outcome: it proves the real    |
 //| gate -> OrderSend -> classify -> event/lifecycle wiring works end-   |
 //| to-end without meaningfully risking an actual filled position. If    |
@@ -83,6 +86,25 @@ input double CeremonyReferencePrice = 0.0; // C6.6-RA-06: 0.0 = capture current 
 // SYMBOL_BID - see CeremonyReferencePrice's own comment and the RA-06
 // block inside BuildAcceptedRequest() for why a live-per-run price broke
 // Manual Approval identity matching across two separate ceremony runs.
+//
+// RA-23 amendment (QA-authorized, this file only): RA-21's real ceremony
+// runs proved the ORIGINAL geometry below (planned_stop_distance ~=
+// $1.101) is empirically unusable - real XAUUSD moved several dollars
+// within the fastest possible human-operated Phase 3 -> Manual Approval ->
+// Phase 4.6 window (60-120s, RA-21 attempts 2 and 4), which is 20-35x the
+// entire +-10% C2.4 tolerance band that narrow a stop distance allows
+// ($0.2202 total). See RA-22's Fixture Validity Report for the full
+// analysis. Every literal below is scaled by a single fixed factor of 91
+// around SMOKE_FIXTURE_BASE_PRICE - not tuned to any live quote observed
+// while writing this - which is a pure, uniform geometric enlargement:
+// every relative distance in the original CRT pattern (sweep depth, close-
+// back-inside margin, FVG gap, rally shape) is preserved exactly, so
+// CRT_DetectV1 (untouched) still sees a valid bullish sweep/MSS/FVG
+// pattern. This makes the resulting planned_stop_distance ~= $100.10 (see
+// BuildValidRiskContext's own comment for the RiskSizing side of this),
+// giving a tolerance band of ~= $10.01 - comfortably (>2x) larger than the
+// worst single real drift RA-21 measured in its fastest completed
+// ceremony window, without relying on a calm market moment to pass.
 #define SMOKE_FIXTURE_BASE_PRICE 105.00
 
 void MakeBar(MqlRates &r, datetime t, double open, double high, double low, double close, long tickVolume, int spread)
@@ -106,8 +128,16 @@ void BuildBaseContext(MarketContext &ctx, double delta)
    // result this ceremony needs to observe.
    ctx.symbol_spec.digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    ctx.symbol_spec.point  = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   ctx.pdl = 100.00 + delta;
-   ctx.pdh = 110.00 + delta;
+   // RA-23: swept_level (CRT_V1_Rules.mqh resolves this to ctx.pdl for a
+   // bullish setup) is what sl_hint = swept_level - point is anchored to -
+   // this is the ONE value that actually controls planned_stop_distance,
+   // independent of the bar geometry below. Same 91x scale as the fixture
+   // bars (105.00 + 91*(100.00-105.00) = -350.00), so bar[59]'s scaled low
+   // (-395.50+delta) still sweeps below it and ctx.pdh stays far above
+   // every bar's scaled high (max 68.60+delta) - both invariants the
+   // original fixture already relied on are preserved, just wider.
+   ctx.pdl = -350.00 + delta;
+   ctx.pdh = 560.00 + delta;
    ctx.is_kill_zone = false;
    ctx.max_news_impact = 0;
    ctx.nearest_news_minutes = 9999;
@@ -122,10 +152,15 @@ void BuildBaseContext(MarketContext &ctx, double delta)
    ctx.context_hash      = "test_context_hash_smoke_c22";
 }
 
+// RA-23: every literal here is (105.00 + 91*(original_literal - 105.00)) -
+// see this file's own SMOKE_FIXTURE_BASE_PRICE comment for why factor 91,
+// and RA-22's Fixture Validity Report for the full derivation. A pure
+// uniform scale-up around the same 105.00 pivot, so the filler bars' own
+// +-0.20 wick shape is preserved exactly, just 91x wider in dollar terms.
 void FillFillerBars(MqlRates &window[], datetime t0, double delta)
 {
    for(int i = 0; i < 59; i++)
-      MakeBar(window[i], t0 + i * PERIOD_SEC_M5, 105.00+delta, 105.20+delta, 104.80+delta, 105.00+delta, 100, 20);
+      MakeBar(window[i], t0 + i * PERIOD_SEC_M5, 105.00+delta, 123.20+delta, 86.80+delta, 105.00+delta, 100, 20);
 }
 
 // F1: identical bar-by-bar CRT shape as the original fixture - every
@@ -133,15 +168,24 @@ void FillFillerBars(MqlRates &window[], datetime t0, double delta)
 // same single delta, so every relative distance (sweep depth, rally
 // size, wick lengths) is bitwise-preserved. CRT_DetectV1 itself is
 // unmodified and untouched by this file.
+//
+// RA-23: every literal below is (105.00 + 91*(original_literal - 105.00)),
+// the same uniform scale-up as FillFillerBars above - open[n]==close[n-1]
+// continuity is preserved (each bar's open is the exact scaled value of
+// the previous bar's close), so the candle sequence stays internally
+// consistent, just 91x wider. This is a fixed multiplier chosen once
+// against RA-21's own empirical drift measurements (see
+// SMOKE_FIXTURE_BASE_PRICE's comment) - never against a live quote read
+// while writing this file.
 void Fixture_Bullish_Valid(MqlRates &window[], datetime &outAnchor, datetime t0, double delta)
 {
    ArrayResize(window, 64);
    FillFillerBars(window, t0, delta);
-   MakeBar(window[59], t0 + 59 * PERIOD_SEC_M5, 100.80+delta, 100.90+delta, 99.50+delta,  100.50+delta, 100, 20);
-   MakeBar(window[60], t0 + 60 * PERIOD_SEC_M5, 100.50+delta, 101.50+delta, 100.40+delta, 101.40+delta, 100, 20);
-   MakeBar(window[61], t0 + 61 * PERIOD_SEC_M5, 101.40+delta, 102.50+delta, 101.30+delta, 102.40+delta, 100, 20);
-   MakeBar(window[62], t0 + 62 * PERIOD_SEC_M5, 102.40+delta, 103.50+delta, 102.30+delta, 103.40+delta, 100, 20);
-   MakeBar(window[63], t0 + 63 * PERIOD_SEC_M5, 103.40+delta, 104.60+delta, 103.30+delta, 104.50+delta, 100, 20);
+   MakeBar(window[59], t0 + 59 * PERIOD_SEC_M5, -277.20+delta, -268.10+delta, -395.50+delta, -304.50+delta, 100, 20);
+   MakeBar(window[60], t0 + 60 * PERIOD_SEC_M5, -304.50+delta, -213.50+delta, -313.60+delta, -222.60+delta, 100, 20);
+   MakeBar(window[61], t0 + 61 * PERIOD_SEC_M5, -222.60+delta, -122.50+delta, -231.70+delta, -131.60+delta, 100, 20);
+   MakeBar(window[62], t0 + 62 * PERIOD_SEC_M5, -131.60+delta,  -31.50+delta, -140.70+delta,  -40.60+delta, 100, 20);
+   MakeBar(window[63], t0 + 63 * PERIOD_SEC_M5,  -40.60+delta,   68.60+delta,  -49.70+delta,   59.50+delta, 100, 20);
    outAnchor = window[63].time;
 }
 
@@ -161,7 +205,19 @@ void BuildValidRiskContext(RiskContext &ctx)
    ctx.account.balance = 10000.0;
    ctx.account.equity  = 10000.0;
 
-   ctx.target_risk_percent  = 1.0;
+   // RA-23: raised from 1.0 to 5.0 alongside the fixture-geometry widening
+   // above (planned_stop_distance ~$1.101 -> ~$100.10) - a deliberate,
+   // still-plausible single-trade risk-context constant, chosen
+   // independently of any live quote, purely so RiskSizing's own unmodified
+   // formula (Candidate_ToRiskPlan, Step 5-7) keeps producing a lot_size
+   // safely clear of symbol_spec.volume_min (0.01) for the wider stop
+   // distance, instead of flooring to (or below) the minimum. risk_amount
+   // = 10000*0.05 = 500, still well under ExecutionPolicy.
+   // max_planned_risk_amount (1000.0, unchanged below) and unconsulted by
+   // EligibilityDecision_Build (which only reads eligContext.account.*,
+   // all hardcoded to a safe zero-state a few lines below in OnStart -
+   // never this field).
+   ctx.target_risk_percent  = 5.0;
    ctx.sizing_method        = "FIXED_PERCENT_RISK";
    ctx.sizing_rules_version = MLQUANTAI_RISK_SIZING_RULES_V1;
 
@@ -481,10 +537,12 @@ void OnStart()
 
    Print("Submitting real order: symbol=", _Symbol, " side=", (req.side == ORDER_TYPE_BUY ? "BUY" : "SELL"),
          " lot=", DoubleToString(req.lot_size, 2), " correlation_id=", req.correlation_id);
-   Print("NOTE: planned_sl/planned_tp come from a synthetic ~100-104 price-scale fixture, NOT real ", _Symbol,
-         " price levels - a broker rejection (e.g. TRADE_RETCODE_INVALID_STOPS) is the expected, safe outcome. "
-         "A gate rejection at REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED is ALSO an expected, safe outcome - "
-         "see this file's own header.");
+   Print("NOTE (RA-23): planned_sl/planned_tp come from a synthetic fixture with a fixed ~$100.10 stop distance, "
+         "re-based near real ", _Symbol, " price levels - NOT the original ~100-104 scale (RA-22 found that too "
+         "narrow to survive real ceremony timing). A broker rejection (e.g. TRADE_RETCODE_INVALID_STOPS/"
+         "_INVALID_FILL) is still a safe outcome if it happens, but is no longer the only realistically-expected "
+         "one - see RA-22's Fixture Validity Report. A gate rejection at REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED "
+         "is ALSO an expected, safe outcome - see this file's own header.");
 
    ExecutionSubmissionResult result;
    bool ran = BrokerSubmission_Submit(candidate, req, policy, lockPolicy, result);
