@@ -49,6 +49,19 @@
 #include <MLQuantAI/Execution/MLQuantAI_EnvironmentIdentitySnapshot.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_ExecutionDiscoveryGuard.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_ExecutionLineageObservation.mqh>
+#include <MLQuantAI/AI/MLQuantAI_ModelArtifactBuilder.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_CandidateProjection.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_ExecutionAuditProjection.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_ManualApprovalEmission.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_BrokerSubmissionAdapter.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_BrokerSubmissionGate.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_EntryCompatibilityGate.mqh>
+// RA-31 (QA-frozen Single-Writer Command/Response Protocol): the EA is
+// now the sole EventStore writer for the ceremony - these two headers
+// bring in the command mailbox transport and the durable command state
+// machine. See both files' own headers for the full contract.
+#include <MLQuantAI/Execution/MLQuantAI_CeremonyCommandMailbox.mqh>
+#include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_CeremonyCommandEventEmission.mqh>
 
 input group "=== System ==="
 input bool   DebugMode                   = false;
@@ -93,6 +106,7 @@ input string InpC6SymbolAllowlist  = ""; // comma-separated symbols; empty = unc
 
 string   g_EventStoreFileName = "";
 datetime g_LastContextBarTime = 0;
+double   g_RA31_EABindingNonce = 0.0; // RA-31 re-scope of RA-29.1: this EA instance's current, live nonce - CeremonyCommand_TryClaim() validates every command's expected_ea_binding_nonce against this
 
 string BuildDefaultEventStoreFileName()
 {
@@ -421,6 +435,7 @@ int OnInit()
       LogInfo(StringFormat("RA-29.1 binding published: file=%s nonce=%.0f "
                             "(copy this EXACT value into a ceremony script's I_ExpectedEABindingNonce input)",
                             g_EventStoreFileName, ra29Nonce));
+      g_RA31_EABindingNonce = ra29Nonce; // RA-31: OnTick's command claim logic validates against this
    }
 
    // EventStoreHealth_CheckFile() above only auto-logs SYSTEM_EVENT_STORE_
@@ -460,6 +475,25 @@ int OnInit()
    ManualApprovalProjectionReport approvalReport = ManualApproval_StartupRebuild(g_EventStoreFileName);
    if(!approvalReport.ok)
       LogWarn("C2 manual-approval gate stays disabled this session - startup approval rebuild failed: " + approvalReport.first_error);
+
+   // RA-31 (QA-frozen Single-Writer Command/Response Protocol): rebuild
+   // the candidate-content projection (needed to reconstruct a
+   // TradeCandidate for SUBMIT_ORDER - see SubmitOrderCommand() below)
+   // and the durable ceremony-command registry, then apply RA-31.2
+   // condition C's restart rule: any command left at CEREMONY_IN_
+   // PROGRESS when the EA last stopped is force-failed now, never
+   // resumed (the builder chain mints fresh IDs on every call - resuming
+   // mid-build risks the same duplicate-genesis SafeMode trip RA-26 hit).
+   CandidateProjection_Reset();
+   CandidateProjection_RebuildFromFile(g_EventStoreFileName);
+   CeremonyCommandRegistry_RebuildFromFile(g_EventStoreFileName);
+   int ra31InterruptedCount = CeremonyCommandRegistry_FailInterruptedCommands();
+   if(ra31InterruptedCount > 0)
+      LogWarn(StringFormat("RA-31: %d ceremony command(s) were interrupted mid-build by the previous stop - "
+                            "marked COMMAND_FAILED(interrupted_by_restart), never auto-resumed.", ra31InterruptedCount));
+   if(CeremonyCommandRegistry_HasUnresolvedSubmission())
+      LogWarn("RA-31: an unresolved SUBMIT_ORDER attempt exists (L1 written, outcome unknown) - "
+              "every new SUBMIT_ORDER command will be rejected until this is reconciled (RA-31.2 condition B).");
 
    // C6.2/C6.3 Wave 1 (frozen chat-history contracts, no separate Docs/
    // file yet): reset the in-session Layer A discovery registry, then
@@ -651,6 +685,481 @@ int OnInit()
    return INIT_SUCCEEDED;
 }
 
+//+------------------------------------------------------------------+
+//| RA-31 (QA-frozen Single-Writer Command/Response Protocol)         |
+//|                                                                    |
+//| Everything below is the EA-side half of the three ceremony        |
+//| commands (RUN_C22_CEREMONY_FIXTURE / GRANT_MANUAL_APPROVAL /       |
+//| SUBMIT_ORDER) that used to be three separate EventStore writers    |
+//| (Tests/MLQuantAI_SmokeTest_C2_2_RealOrderSend.mq5's own            |
+//| EventStore_Open()+BuildAcceptedRequest()+BrokerSubmission_Submit(),|
+//| and the standalone MLQuantAI_ManualScript_GrantApproval.mq5) -     |
+//| RA-30.1 proved those could never durably open the canonical file   |
+//| concurrently with this EA (150/150 FileOpen failures, err=5004),   |
+//| so both scripts are now thin command issuers only; every actual    |
+//| EventStore append happens here, through this EA's own,             |
+//| never-closed handle.                                               |
+//|                                                                    |
+//| RunC22CeremonyFixtureCommand's fixture geometry (base price, bar   |
+//| literals, risk-context constants) is copied VERBATIM from that     |
+//| script's BuildBaseContext/Fixture_Bullish_Valid/FillFillerBars/    |
+//| BuildValidRiskContext/BuildAcceptedRequest - every literal must     |
+//| stay byte-identical to preserve the exact candidate_hash/           |
+//| execution_request_hash chain QA has already verified against real  |
+//| runs (RA-19 through RA-30). Do not "clean up" these numbers.       |
+//+------------------------------------------------------------------+
+#define MLQUANTAI_CEREMONY_FIXTURE_BASE_PRICE 105.00
+#define MLQUANTAI_CEREMONY_PERIOD_SEC_M5 300
+
+void CeremonyFixture_MakeBar(MqlRates &r, datetime t, double open, double high, double low, double close, long tickVolume, int spread)
+{
+   ZeroMemory(r);
+   r.time = t; r.open = open; r.high = high; r.low = low; r.close = close;
+   r.tick_volume = tickVolume; r.spread = spread;
+}
+
+void CeremonyFixture_BuildBaseContext(MarketContext &ctx, double delta)
+{
+   MarketContext_Init(ctx);
+   ctx.instrument_id      = "XAUUSD";
+   ctx.broker_symbol      = "XAUUSD";
+   ctx.trigger_timeframe  = "M5";
+   ctx.symbol_spec.digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   ctx.symbol_spec.point  = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   ctx.pdl = 1.000 + delta;
+   ctx.pdh = 110.00 + delta;
+   ctx.is_kill_zone = false;
+   ctx.max_news_impact = 0;
+   ctx.nearest_news_minutes = 9999;
+   ctx.atr_m15 = 1.2345;
+   ctx.adx_m15 = 25.5;
+   ctx.ema_slope_m15 = 0.05;
+   ctx.asian_range_high = 105.50 + delta;
+   ctx.asian_range_low  = 104.50 + delta;
+   ctx.spread_points_at_anchor = 20.0;
+   ctx.news_count = 3;
+   ctx.context_event_id = "CTX_smoke_c22";
+   ctx.context_hash      = "test_context_hash_smoke_c22";
+}
+
+void CeremonyFixture_FillFillerBars(MqlRates &window[], datetime t0, double delta)
+{
+   for(int i = 0; i < 59; i++)
+      CeremonyFixture_MakeBar(window[i], t0 + i * MLQUANTAI_CEREMONY_PERIOD_SEC_M5, 105.00+delta, 105.20+delta, 104.80+delta, 105.00+delta, 100, 20);
+}
+
+void CeremonyFixture_Bullish_Valid(MqlRates &window[], datetime &outAnchor, datetime t0, double delta)
+{
+   ArrayResize(window, 64);
+   CeremonyFixture_FillFillerBars(window, t0, delta);
+   CeremonyFixture_MakeBar(window[59], t0 + 59 * MLQUANTAI_CEREMONY_PERIOD_SEC_M5, 100.80+delta, 100.90+delta,   0.500+delta, 100.50+delta, 100, 20);
+   CeremonyFixture_MakeBar(window[60], t0 + 60 * MLQUANTAI_CEREMONY_PERIOD_SEC_M5, 100.50+delta, 101.50+delta, 100.40+delta, 101.40+delta, 100, 20);
+   CeremonyFixture_MakeBar(window[61], t0 + 61 * MLQUANTAI_CEREMONY_PERIOD_SEC_M5, 101.40+delta, 102.50+delta, 101.30+delta, 102.40+delta, 100, 20);
+   CeremonyFixture_MakeBar(window[62], t0 + 62 * MLQUANTAI_CEREMONY_PERIOD_SEC_M5, 102.40+delta, 103.50+delta, 102.30+delta, 103.40+delta, 100, 20);
+   CeremonyFixture_MakeBar(window[63], t0 + 63 * MLQUANTAI_CEREMONY_PERIOD_SEC_M5, 103.40+delta, 104.60+delta, 103.30+delta, 104.50+delta, 100, 20);
+   outAnchor = window[63].time;
+}
+
+void CeremonyFixture_BuildValidRiskContext(RiskContext &ctx)
+{
+   RiskContext_Init(ctx);
+   ctx.symbol_spec.instrument_id = "XAUUSD";
+   ctx.symbol_spec.broker_symbol = "XAUUSD_smoke";
+   ctx.symbol_spec.tick_size     = 0.01;
+   ctx.symbol_spec.tick_value    = 1.0;
+   ctx.symbol_spec.contract_size = 100;
+   ctx.symbol_spec.volume_min    = 0.01;
+   ctx.symbol_spec.volume_max    = 100.0;
+   ctx.symbol_spec.volume_step   = 0.01;
+   ctx.symbol_spec.digits        = 2;
+
+   ctx.account.balance = 10000.0;
+   ctx.account.equity  = 10000.0;
+
+   ctx.target_risk_percent  = 5.0;
+   ctx.sizing_method        = "FIXED_PERCENT_RISK";
+   ctx.sizing_rules_version = MLQUANTAI_RISK_SIZING_RULES_V1;
+
+   ctx.risk_context_hash = RiskContext_ComputeHash(ctx);
+}
+
+// RUN_C22_CEREMONY_FIXTURE: builds the full candidate -> ... -> execution
+// request chain (same call sequence as the old script's
+// BuildAcceptedRequest, verbatim), stops at CEREMONY_READY (dry-run
+// accepted) - never touches BrokerSubmission_Submit()/OrderSend(). A
+// separate SUBMIT_ORDER command, gated on its own EMP-01 authorization,
+// is required to go further.
+void RunC22CeremonyFixtureCommand(CeremonyCommand &cmd)
+{
+   EventStore_LogCeremonyCommandState(cmd.command_id, cmd.command_type,
+                                       CEREMONY_STATE_COMMAND_RECEIVED, CEREMONY_STATE_CEREMONY_IN_PROGRESS,
+                                       "building", "");
+
+   double liveBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double referencePrice = (cmd.ceremony_reference_price > 0.0) ? cmd.ceremony_reference_price : liveBid;
+   double delta = referencePrice - MLQUANTAI_CEREMONY_FIXTURE_BASE_PRICE;
+
+   LogInfo(StringFormat("RA-31 RUN_C22_CEREMONY_FIXTURE: command_id=%s live_bid=%s reference_price=%s delta=%s",
+                          cmd.command_id, DoubleToString(liveBid, 8), DoubleToString(referencePrice, 8), DoubleToString(delta, 8)));
+
+   MarketContext ctx;
+   CeremonyFixture_BuildBaseContext(ctx, delta);
+   datetime t0 = D'2026.03.01 00:00:00';
+   datetime anchor;
+   CeremonyFixture_Bullish_Valid(ctx.trigger_tf_recent, anchor, t0, delta);
+   ctx.anchor_bar_time = anchor;
+
+   if(!EventStore_LogSystem(EventTypeToString(EVENT_TYPE_MARKET_CONTEXT_READY), "market context built", MarketContext_ToJsonFragment(ctx)))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "market_context_log_failed", ""); return; }
+
+   CRTDetectionResult r;
+   CRT_DetectV1(ctx, r);
+   if(!r.detected) { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "crt_not_detected", ""); return; }
+
+   TradeCandidate c;
+   if(!CRT_ToTradeCandidate(ctx, r, c))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "crt_to_trade_candidate_failed", ""); return; }
+   if(!CRT_EmitCandidateCreated(c, ctx.symbol_spec.digits))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "candidate_created_log_failed", ""); return; }
+
+   FeatureSnapshot snapshot;
+   if(!Candidate_ToFeatureSnapshot(c, ctx, snapshot))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "feature_snapshot_build_failed", ""); return; }
+   if(!FeatureSnapshot_EmitFeatureSnapshotCreated(snapshot))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "feature_snapshot_log_failed", ""); return; }
+
+   ModelArtifact artifact;
+   if(!ModelArtifact_Build("MODEL_smoke", "v1", "hash_artifact_smoke",
+                             "FEATURES_B8_1_V1", "TDSET_dummy_smoke", "hash_tdset_smoke",
+                             "SETUP_QUALITY_V1", "INPUT_SCHEMA_V1", "OUTPUT_SCHEMA_V1",
+                             "ONNXRuntime", "1.16.0", MODEL_PROMOTION_PROMOTED, artifact))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "model_artifact_build_failed", ""); return; }
+   if(!ModelArtifact_EmitModelArtifactRegistered(artifact))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "model_artifact_log_failed", ""); return; }
+
+   InferenceResult inference;
+   InferenceResult_Init(inference);
+   inference.model_registry_id     = artifact.model_registry_id;
+   inference.model_registry_hash   = artifact.model_registry_hash;
+   inference.model_artifact_hash   = artifact.model_artifact_hash;
+   inference.feature_snapshot_id   = snapshot.feature_snapshot_id;
+   inference.feature_snapshot_hash = snapshot.feature_snapshot_hash;
+   inference.feature_vector_hash   = snapshot.feature_vector_hash;
+   inference.output_schema_version = MLQUANTAI_OUTPUT_SCHEMA_P_SUCCESS_V1;
+   ArrayResize(inference.output_values, 1);
+   inference.output_values[0] = 0.90f;
+   inference.runtime_framework = "ONNXRuntime";
+   inference.runtime_version   = "1.16.0";
+   inference.output_hash = InferenceResult_ComputeOutputHash(inference);
+
+   AIDecisionPolicy aiPolicy;
+   AIDecisionPolicy_Init(aiPolicy);
+   aiPolicy.decision_policy_version = "AIPOLICY_C1_V1";
+   aiPolicy.threshold_version       = "THRESH_C1_V1";
+   aiPolicy.allow_threshold         = 0.70;
+   AIDecision decision; string aiReasonDetail;
+   if(!AIDecision_Build(inference, snapshot, aiPolicy, decision, aiReasonDetail))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "ai_decision_build_failed", aiReasonDetail); return; }
+   if(!AIDecision_EmitAIDecisionCreated(decision))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "ai_decision_log_failed", ""); return; }
+
+   RiskContext riskCtx;
+   CeremonyFixture_BuildValidRiskContext(riskCtx);
+   RiskPlan plan;
+   if(!Candidate_ToRiskPlan(c, riskCtx, plan))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "risk_plan_build_failed", ""); return; }
+   if(!RiskPlan_EmitRiskPlanCreated(plan))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "risk_plan_log_failed", ""); return; }
+
+   EligibilityContext eligContext;
+   EligibilityContext_Init(eligContext);
+   eligContext.account.balance = 10000.0;
+   eligContext.account.equity = 10000.0;
+   eligContext.account.margin_level = 500.0;
+   eligContext.account.open_positions_count = 0;
+   eligContext.account.open_risk_percent = 0.0;
+   eligContext.account.daily_pnl_percent = 0.0;
+   eligContext.account.drawdown_from_peak_percent = 0.0;
+   eligContext.safe_mode_active = false;
+   eligContext.eligibility_context_hash = EligibilityContext_ComputeHash(eligContext);
+
+   EligibilityPolicy eligPolicy;
+   EligibilityPolicy_Init(eligPolicy);
+   eligPolicy.eligibility_policy_version = "ELIGPOLICY_C1_V1";
+   eligPolicy.max_daily_loss_percent = 5.0;
+   eligPolicy.max_drawdown_percent = 10.0;
+   eligPolicy.max_total_exposure_percent = 20.0;
+   eligPolicy.max_open_positions = 5;
+   eligPolicy.min_margin_level = 200.0;
+
+   EligibilityDecision eligDecision; string eligReasonDetail;
+   if(!EligibilityDecision_Build(plan, decision, snapshot, eligContext, eligPolicy, eligDecision, eligReasonDetail))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "eligibility_decision_build_failed", eligReasonDetail); return; }
+   if(eligDecision.decision != ELIGIBILITY_DECISION_ELIGIBLE)
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "eligibility_not_eligible", eligReasonDetail); return; }
+   if(!EligibilityDecision_EmitDecisionAndWireLifecycle(eligDecision, eligContext, c))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "eligibility_log_failed", ""); return; }
+
+   ExecutionPolicy policy;
+   ExecutionPolicy_Init(policy);
+   policy.execution_policy_version = "EXECPOLICY_C2_SMOKE_V1";
+   policy.environment_mode = EXECUTION_ENV_DEMO;
+   policy.dry_run = true;
+   policy.manual_approval_required = false;
+   policy.account_allowlist = IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
+   policy.symbol_allowlist = _Symbol;
+   policy.max_volume = 10.0;
+   policy.max_planned_risk_amount = 1000.0;
+   policy.max_deviation_points = 20.0;
+
+   ExecutionRequest req; string rd;
+   if(!ExecutionRequest_Build(c, eligDecision, decision, plan, policy, req, rd))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "execution_request_build_failed", rd); return; }
+
+   DryRunExecutionResult dryRunResult;
+   bool emitOk = ExecutionRequest_EmitAndEvaluate(req, policy, dryRunResult);
+   if(!emitOk || dryRunResult.decision != SAFETY_GATE_ACCEPTED)
+   {
+      CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "execution_request_not_accepted",
+                            ReasonCodeToString(dryRunResult.reason_code));
+      return;
+   }
+
+   cmd.result_candidate_id           = c.candidate_id;
+   cmd.result_execution_request_id   = req.execution_request_id;
+   cmd.result_execution_request_hash = req.execution_request_hash;
+   cmd.result_correlation_id         = req.correlation_id;
+   CeremonyCommand_Complete(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, CEREMONY_STATE_CEREMONY_READY, "dry_run_accepted", req.execution_request_id);
+
+   LogInfo(StringFormat("RA-31 RUN_C22_CEREMONY_FIXTURE ready: command_id=%s candidate_id=%s execution_request_id=%s execution_request_hash=%s correlation_id=%s",
+                          cmd.command_id, c.candidate_id, req.execution_request_id, req.execution_request_hash, req.correlation_id));
+}
+
+// GRANT_MANUAL_APPROVAL: replaces the standalone
+// MLQuantAI_ManualScript_GrantApproval.mq5's own EventStore_Open()+
+// ManualApproval_Grant() call. Unlike that script (which required the
+// operator to manually retype execution_request_hash/policy_version/
+// candidate_id/correlation_id - exactly the kind of field-swap mistake
+// QA caught repeatedly during RA-19/RA-21), this handler looks all four
+// up from the durable ExecutionRequestProjection via target_execution_
+// request_id alone, removing that entire class of operator error.
+void GrantManualApprovalCommand(CeremonyCommand &cmd)
+{
+   EventStore_LogCeremonyCommandState(cmd.command_id, cmd.command_type,
+                                       CEREMONY_STATE_COMMAND_RECEIVED, CEREMONY_STATE_CEREMONY_IN_PROGRESS,
+                                       "processing", cmd.target_execution_request_id);
+
+   ExecutionRequestProjectionRecord rec;
+   if(!ExecutionRequestProjection_TryGet(cmd.target_execution_request_id, rec))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "execution_request_not_found", ""); return; }
+   if(cmd.approver_identity == "")
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "approver_identity_missing", ""); return; }
+
+   int validityMinutes = (cmd.approval_validity_minutes > 0) ? cmd.approval_validity_minutes : 15;
+
+   ManualApprovalGrant grant;
+   ManualApprovalGrant_Init(grant);
+   grant.execution_request_id     = rec.execution_request_id;
+   grant.execution_request_hash   = rec.execution_request_hash;
+   grant.execution_policy_version = rec.execution_policy_version;
+   grant.candidate_id             = rec.candidate_id;
+   grant.correlation_id           = rec.correlation_id;
+   grant.approver_identity        = cmd.approver_identity;
+   grant.approval_timestamp       = TimeCurrent();
+   grant.approval_expiry          = grant.approval_timestamp + validityMinutes * 60;
+   grant.approval_nonce           = ManualApproval_NewNonce();
+
+   if(!ManualApproval_Grant(grant))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "manual_approval_grant_write_failed", ""); return; }
+
+   cmd.result_execution_request_id   = rec.execution_request_id;
+   cmd.result_execution_request_hash = rec.execution_request_hash;
+   cmd.result_candidate_id           = rec.candidate_id;
+   cmd.result_correlation_id         = rec.correlation_id;
+   CeremonyCommand_Complete(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, CEREMONY_STATE_APPROVAL_RECORDED, "granted", rec.execution_request_id);
+
+   LogInfo(StringFormat("RA-31 GRANT_MANUAL_APPROVAL recorded: command_id=%s execution_request_id=%s approver=%s expiry=%s",
+                          cmd.command_id, rec.execution_request_id, cmd.approver_identity, TimeToString(grant.approval_expiry, TIME_DATE|TIME_SECONDS)));
+}
+
+// SUBMIT_ORDER: the ONLY command type authorized to reach
+// BrokerSubmission_Submit()/OrderSend() - still requires QA's separate
+// EMP-01 authorization before an operator is allowed to issue it (a
+// control this EA does not itself enforce; QA gates it operationally,
+// same as every EMP-01 round before RA-31).
+//
+// RA-31.2 condition B (frozen): if ANY previously-issued SUBMIT_ORDER is
+// stuck at SUBMISSION_IN_PROGRESS (L1 durably written, broker outcome
+// unknown - e.g. this EA crashed between OrderSend() and durably writing
+// L2), every NEW SUBMIT_ORDER is refused, regardless of which execution_
+// request_id it targets, until that is reconciled. This is deliberately
+// a DIFFERENT, coarser check than the existing SubmissionAttemptRegistry_
+// IsUnresolved(executionRequestId) (BrokerSubmissionAuditProjection.mqh,
+// unchanged, still consulted inside BrokerSubmissionGate_Evaluate as
+// before) - that one protects "never submit this SAME request twice";
+// this one protects "never start ANY new submission while a DIFFERENT
+// one's broker outcome is still unknown". Both stay in force together.
+void SubmitOrderCommand(CeremonyCommand &cmd)
+{
+   if(CeremonyCommandRegistry_HasUnresolvedSubmission())
+   {
+      CeremonyCommand_Fail(cmd, CEREMONY_STATE_COMMAND_RECEIVED, "unresolved_submission_attempt_exists",
+                            "RA-31.2 condition B: a previous SUBMIT_ORDER is stuck at SUBMISSION_IN_PROGRESS - "
+                            "resolve via reconciliation before any new submission is allowed.");
+      return;
+   }
+
+   ExecutionRequestProjectionRecord rec;
+   if(!ExecutionRequestProjection_TryGet(cmd.target_execution_request_id, rec))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_COMMAND_RECEIVED, "execution_request_not_found", ""); return; }
+
+   CandidateProjectionRecord candRec;
+   if(!CandidateProjection_TryGet(rec.candidate_id, candRec))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_COMMAND_RECEIVED, "candidate_projection_not_found", ""); return; }
+
+   ENUM_CANDIDATE_STATE liveState;
+   if(!StateProjector_TryGetState(rec.candidate_id, liveState))
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_COMMAND_RECEIVED, "candidate_state_not_found", ""); return; }
+
+   // Minimal, correct-enough TradeCandidate reconstruction: the only
+   // fields BrokerSubmission_Submit()/BrokerSubmission_RecordAttempt()/
+   // ProcessSendResult() actually read or mutate on the candidate struct
+   // are state (structural gate) and candidate_id/root_event_id/
+   // correlation_id/strategy_id (copied verbatim onto the LIFECYCLE event
+   // EventStore_LogTransition() writes) - verified against
+   // MLQuantAI_EventStore.mqh's own EventStore_LogTransition(). Every
+   // price/side/hint field BrokerSubmission_Submit's own gate chain
+   // consults comes from ExecutionRequest (rec), not TradeCandidate.
+   TradeCandidate candidate;
+   TradeCandidate_Init(candidate);
+   candidate.candidate_id   = rec.candidate_id;
+   candidate.root_event_id  = candRec.root_event_id;
+   candidate.correlation_id = rec.correlation_id;
+   candidate.strategy_id    = candRec.strategy_id;
+   candidate.state          = liveState;
+
+   ExecutionRequest req;
+   ExecutionRequest_Init(req);
+   req.execution_request_id       = rec.execution_request_id;
+   req.execution_request_hash     = rec.execution_request_hash;
+   req.candidate_id               = rec.candidate_id;
+   req.candidate_hash             = candRec.candidate_hash;
+   req.risk_plan_id               = rec.risk_plan_id;
+   req.plan_hash                  = rec.plan_hash;
+   req.ai_decision_id             = rec.ai_decision_id;
+   req.ai_decision_hash           = rec.ai_decision_hash;
+   req.eligibility_decision_id    = rec.eligibility_decision_id;
+   req.eligibility_decision_hash  = rec.eligibility_decision_hash;
+   req.execution_policy_version   = rec.execution_policy_version;
+   req.correlation_id             = rec.correlation_id;
+   req.submit_attempt             = rec.submit_attempt;
+   req.side                       = rec.side;
+   req.planned_entry              = rec.planned_entry;
+   req.planned_sl                 = rec.planned_sl;
+   req.planned_tp                 = rec.planned_tp;
+   req.lot_size                   = rec.lot_size;
+   req.risk_amount                = rec.risk_amount;
+
+   // Policy fields match Tests/MLQuantAI_SmokeTest_C2_2_RealOrderSend.mq5's
+   // BuildAcceptedRequest() EXACTLY (including dry_run=true and
+   // manual_approval_required=false, which look counter-intuitive for a
+   // real-submit path but are what every previously-successful real
+   // OrderSend in this project - tickets 3798882166 and 3799401055 - both
+   // ran with; neither field is verified here to be inert, so this
+   // handler does not risk deviating from the one policy shape already
+   // proven to reach a real broker fill).
+   ExecutionPolicy policy;
+   ExecutionPolicy_Init(policy);
+   policy.execution_policy_version = rec.execution_policy_version;
+   policy.environment_mode = EXECUTION_ENV_DEMO;
+   policy.dry_run = true;
+   policy.manual_approval_required = false;
+   policy.account_allowlist = IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
+   policy.symbol_allowlist = _Symbol;
+   policy.max_volume = 10.0;
+   policy.max_planned_risk_amount = 1000.0;
+   policy.max_deviation_points = 20.0;
+
+   EnvironmentLockPolicy lockPolicy;
+   EnvironmentLockPolicy_Init(lockPolicy);
+   lockPolicy.environment_lock_policy_version = "ENVLOCK_C2_SMOKE_V1";
+   lockPolicy.trade_server_allowlist = AccountInfoString(ACCOUNT_SERVER);
+
+   // Durable pre-commit marker BEFORE calling BrokerSubmission_Submit() -
+   // this is what RA-31.2 condition B's global gate (above, and on the
+   // next OnInit restart-scan) actually watches for.
+   if(!EventStore_LogCeremonyCommandState(cmd.command_id, cmd.command_type,
+                                           CEREMONY_STATE_COMMAND_RECEIVED, CEREMONY_STATE_SUBMISSION_IN_PROGRESS,
+                                           "submitting", rec.execution_request_id))
+   {
+      CeremonyCommand_Fail(cmd, CEREMONY_STATE_COMMAND_RECEIVED, "submission_in_progress_log_failed", "");
+      return;
+   }
+   cmd.mailbox_status = CEREMONY_MAILBOX_STATUS_CLAIMED; // stays CLAIMED (not yet terminal) while this call runs
+   CeremonyCommandMailbox_Write(cmd);
+
+   ExecutionSubmissionResult result;
+   bool submitOk = BrokerSubmission_Submit(candidate, req, policy, lockPolicy, result);
+
+   if(!result.order_send_returned)
+   {
+      // Never reached OrderSend() - a pre-submission gate rejected it.
+      // Nothing was sent to the broker, so it is safe to fail this
+      // command outright (not "unresolved").
+      CeremonyCommand_Fail(cmd, CEREMONY_STATE_SUBMISSION_IN_PROGRESS, ReasonCodeToString(result.reason_code),
+                            "rejected before OrderSend() was ever called");
+      return;
+   }
+
+   if(!submitOk)
+   {
+      // OrderSend() WAS called but this durability layer's own L2 write
+      // failed - genuinely unresolved (RA-31.2 condition B's whole
+      // reason to exist). Deliberately do NOT call CeremonyCommand_
+      // Complete()/Fail() here - the command stays at SUBMISSION_IN_
+      // PROGRESS, globally blocking new SUBMIT_ORDER commands until a
+      // human reconciles this (see OnInit's CeremonyCommandRegistry_
+      // HasUnresolvedSubmission() warning).
+      LogError(StringFormat("RA-31 SUBMIT_ORDER: OrderSend() was called (order_send_returned=true) but L2 durability "
+                             "write failed - command_id=%s execution_request_id=%s stays SUBMISSION_IN_PROGRESS "
+                             "(UNRESOLVED). A real order may be open at the broker. Human reconciliation required "
+                             "before any further submission.", cmd.command_id, rec.execution_request_id));
+      cmd.mailbox_status = CEREMONY_MAILBOX_STATUS_FAILED;
+      cmd.result_reason_code = "l2_durability_write_failed_unresolved";
+      cmd.result_message = "OrderSend was called but the result could not be durably recorded - do not retry, this requires human reconciliation.";
+      CeremonyCommandMailbox_Write(cmd); // mailbox reflects FAILED so the script stops waiting, but the DURABLE command state intentionally stays SUBMISSION_IN_PROGRESS (see above) - the mailbox is not truth (RA-31.2 condition 2)
+      return;
+   }
+
+   cmd.result_execution_request_id = rec.execution_request_id;
+   cmd.result_order_ticket = (long)result.order_ticket;
+   cmd.result_deal_ticket  = (long)result.deal_ticket;
+   cmd.result_retcode      = (int)result.retcode;
+   CeremonyCommand_Complete(cmd, CEREMONY_STATE_SUBMISSION_IN_PROGRESS, CEREMONY_STATE_SUBMISSION_COMPLETE,
+                             ReasonCodeToString(result.reason_code), rec.execution_request_id);
+
+   LogInfo(StringFormat("RA-31 SUBMIT_ORDER complete: command_id=%s execution_request_id=%s order_ticket=%d deal_ticket=%d retcode=%d",
+                          cmd.command_id, rec.execution_request_id, (int)result.order_ticket, (int)result.deal_ticket, (int)result.retcode));
+}
+
+// The one function OnTick() calls every tick (see call site above).
+void RA31_ProcessCeremonyCommand()
+{
+   CeremonyCommand cmd;
+   if(!CeremonyCommand_TryClaim(g_EventStoreFileName, g_RA31_EABindingNonce, cmd))
+      return;
+
+   switch(cmd.command_type)
+   {
+      case CEREMONY_COMMAND_TYPE_RUN_C22_CEREMONY_FIXTURE: RunC22CeremonyFixtureCommand(cmd); break;
+      case CEREMONY_COMMAND_TYPE_GRANT_MANUAL_APPROVAL:    GrantManualApprovalCommand(cmd);   break;
+      case CEREMONY_COMMAND_TYPE_SUBMIT_ORDER:             SubmitOrderCommand(cmd);           break;
+      default:
+         CeremonyCommand_Fail(cmd, CEREMONY_STATE_COMMAND_RECEIVED, "unhandled_command_type", "");
+         break;
+   }
+}
+
 void OnDeinit(const int reason)
 {
    EventStore_LogSystem(EventTypeToString(EVENT_TYPE_SYSTEM_STOPPED), "EA deinit, reason=" + IntegerToString(reason));
@@ -676,6 +1185,12 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
 
 void OnTick()
 {
+   // RA-31 (QA-frozen Single-Writer Command/Response Protocol): poll the
+   // ceremony command mailbox every tick, BEFORE the bar-close gate below
+   // - a ceremony command must not wait up to one whole trigger-timeframe
+   // bar to even be noticed. Cheap when idle (one small file read).
+   RA31_ProcessCeremonyCommand();
+
    // Phase B B3: build one immutable MarketContext per new CLOSED trigger
    // bar and log MARKET_CONTEXT_READY - this is the start of the
    // candidate dataset the whole project is built around. Still no

@@ -1,95 +1,144 @@
 //+------------------------------------------------------------------+
 //| MLQuantAI_ManualScript_GrantApproval.mq5                          |
-//| C2 manual-approval contract - the standalone, human-run script     |
-//| that is the ONLY writer of EXECUTION_MANUAL_APPROVAL_GRANTED       |
-//| events. Per Docs/PhaseC_C2_ManualApprovalContract.md.              |
+//| RA-31 (QA-frozen Single-Writer Command/Response Protocol) rewrite: |
+//| this script no longer opens the canonical EventStore or appends    |
+//| EXECUTION_MANUAL_APPROVAL_GRANTED itself - RA-30.1 proved            |
+//| deterministically (150/150 FileOpen failures, err=5004) that it     |
+//| never could safely do so while the EA holds the same file open.     |
 //|                                                                    |
-//| A human runs this manually, once, per approval, after observing   |
-//| the pending candidate's execution_request_id/hash/policy_version/  |
-//| candidate_id/correlation_id wherever the EA's own logs/event       |
-//| store display them. This script never reads the event store       |
-//| itself to discover those values - they are typed/pasted in by the |
-//| operator, deliberately, as the human act of approval.              |
+//| This script is now a thin COMMAND ISSUER only: it writes one        |
+//| GRANT_MANUAL_APPROVAL command to the mailbox                        |
+//| (MLQuantAI_CeremonyCommandMailbox.mqh), signals the EA, and polls   |
+//| the mailbox for a terminal result. The EA (MLQuantAI.mq5,           |
+//| GrantManualApprovalCommand) looks execution_request_hash/           |
+//| execution_policy_version/candidate_id/correlation_id up itself from |
+//| its own durable ExecutionRequestProjection, given only              |
+//| target_execution_request_id - removing the entire class of          |
+//| operator field-swap mistake QA caught repeatedly in earlier rounds  |
+//| (RA-19/RA-21) when those four fields had to be hand-retyped here.   |
 //|                                                                    |
-//| *** NEVER calls OrderSend/CTrade or any broker-mutating API. The   |
-//| *** only side effect is one durable, append-only event write -     |
-//| *** identical in kind to every other *_EventEmission.mqh caller    |
-//| *** in this project. Does not imply, by itself, that anything is   |
-//| *** submitted: the deferred C2 gate integration is what actually   |
-//| *** consults this grant before any real submission is attempted.  |
+//| *** Still never calls OrderSend/CTrade directly, and still only     |
+//| *** ever leads to one durable approval-fact event - this rewrite    |
+//| *** changes WHO writes it (the EA, not this script), not WHAT it    |
+//| *** does. A separate, QA-authorized SUBMIT_ORDER command is what    |
+//| *** actually attempts a real submission, never this script.        |
 //+------------------------------------------------------------------+
 #property copyright "MLQuantAI"
 #property script_show_inputs
 
-input string I_EventStoreFileName        = ""; // REQUIRED - must exactly match the live EA's own event store file (Common Files); blank aborts
-input string I_ExecutionRequestId        = ""; // REQUIRED - execution_request_id of the candidate being approved
-input string I_ExecutionRequestHash      = ""; // REQUIRED - execution_request_hash of the candidate being approved
-input string I_ExecutionPolicyVersion    = ""; // REQUIRED - execution_policy_version the request was built under
-input string I_CandidateId               = ""; // REQUIRED - candidate_id of the candidate being approved
-input string I_CorrelationId             = ""; // REQUIRED - correlation_id of the candidate being approved
-input string I_ApproverIdentity          = ""; // REQUIRED - who is granting this approval (name/handle) - never blank
-input int    I_ValidityWindowMinutes     = 15;  // approval_expiry = approval_timestamp + this many minutes; must be > 0
+#include <MLQuantAI/Execution/MLQuantAI_CeremonyCommandMailbox.mqh>
+#include <MLQuantAI/Core/MLQuantAI_Ids.mqh>
 
-#include <MLQuantAI/Execution/MLQuantAI_ManualApprovalEmission.mqh>
+input double I_ExpectedEABindingNonce   = 0.0; // RA-29.1 (re-scoped by RA-31.2 condition F): copy the EXACT nonce MLQuantAI.mq5 just printed at its own OnInit ("RA-29.1 binding published: ... nonce=..."). 0.0 = ABORT.
+input string I_TargetExecutionRequestId = ""; // REQUIRED - execution_request_id of the candidate being approved (from the RUN_C22_CEREMONY_FIXTURE command's own result/DIAGNOSTIC print)
+input string I_ApproverIdentity         = ""; // REQUIRED - who is granting this approval (name/handle) - never blank
+input int    I_ValidityWindowMinutes    = 15;  // approval_expiry = approval_timestamp + this many minutes; must be > 0
+input int    I_PollTimeoutSeconds       = 30;
+
+string CanonicalCeremonyFile() { return "MLQuantAI_SmokeTest_C2_2.jsonl"; }
+
+int g_LocalCommandCounter = 0;
+string NewCommandId()
+{
+   g_LocalCommandCounter++;
+   string key = IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "|" +
+                TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS) + "|" +
+                IntegerToString((int)GetMicrosecondCount()) + "|" +
+                IntegerToString(g_LocalCommandCounter) + "|" +
+                IntegerToString(MathRand());
+   return "CMD_" + StringSubstr(Ids_Sha256Hex(key), 0, 16);
+}
 
 bool ValidateInputs()
 {
-   if(I_EventStoreFileName == "")     { Print("ABORTED: I_EventStoreFileName is blank - must exactly match the live EA's own event store file."); return false; }
-   if(I_ExecutionRequestId == "")     { Print("ABORTED: I_ExecutionRequestId is blank."); return false; }
-   if(I_ExecutionRequestHash == "")   { Print("ABORTED: I_ExecutionRequestHash is blank."); return false; }
-   if(I_ExecutionPolicyVersion == "") { Print("ABORTED: I_ExecutionPolicyVersion is blank."); return false; }
-   if(I_CandidateId == "")            { Print("ABORTED: I_CandidateId is blank."); return false; }
-   if(I_CorrelationId == "")          { Print("ABORTED: I_CorrelationId is blank."); return false; }
-   if(I_ApproverIdentity == "")       { Print("ABORTED: I_ApproverIdentity is blank - an anonymous approval is not a real approval."); return false; }
-   if(I_ValidityWindowMinutes <= 0)   { Print("ABORTED: I_ValidityWindowMinutes must be > 0."); return false; }
+   if(I_ExpectedEABindingNonce <= 0.0)   { Print("ABORTED: I_ExpectedEABindingNonce not provided (<=0.0)."); return false; }
+   if(I_TargetExecutionRequestId == "")  { Print("ABORTED: I_TargetExecutionRequestId is blank."); return false; }
+   if(I_ApproverIdentity == "")          { Print("ABORTED: I_ApproverIdentity is blank - an anonymous approval is not a real approval."); return false; }
+   if(I_ValidityWindowMinutes <= 0)      { Print("ABORTED: I_ValidityWindowMinutes must be > 0."); return false; }
    return true;
 }
 
 void OnStart()
 {
-   Print("=== MLQuantAI C2 manual-approval grant script ===");
-   Print("*** This script never calls OrderSend/CTrade. It only appends one durable approval-fact event. ***");
+   Print("=== MLQuantAI C2 manual-approval grant command issuer (RA-31) ===");
+   Print("*** This script never calls OrderSend/CTrade, and never opens the EventStore itself. ***");
 
    if(!ValidateInputs())
       return;
 
-   if(!FileIsExist(I_EventStoreFileName, FILE_COMMON))
+   if(!CeremonyCommandMailbox_IsFreeForNewCommand())
    {
-      Print("ABORTED: event store file '", I_EventStoreFileName, "' does not exist in Common Files - refusing to create a new one for an approval grant.");
+      Print("ABORTED: a previous ceremony command is still in flight (mailbox not terminal) - "
+            "wait for it to finish before issuing a new one.");
       return;
    }
 
-   if(!EventStore_Open(I_EventStoreFileName))
+   string file = CanonicalCeremonyFile();
+   string counterName = "MLQuantAI_CommandCounter__" + file;
+   string pendingName  = "MLQuantAI_CommandPending__" + file;
+
+   double counter = GlobalVariableCheck(counterName) ? GlobalVariableGet(counterName) : 0.0;
+   double seq = counter + 1.0;
+   if(GlobalVariableSet(counterName, seq) == 0)
    {
-      Print("ABORTED: could not open event store file '", I_EventStoreFileName, "'.");
+      Print("ABORTED: could not publish command_sequence (GlobalVariableSet failed).");
       return;
    }
 
-   ManualApprovalGrant grant;
-   ManualApprovalGrant_Init(grant);
-   grant.execution_request_id     = I_ExecutionRequestId;
-   grant.execution_request_hash   = I_ExecutionRequestHash;
-   grant.execution_policy_version = I_ExecutionPolicyVersion;
-   grant.candidate_id             = I_CandidateId;
-   grant.correlation_id           = I_CorrelationId;
-   grant.approver_identity        = I_ApproverIdentity;
-   grant.approval_timestamp       = TimeCurrent();
-   grant.approval_expiry          = grant.approval_timestamp + I_ValidityWindowMinutes * 60;
-   grant.approval_nonce           = ManualApproval_NewNonce();
+   CeremonyCommand cmd;
+   CeremonyCommand_Init(cmd);
+   cmd.command_id                  = NewCommandId();
+   cmd.command_type                = CEREMONY_COMMAND_TYPE_GRANT_MANUAL_APPROVAL;
+   cmd.command_sequence             = seq;
+   cmd.expected_ea_binding_nonce    = I_ExpectedEABindingNonce;
+   cmd.expected_eventstore_filename = file;
+   cmd.target_execution_request_id  = I_TargetExecutionRequestId;
+   cmd.approver_identity            = I_ApproverIdentity;
+   cmd.approval_validity_minutes    = I_ValidityWindowMinutes;
+   cmd.mailbox_status               = CEREMONY_MAILBOX_STATUS_PENDING;
 
-   Print("Granting approval: execution_request_id=", grant.execution_request_id,
-         " candidate_id=", grant.candidate_id, " approver=", grant.approver_identity,
-         " valid until=", TimeToString(grant.approval_expiry, TIME_DATE|TIME_SECONDS),
-         " nonce=", grant.approval_nonce);
+   if(!CeremonyCommandMailbox_Write(cmd))
+   {
+      Print("ABORTED: could not write the command mailbox file.");
+      return;
+   }
+   if(GlobalVariableSet(pendingName, seq) == 0)
+   {
+      Print("ABORTED: could not signal the EA (GlobalVariableSet on '", pendingName, "' failed).");
+      return;
+   }
 
-   bool ok = ManualApproval_Grant(grant);
+   Print("Command issued: command_id=", cmd.command_id, " type=GRANT_MANUAL_APPROVAL target_execution_request_id=",
+         I_TargetExecutionRequestId, " approver=", I_ApproverIdentity, " command_sequence=", DoubleToString(seq, 0));
+   Print("Waiting up to ", I_PollTimeoutSeconds, "s for the EA to claim and finish this command...");
 
-   EventStore_Close();
+   ulong startTick = GetTickCount64();
+   CeremonyCommand result;
+   bool sawClaimed = false;
+   while((long)(GetTickCount64() - startTick) < (long)I_PollTimeoutSeconds * 1000)
+   {
+      if(CeremonyCommandMailbox_Read(result) && result.command_id == cmd.command_id)
+      {
+         if(!sawClaimed && result.mailbox_status != CEREMONY_MAILBOX_STATUS_PENDING)
+         {
+            sawClaimed = true;
+            Print("EA claimed the command (mailbox_status=", CeremonyMailboxStatus_ToString(result.mailbox_status), ") - waiting for it to finish...");
+         }
+         if(CeremonyMailboxStatus_IsTerminal(result.mailbox_status))
+         {
+            Print("=== Command finished: mailbox_status=", CeremonyMailboxStatus_ToString(result.mailbox_status), " ===");
+            Print("reason_code=", result.result_reason_code, "  message=", result.result_message);
+            Print("execution_request_id=", result.result_execution_request_id);
+            Print("candidate_id=", result.result_candidate_id);
+            if(result.mailbox_status == CEREMONY_MAILBOX_STATUS_COMPLETE)
+               Print("Approval durably recorded by the EA. NOTE: not yet a submission - a separate, "
+                     "QA-authorized SUBMIT_ORDER command is required to actually reach OrderSend.");
+            return;
+         }
+      }
+      Sleep(500);
+   }
 
-   if(ok)
-      Print("Approval durably recorded. NOTE: this grant is not yet enforced by any live gate - the C2 gate integration that consults it is still deferred (see Docs/PhaseC_C2_ManualApprovalContract.md).");
-   else
-      Print("FAILED: approval was NOT recorded - see prior Print/[FAIL]-style lines.");
-
-   Print("=== manual-approval grant script complete ===");
+   Print("TIMEOUT after ", I_PollTimeoutSeconds, "s: the command may still be pending or in progress - "
+         "check the EA's own Experts log directly.");
 }

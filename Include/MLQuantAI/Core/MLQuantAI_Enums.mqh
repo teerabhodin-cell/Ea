@@ -324,7 +324,31 @@ enum ENUM_EVENT_TYPE
    // mutation, and no effect on C3.10B authority, C3.7/reconciliation,
    // or trade permission - it is an accountability record only. Same
    // append-at-end rule as every entry above.
-   EVENT_TYPE_TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED
+   EVENT_TYPE_TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED,
+
+   // RA-31 (QA-frozen Single-Writer Command/Response Protocol): a durable
+   // SystemEvent recording one transition of a ceremony command's own
+   // state machine (PENDING/CLAIMED handled at the mailbox-file layer,
+   // not here - this event covers COMMAND_RECEIVED through every
+   // downstream state: CEREMONY_IN_PROGRESS/CEREMONY_READY/
+   // SUBMISSION_IN_PROGRESS/SUBMISSION_COMPLETE/OBSERVATION_COMPLETE/
+   // APPROVAL_RECORDED/COMMAND_REJECTED/COMMAND_FAILED). Written ONLY by
+   // the EA (the sole EventStore writer under RA-31), never by a script -
+   // see MLQuantAI_CeremonyCommandEventEmission.mqh. Same append-at-end
+   // rule as every entry above.
+   EVENT_TYPE_CEREMONY_COMMAND_STATE_CHANGED,
+
+   // RA-31.2 condition D (QA-frozen): a broker transaction reconstructed
+   // from HistorySelect/HistoryDealGet* during restart recovery, when an
+   // EA crash left an EXECUTION_SUBMISSION_ATTEMPTED (L1) without a
+   // matching ORDER_SUBMITTED (L2) and/or BROKER_TRANSACTION_OBSERVED
+   // (L3). Deliberately a DIFFERENT event type from
+   // EVENT_TYPE_BROKER_TRANSACTION_OBSERVED - that type's C3.2 contract
+   // is reserved exclusively for a raw, live OnTradeTransaction envelope;
+   // this type's provenance is always "reconstructed from broker history
+   // after the fact" and must never be reported/counted as if it were a
+   // live L3 capture. Same append-at-end rule as every entry above.
+   EVENT_TYPE_BROKER_TRANSACTION_RECOVERED_FROM_HISTORY
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -368,6 +392,8 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_BROKER_TRANSACTION_OBSERVED:        return "BROKER_TRANSACTION_OBSERVED";
       case EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED:    return "TRANSACTION_REJECTION_CONFIRMED";
       case EVENT_TYPE_TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED: return "TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED";
+      case EVENT_TYPE_CEREMONY_COMMAND_STATE_CHANGED:        return "CEREMONY_COMMAND_STATE_CHANGED";
+      case EVENT_TYPE_BROKER_TRANSACTION_RECOVERED_FROM_HISTORY: return "BROKER_TRANSACTION_RECOVERED_FROM_HISTORY";
    }
    return "UNKNOWN";
 }
@@ -411,6 +437,8 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "BROKER_TRANSACTION_OBSERVED")       return EVENT_TYPE_BROKER_TRANSACTION_OBSERVED;
    if(s == "TRANSACTION_REJECTION_CONFIRMED")   return EVENT_TYPE_TRANSACTION_REJECTION_CONFIRMED;
    if(s == "TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED") return EVENT_TYPE_TERMINAL_REJECTION_AUDIT_ACKNOWLEDGED;
+   if(s == "CEREMONY_COMMAND_STATE_CHANGED")        return EVENT_TYPE_CEREMONY_COMMAND_STATE_CHANGED;
+   if(s == "BROKER_TRANSACTION_RECOVERED_FROM_HISTORY") return EVENT_TYPE_BROKER_TRANSACTION_RECOVERED_FROM_HISTORY;
    return EVENT_TYPE_UNKNOWN;
 }
 
