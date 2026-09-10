@@ -7,13 +7,31 @@
 //| ManualApproval_Grant() is a PURE WRITE, mirroring                  |
 //| ExecutionRequest_EmitAndEvaluate's own "no partial record" rule    |
 //| but with none of its evaluation logic: this file makes no          |
-//| decision, checks no lineage, consults no other projection - it     |
-//| only rejects a structurally empty grant (matching every other      |
+//| decision, checks no lineage itself - it only rejects a             |
+//| structurally empty grant (matching every other                     |
 //| *_EventEmission.mqh emitter's "never write a garbage record"       |
 //| floor) and otherwise appends one durable                           |
-//| EXECUTION_MANUAL_APPROVAL_GRANTED event, verbatim. Whether a given  |
-//| grant is currently usable is entirely the deferred                 |
-//| ManualApprovalRegistry_HasValidApproval()'s job - not this file's.  |
+//| EXECUTION_MANUAL_APPROVAL_GRANTED event, verbatim.                  |
+//|                                                                    |
+//| RA-30.4 (QA-frozen Manual Approval Runtime Projection Consistency): |
+//| write-then-update, fail-closed. EventStore_AppendSystem(e) (core,   |
+//| unmodified) is called directly instead of via the EventStore_       |
+//| LogSystem convenience wrapper, so this file keeps the exact,        |
+//| by-reference-populated SystemEvent (real log_event_id/sequence_    |
+//| number/ts, assigned by the core append itself) after a successful   |
+//| durable write - no re-read of the EventStore file is ever needed.   |
+//| On success, that SAME event is re-serialized (EventSerializer_      |
+//| ToJson, already public) and fed into                                |
+//| MLQuantAI_ManualApprovalProjection.mqh's own, UNMODIFIED             |
+//| ManualApprovalProjection_ApplyLineWithLineage() - the exact same     |
+//| validate+insert function ManualApproval_StartupRebuild() already     |
+//| uses, so there is no second, parallel validation implementation to   |
+//| drift from it. If EventStore_AppendSystem fails, the registry is     |
+//| never touched (durable truth first, always). Whether a given grant   |
+//| is currently usable is still entirely                                |
+//| ManualApprovalRegistry_HasValidApproval()'s job - this file only      |
+//| ensures the registry it reads from reflects this write immediately,  |
+//| same session, no restart required.                                   |
 //|                                                                    |
 //| No OrderSend/CTrade/broker call anywhere in this file. No           |
 //| candidate-lifecycle transition, no EventStore_LogTransition call.  |
@@ -25,6 +43,7 @@
 #include "../Core/MLQuantAI_Ids.mqh"
 #include "../Core/MLQuantAI_Enums.mqh"
 #include "MLQuantAI_ManualApprovalContract.mqh"
+#include "MLQuantAI_ManualApprovalProjection.mqh"
 
 int g_ManualApproval_NonceCounter = 0;
 
@@ -69,12 +88,15 @@ string ManualApprovalGrant_ToExtraJson(const ManualApprovalGrant &g)
 // identity fields, approver_identity, or approval_nonce is empty, or
 // if approval_expiry does not come strictly after approval_timestamp -
 // the same "never write a garbage record" floor every prior
-// *_EventEmission.mqh emitter already enforces. Never validates
-// lineage against any other projection (no ExecutionRequestProjection
-// lookup, no DryRunResultProjection lookup) - that full five-field
-// collision-check is the deferred projection's job at REBUILD time,
-// per the contract doc's "Projection apply-time validation" section,
-// not this write-time function's.
+// *_EventEmission.mqh emitter already enforces.
+//
+// RA-30.4: after that structural check, this function itself still
+// never re-validates lineage against ExecutionRequestProjection/
+// DryRunResultProjection - that full five-field collision-check lives
+// in exactly one place, ManualApprovalProjection_ApplyLineWithLineage()
+// (MLQuantAI_ManualApprovalProjection.mqh, unmodified), which this
+// function now calls itself, immediately after a successful durable
+// write, instead of leaving it to a future rebuild alone.
 bool ManualApproval_Grant(const ManualApprovalGrant &grant)
 {
    if(grant.execution_request_id == "" || grant.execution_request_hash == "" ||
@@ -86,8 +108,45 @@ bool ManualApproval_Grant(const ManualApprovalGrant &grant)
    if(grant.approval_expiry <= grant.approval_timestamp)
       return false;
 
-   string json = ManualApprovalGrant_ToExtraJson(grant);
-   return EventStore_LogSystem(EventTypeToString(EVENT_TYPE_EXECUTION_MANUAL_APPROVAL_GRANTED), "manual approval granted", json);
+   SystemEvent e;
+   SystemEvent_Init(e);
+   e.base.event_type = EventTypeToString(EVENT_TYPE_EXECUTION_MANUAL_APPROVAL_GRANTED);
+   e.message          = "manual approval granted";
+   e.extra_json       = ManualApprovalGrant_ToExtraJson(grant);
+
+   // RA-30.4 fail-closed ordering (QA-frozen): durable write FIRST - the
+   // runtime registry is never touched if this fails. EventStore_
+   // AppendSystem populates e.base.log_event_id/sequence_number/ts by
+   // reference regardless of the outcome, but they are only trustworthy
+   // - and only used below - once this returns true.
+   if(!EventStore_AppendSystem(e))
+      return false;
+
+   // Re-serialize the SAME event that was just durably written (no
+   // EventStore re-read) and feed it through the exact, unmodified
+   // validate+insert path ManualApproval_StartupRebuild() already uses -
+   // zero parallel validation logic to drift from it.
+   string line = EventSerializer_ToJson(e);
+   string applyReason;
+   if(!ManualApprovalProjection_ApplyLineWithLineage(line, applyReason))
+   {
+      // Durable truth now HAS this approval (the append above already
+      // succeeded and cannot be safely rolled back - the store is
+      // append-only) but the live registry rejected re-applying its own
+      // just-written data. Expected to be effectively unreachable in
+      // practice (the data was already validated once by this same
+      // function's own checks above), but if it ever happens the
+      // registry and the durable file are now inconsistent for this one
+      // grant until the next full rebuild (EA restart) reconciles them -
+      // distinct, explicit log line so this is never silently folded
+      // into an ordinary "grant failed" diagnosis.
+      Print("[MLQuantAI][ERROR] RA-30.4: durable manual approval write SUCCEEDED (log_event_id=", e.base.log_event_id,
+            ") but runtime registry apply FAILED: ", applyReason,
+            " - durable/runtime are now inconsistent for this grant until the next EA restart rebuilds the registry. Human reconciliation required.");
+      return false;
+   }
+
+   return true;
 }
 
 #endif // __MLQUANTAI_MANUALAPPROVALEMISSION_MQH__
