@@ -363,6 +363,66 @@ int OnInit()
       return INIT_FAILED;
    }
 
+   // RA-29.1 (QA-frozen contract, Docs-external): Ceremony EventStore
+   // Binding Integrity. Publishes a fresh per-OnInit nonce under a
+   // GlobalVariableTemp name that encodes this session's actual
+   // EventStore filename, so a ceremony script can prove - before it
+   // builds any Candidate/lineage - that it targets the same file THIS
+   // EA instance currently has open, not a stale binding left behind by
+   // an earlier EA instance/session. Must run strictly after
+   // EventStore_Open() succeeds and strictly before this EA becomes
+   // observer-ready (i.e. before OnInit can return INIT_SUCCEEDED), so a
+   // publish failure is a hard startup failure, never a warning - a
+   // ceremony must never be able to proceed against an EA that could not
+   // prove its own binding. This build's GlobalVariableTemp() is
+   // single-argument only and CREATES the variable as temporary - it does
+   // not just flip a flag on one that already exists - so publishing a
+   // temp variable with a specific value is: delete any leftover first
+   // (best-effort), GlobalVariableTemp() creates it fresh as temporary,
+   // then GlobalVariableSet() assigns the value onto that already-temp
+   // variable. Both calls must succeed. (Found empirically, real EA run
+   // on 2026.09.10: the reverse order - Set() then Temp() - fails every
+   // time, because Temp() then finds a variable with that name already
+   // exists.)
+   //
+   // RA-29.1 amendment (QA-authorized after CONDITIONAL PASS review): the
+   // original nonce (TimeLocal()*100000 + GetTickCount()%100000) had no
+   // uniqueness invariant - RA-29.1's own regression test proved by
+   // construction, and once empirically, that two OnInit calls could
+   // produce an IDENTICAL nonce, which defeats stale-instance rejection.
+   // Replaced with a persistent, monotonically-increasing counter scoped
+   // per EventStore filename: every OnInit reads the counter's current
+   // value (0 if it has never existed) and writes back current+1, using
+   // that strictly-larger value as the nonce. Two OnInit calls for the
+   // same filename can therefore never produce the same nonce - this is
+   // now a deterministic invariant, not a probabilistic one. Unlike the
+   // binding variable itself, the counter is deliberately an ORDINARY
+   // (non-temp) global variable - it must persist so the sequence keeps
+   // strictly advancing across EA restarts within the same terminal
+   // session (a restart is exactly the "stale previous instance" case
+   // RA-29.1 exists to guard against).
+   {
+      string ra29BindingName = "MLQuantAI_EABinding__" + g_EventStoreFileName;
+      string ra29CounterName = "MLQuantAI_EABindingCounter__" + g_EventStoreFileName;
+      double ra29Counter     = GlobalVariableCheck(ra29CounterName) ? GlobalVariableGet(ra29CounterName) : 0.0;
+      double ra29Nonce       = ra29Counter + 1.0;
+      bool   ra29Published   = (GlobalVariableSet(ra29CounterName, ra29Nonce) != 0);
+      GlobalVariableDel(ra29BindingName); // best-effort: clear any leftover before (re)creating fresh
+      ra29Published = ra29Published && GlobalVariableTemp(ra29BindingName) && (GlobalVariableSet(ra29BindingName, ra29Nonce) != 0);
+      if(!ra29Published)
+      {
+         LogError(StringFormat("RA-29.1: failed to publish EA binding ('%s') - EA will not run "
+                                "(a ceremony must never proceed unable to verify which EventStore this EA has open).",
+                                ra29BindingName));
+         GlobalVariableDel(ra29BindingName); // best-effort: never leave a half-published, non-temp binding behind
+         EventStore_Close();
+         return INIT_FAILED;
+      }
+      LogInfo(StringFormat("RA-29.1 binding published: file=%s nonce=%.0f "
+                            "(copy this EXACT value into a ceremony script's I_ExpectedEABindingNonce input)",
+                            g_EventStoreFileName, ra29Nonce));
+   }
+
    // EventStoreHealth_CheckFile() above only auto-logs SYSTEM_EVENT_STORE_
    // CORRUPTED when a write handle is ALREADY open at check time, which
    // wasn't true yet (store opens right after) - log it explicitly now.

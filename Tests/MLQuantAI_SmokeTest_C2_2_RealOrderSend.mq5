@@ -53,6 +53,7 @@
 
 input bool I_Understand_This_May_Open_A_Real_Position = false; // must be set true to run - script aborts otherwise
 input double CeremonyReferencePrice = 0.0; // C6.6-RA-06: 0.0 = capture current SYMBOL_BID now and print it as this run's frozen ceremony reference; >0 = reuse the EXACT value printed by an earlier run, unmodified/unrounded, so this run's identity chain matches that earlier run's - required for Manual Approval to ever match a later submission attempt
+input double I_ExpectedEABindingNonce = 0.0; // RA-29.1 (QA-frozen contract): copy the EXACT nonce MLQuantAI.mq5 just printed at its own OnInit ("RA-29.1 binding published: ... nonce=...") for the EA instance you intend to observe this ceremony's broker transaction. 0.0 = ABORT (no ceremony may run without proving EA/Script EventStore binding first).
 
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_ToTradeCandidate.mqh>
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_EventEmission.mqh>
@@ -494,12 +495,47 @@ void OnStart()
       return;
    }
 
+   // RA-29.1 (QA-frozen contract): Ceremony EventStore Binding Integrity
+   // preflight. Must run before EventStore_Open() below and before any
+   // Candidate/lineage is built - a mismatch here means this script and
+   // whatever EA is (or isn't) attached are not provably looking at the
+   // same file, which is exactly the gap RA-28 exposed (L1/L2 landed in
+   // this script's file while the real L3 landed in the EA's own,
+   // different file). canonicalFile is deliberately the same literal this
+   // script has always hardcoded (see the C6.6-RA-05 comment just below) -
+   // RA-29.1 does not introduce a filename override, it only proves the
+   // EA is bound to this exact, already-fixed name.
+   string canonicalFile = "MLQuantAI_SmokeTest_C2_2.jsonl";
+   string ra29BindingName = "MLQuantAI_EABinding__" + canonicalFile;
+   if(I_ExpectedEABindingNonce <= 0.0)
+   {
+      Print("ABORTED (RA-29.1 preflight): I_ExpectedEABindingNonce not provided (<=0.0). "
+            "Read the EA's own Experts log line 'RA-29.1 binding published: ... nonce=...' for file=",
+            canonicalFile, " and copy that exact value into this input before running.");
+      return;
+   }
+   if(!GlobalVariableCheck(ra29BindingName))
+   {
+      Print("ABORTED (RA-29.1 preflight): no EA binding found for '", ra29BindingName, "' - "
+            "no EA instance currently has ", canonicalFile, " open (not attached, or attached to a different file).");
+      return;
+   }
+   double ra29ActualNonce = GlobalVariableGet(ra29BindingName);
+   if(ra29ActualNonce != I_ExpectedEABindingNonce)
+   {
+      Print("ABORTED (RA-29.1 preflight): binding nonce mismatch for '", ra29BindingName, "' - expected=",
+            DoubleToString(I_ExpectedEABindingNonce, 0), " actual=", DoubleToString(ra29ActualNonce, 0),
+            " (stale binding from a previous/different EA instance, or wrong value copied).");
+      return;
+   }
+   Print("RA-29.1 preflight PASS: EA binding for ", canonicalFile, " matches nonce=", DoubleToString(ra29ActualNonce, 0));
+
    // C6.6-RA-05 (QA-authorized, ceremony tooling only): EventStore must be
    // OPEN before BuildAcceptedRequest() runs, since that function now
    // durably emits the full upstream lineage chain (RA-05) itself -
    // moved ahead of the fixture-build call below (was previously opened
    // AFTER, back when BuildAcceptedRequest() was still pure/in-memory-only).
-   string file = "MLQuantAI_SmokeTest_C2_2.jsonl";
+   string file = canonicalFile;
    EventStore_Open(file);
 
    TradeCandidate candidate;
