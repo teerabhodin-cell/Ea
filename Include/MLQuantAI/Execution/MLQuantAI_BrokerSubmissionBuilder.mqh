@@ -64,10 +64,19 @@ void MqlTradeRequest_ZeroInit(MqlTradeRequest &r)
 // false (outTradeRequest left zeroed) on any freshness/validity
 // failure - never partially constructs a request. type_filling/
 // type_time are NOT part of C2.1's frozen field list (only symbol/
-// volume/type/price/sl/tp/deviation/comment/magic are) - ORDER_FILLING_IOC/
-// ORDER_TIME_GTC are a minimal, conservative implementation default
-// needed for OrderSend to be well-formed at all, flagged here for
-// review rather than silently assumed frozen.
+// volume/type/price/sl/tp/deviation/comment/magic are).
+//
+// RA-20 amendment: type_filling was previously hardcoded to
+// ORDER_FILLING_IOC as a "minimal, conservative implementation default"
+// - the header comment above flagged it for future review rather than
+// treating it as frozen. RA-19's ceremony against a real Exness DEMO
+// account exercised that review: the account's XAUUSD symbol advertises
+// FOK only (not IOC), so a hardcoded IOC risked an avoidable
+// TRADE_RETCODE_INVALID_FILL that would have obscured whatever the
+// ceremony was actually trying to observe. type_filling is now selected
+// at build time from the current symbol's own advertised capability
+// (SYMBOL_FILLING_MODE) via BrokerSubmission_SelectFillingMode() below,
+// instead of being assumed.
 //
 // RA-13 amendment (per the RA-12-frozen amendment to
 // Docs/PhaseC_C2_1_BrokerSubmissionContract.md, implementing
@@ -82,6 +91,28 @@ void MqlTradeRequest_ZeroInit(MqlTradeRequest &r)
 // close. outTradeRequest.price is set to this bound value, unchanged -
 // the only validation performed here is that it is a structurally
 // sane (positive) number, never a re-derivation from the market.
+// RA-20.1: pure, unit-testable mapping from a symbol's own advertised
+// SYMBOL_FILLING_MODE bitmask (SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE))
+// to the ENUM_ORDER_TYPE_FILLING this Builder will place on the request.
+// Takes the bitmask as a plain parameter rather than reading
+// SymbolInfoInteger itself, so the selection policy can be exercised by
+// the automated regression suite with synthetic flag combinations - no
+// live-terminal/broker-specific capability needed to prove the mapping is
+// correct. Preference order: FOK first (this project's own original
+// zero-init default, MqlTradeRequest_ZeroInit above), then IOC, and
+// ORDER_FILLING_RETURN only when the symbol advertises neither flag (some
+// brokers report 0 to mean "no restriction" - Return is accepted by both
+// OTC and exchange execution, the most conservative choice available in
+// that case).
+ENUM_ORDER_TYPE_FILLING BrokerSubmission_SelectFillingMode(long symbolFillingModeFlags)
+{
+   if((symbolFillingModeFlags & SYMBOL_FILLING_FOK) != 0)
+      return ORDER_FILLING_FOK;
+   if((symbolFillingModeFlags & SYMBOL_FILLING_IOC) != 0)
+      return ORDER_FILLING_IOC;
+   return ORDER_FILLING_RETURN;
+}
+
 bool BrokerSubmission_BuildTradeRequest(const ExecutionRequest &req, const ExecutionPolicy &policy,
                                           string observedSymbolAtGate, double boundExecutionReferencePrice,
                                           MqlTradeRequest &outTradeRequest, ENUM_REASON_CODE &outRejectReason)
@@ -119,7 +150,7 @@ bool BrokerSubmission_BuildTradeRequest(const ExecutionRequest &req, const Execu
    outTradeRequest.magic       = MLQUANTAI_MAGIC_NUMBER;
    outTradeRequest.comment     = req.correlation_id;
    outTradeRequest.type_time   = ORDER_TIME_GTC;
-   outTradeRequest.type_filling = ORDER_FILLING_IOC;
+   outTradeRequest.type_filling = BrokerSubmission_SelectFillingMode((long)SymbolInfoInteger(freshSymbol, SYMBOL_FILLING_MODE));
 
    return true;
 }

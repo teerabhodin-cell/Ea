@@ -32,6 +32,13 @@
 //| The Entry Compatibility Gate itself (MLQuantAI_EntryCompatibilityGate|
 //| .mqh) is NOT tested here - see the separate                          |
 //| Tests/MLQuantAI_Test_EntryCompatibilityGate.mq5.                     |
+//|                                                                      |
+//| RA-20.1 amendment: BrokerSubmission_BuildTradeRequest's type_filling |
+//| is no longer a hardcoded constant - it is selected at build time from|
+//| the real symbol's SYMBOL_FILLING_MODE capability via the new pure    |
+//| helper BrokerSubmission_SelectFillingMode(). Both the pure mapping   |
+//| (synthetic bitmask inputs) and the live build-path wiring (against   |
+//| the real current terminal symbol) are covered below.                |
 //+------------------------------------------------------------------+
 #property copyright "MLQuantAI"
 #property script_show_inputs
@@ -459,6 +466,62 @@ void Test_Build_InvalidBoundPriceRejects()
    Check(!BrokerSubmission_BuildTradeRequest(req, policy, _Symbol, -1.25, tr2, reason2),
          "build fails when boundExecutionReferencePrice < 0.0");
    Check(reason2 == REASON_ERROR_INTERNAL, "reason_code is REASON_ERROR_INTERNAL");
+}
+
+//=====================================================================
+// RA-20.1: BrokerSubmission_SelectFillingMode - pure mapping from a
+// symbol's own SYMBOL_FILLING_MODE bitmask to ENUM_ORDER_TYPE_FILLING.
+// Driven entirely by synthetic bitmask inputs - no live-terminal/broker
+// capability needed, so these are deterministic on every machine/broker
+// this suite ever runs against.
+//=====================================================================
+void Test_SelectFillingMode_FokOnlyFlag_ReturnsFok()
+{
+   Print("--- SelectFillingMode: SYMBOL_FILLING_FOK flag alone selects ORDER_FILLING_FOK ---");
+   Check(BrokerSubmission_SelectFillingMode(SYMBOL_FILLING_FOK) == ORDER_FILLING_FOK,
+         "FOK-only bitmask selects ORDER_FILLING_FOK (matches the real Exness XAUUSD ceremony finding, RA-19/RA-20)");
+}
+
+void Test_SelectFillingMode_IocOnlyFlag_ReturnsIoc()
+{
+   Print("--- SelectFillingMode: SYMBOL_FILLING_IOC flag alone selects ORDER_FILLING_IOC ---");
+   Check(BrokerSubmission_SelectFillingMode(SYMBOL_FILLING_IOC) == ORDER_FILLING_IOC,
+         "IOC-only bitmask selects ORDER_FILLING_IOC");
+}
+
+void Test_SelectFillingMode_BothFlags_PrefersFok()
+{
+   Print("--- SelectFillingMode: both FOK and IOC advertised - FOK is preferred ---");
+   Check(BrokerSubmission_SelectFillingMode(SYMBOL_FILLING_FOK | SYMBOL_FILLING_IOC) == ORDER_FILLING_FOK,
+         "FOK+IOC bitmask still selects ORDER_FILLING_FOK - matches this project's own original zero-init default");
+}
+
+void Test_SelectFillingMode_NoFlags_ReturnsReturn()
+{
+   Print("--- SelectFillingMode: symbol advertises neither flag (0) - falls back to ORDER_FILLING_RETURN ---");
+   Check(BrokerSubmission_SelectFillingMode(0) == ORDER_FILLING_RETURN,
+         "an empty bitmask selects ORDER_FILLING_RETURN, the most conservative fallback");
+}
+
+// RA-20.2: proves the LIVE build path (BrokerSubmission_BuildTradeRequest)
+// actually uses this same selection logic against the real current
+// terminal symbol's real capability - not merely that the pure function
+// is individually correct in isolation. Whatever this test's own
+// SYMBOL_FILLING_MODE happens to be on the machine/broker running this
+// suite, the assertion holds either way (it re-derives its own
+// expectation from the same live read), so this is not broker-specific.
+void Test_Build_FillingModeMatchesSymbolCapability()
+{
+   Print("--- Build: type_filling on a successful build matches BrokerSubmission_SelectFillingMode(real SYMBOL_FILLING_MODE) ---");
+   ExecutionRequest req; ExecutionPolicy policy;
+   Check(BuildAcceptedRequest(req, policy, "FILLINGMODE", 11), "sanity: request built");
+
+   MqlTradeRequest tr; ENUM_REASON_CODE reason;
+   Check(BrokerSubmission_BuildTradeRequest(req, policy, _Symbol, TEST_SENTINEL_BOUND_PRICE, tr, reason), "build succeeds");
+
+   ENUM_ORDER_TYPE_FILLING expected = BrokerSubmission_SelectFillingMode((long)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE));
+   Check(tr.type_filling == expected,
+         "type_filling == BrokerSubmission_SelectFillingMode(real SYMBOL_FILLING_MODE) - never a bare hardcoded constant (RA-20.1)");
 }
 
 //=====================================================================
@@ -900,6 +963,12 @@ void OnStart()
    Test_Build_NonMarketSideRejects();
    Test_Build_ValidRequest_FieldsFrozenShape();
    Test_Build_InvalidBoundPriceRejects();
+
+   Test_SelectFillingMode_FokOnlyFlag_ReturnsFok();
+   Test_SelectFillingMode_IocOnlyFlag_ReturnsIoc();
+   Test_SelectFillingMode_BothFlags_PrefersFok();
+   Test_SelectFillingMode_NoFlags_ReturnsReturn();
+   Test_Build_FillingModeMatchesSymbolCapability();
 
    Test_Classify_AcceptedRetcodes();
    Test_Classify_ExplicitRejectionRetcodes();
