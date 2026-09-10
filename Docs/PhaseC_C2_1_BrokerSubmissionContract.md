@@ -576,3 +576,95 @@ Full B9 + C1 + C2 regression re-run required before "C2 FULLY SEALED"
     is declared, same discipline the "C1 FULLY SEALED" checkpoint
     already set.
 ```
+
+## RA-12 amendment — Entry Price Binding (execution_reference_price)
+
+**Status: FROZEN.** QA sign-off given — this section is now authoritative
+text: the "Order construction (frozen)" section above's `price` line is
+superseded by the "Proposed replacement text" below (kept above,
+unmodified, as the historical record of C2.2/C2.3's already-implemented,
+already-PASSED, sealed behavior — freezing this amendment does not
+retroactively alter that sealed behavior; it governs future
+implementation only).
+**Freezing this contract text is not, by itself, implementation
+authorization. No `.mqh`/`.mq5` file may be created or modified under
+this section's authority; that requires its own, separately-authorized
+implementation checkpoint (with its own test/QA gate) opened after this
+freeze.**
+
+Origin: `Docs/PhaseC_C2_4_EntryPriceCompatibilityContract.md` §7 (frozen,
+QA ruling: option (b), exact execution-price binding), and the RA-12
+read-only audit that traced the resulting contradiction against this
+document's own "Order construction" clause and confirmed it in the real
+implementation (`MLQuantAI_BrokerSubmissionBuilder.mqh`,
+`MLQuantAI_BrokerSubmissionAdapter.mqh`).
+
+### The conflict this amendment resolves
+
+The frozen "Order construction" section above requires:
+
+> `price = SymbolInfoDouble(_Symbol, side==BUY?SYMBOL_ASK:SYMBOL_BID)`
+> (fresh market price at submission time — never `req.planned_entry`...)
+
+C2.4 §7 (frozen) requires the opposite for the specific value the not-yet-
+built Entry Compatibility Gate produces:
+
+> C2 MUST NOT perform an independent market-price reread that replaces
+> the bound `execution_reference_price`.
+
+Both clauses are individually sound and both exist to prevent submitting
+against a stale price — they simply resolve that concern at different
+points in time (Builder-time vs. Gate-time). They cannot both stand as
+written. This amendment updates this document's `price` clause only;
+`sl`/`tp`/`volume`/`symbol`/`deviation`/`magic`/`comment` construction is
+unchanged and untouched by this amendment.
+
+### Frozen replacement text for "Order construction"'s `price` clause
+
+> `price = execution_reference_price` — a value captured **once**, by the
+> Entry Compatibility Gate (`Docs/PhaseC_C2_4_EntryPriceCompatibilityContract.md`
+> §7), as `SYMBOL_ASK` (for `req.side == ORDER_TYPE_BUY`) or `SYMBOL_BID`
+> (for `req.side == ORDER_TYPE_SELL`) at gate-evaluation time, then passed
+> through unchanged into `MqlTradeRequest.price` at construction time.
+> The Builder MUST NOT call `SymbolInfoDouble(..., SYMBOL_ASK/SYMBOL_BID)`
+> to derive `price` itself, and MUST NOT substitute any other value for
+> the bound `execution_reference_price` it is given. (This is the direct
+> implementation target of C2.4 AC-10: "the price consumed by
+> BrokerSubmission for a passed attempt is exactly the
+> `execution_reference_price` evaluated by the Entry Compatibility Gate.")
+
+### Data-flow requirement (informational — not new normative text)
+
+Per RA-12's implementation trace: `BrokerSubmission_BuildTradeRequest`'s
+current signature has no parameter through which a bound price could
+reach it, and its internal bid/ask read (currently self-contained,
+independent of any gate output) would need to be replaced by consuming a
+caller-supplied bound-price parameter instead. This observation records
+*why* the clause above is implementable, not an authorization to write
+that code — the actual signature/logic change is implementation, gated
+separately per the header above.
+
+### What is explicitly NOT changed by this amendment
+
+- `sl = req.planned_sl`, `tp = req.planned_tp` — unchanged, still
+  immutable, still copied verbatim.
+- `volume`, `type`, `deviation`, `magic`, `comment` construction —
+  unchanged.
+- The "Final pre-submit gate re-validation (frozen)" section — unchanged;
+  this amendment does not alter which gates re-run fresh, only where the
+  `price` value itself comes from.
+- The mandatory sequence (`RecordAttempt` before `OrderSend`, the
+  three-way retcode classification, the sealed state machine) — unchanged.
+- Nothing in C2.2/C2.3's already-PASSED, sealed regression behavior is
+  retroactively altered — this amendment governs future implementation
+  only, once frozen.
+
+### Freeze status
+
+**FROZEN.** QA reviewed this exact wording and gave explicit sign-off.
+This section is now part of this document's frozen, authoritative text;
+the "Order construction" section's `price` line above is superseded by
+it. Implementation authority is a separate matter — see this section's
+own header above: a distinct, separately-authorized implementation
+checkpoint (with its own test/QA gate) is required before any
+`.mqh`/`.mq5` change may be made under this amendment's authority.
