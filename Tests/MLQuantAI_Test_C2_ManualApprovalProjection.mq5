@@ -385,6 +385,66 @@ void Test_NoApprovalAtAll_HasValidApprovalFalse()
 }
 
 //=====================================================================
+// RA-16.2: query-time single-field mismatch. Everything above this
+// point tests the APPLY-time (rebuild) boundary - a forged grant record
+// mismatching its own referenced ExecutionRequestProjection. This is a
+// different boundary: a real, validly-applied grant already sits in the
+// registry for Request A; the QUERY itself is then made with Request
+// B's real fields, deliberately swapping in exactly one of B's fields
+// (execution_request_hash - the field RA-15.3's audit specifically
+// named as the representative "approval reused across a policy change"
+// scenario) while every other argument stays A's own correct value.
+// Must return false - a partial match must never succeed. Both A and B
+// are real, independently built requests (this file's own "no
+// fabricated hashes" rule) - execution_request_hash is a genuine hash
+// belonging to a genuine different request, not a string literal.
+//=====================================================================
+void Test_QueryTimeSingleFieldMismatch_HasValidApprovalFalse()
+{
+   Print("--- RA-16.2: valid Grant A exists; querying HasValidApproval with A's own id/policy/candidate/correlation but B's (a real, different request's) execution_request_hash returns false - no partial match ---");
+
+   string file = "MLQuantAI_Test_C2MAP_QueryTimeMismatch.jsonl";
+   FileDelete(file, FILE_COMMON);
+   EventStore_Open(file);
+
+   ExecutionRequest reqA; DryRunExecutionResult drA; ExecutionPolicy policyA;
+   Check(BuildFullChain(reqA, drA, policyA, "qtmA", 13), "sanity: request A built");
+   Check(drA.decision == SAFETY_GATE_ACCEPTED, "sanity: A's dry-run ACCEPTED");
+
+   ExecutionRequest reqB; DryRunExecutionResult drB; ExecutionPolicy policyB;
+   Check(BuildFullChain(reqB, drB, policyB, "qtmB", 14), "sanity: request B built (a real, different request)");
+   Check(reqA.execution_request_id != reqB.execution_request_id, "sanity: A and B are distinct requests");
+   Check(reqA.execution_request_hash != reqB.execution_request_hash, "sanity: A and B carry different real hashes");
+
+   datetime ts  = D'2026.03.10 09:00:00';
+   datetime exp = D'2026.03.10 09:15:00';
+   ManualApprovalGrant g;
+   BuildValidGrantFor(reqA, "reviewer_a", ts, exp, g);
+   Check(ManualApproval_Grant(g), "sanity: a genuinely valid grant for A is written durably");
+
+   EventStore_Close();
+   ResetAllProjections();
+
+   ManualApprovalProjectionReport report = ManualApprovalProjection_RebuildFromFile(file);
+   Check(report.ok, "sanity: rebuild succeeds");
+   Check(report.approval_lines_applied == 1, "sanity: exactly one approval line applied (for A)");
+
+   // Control: querying with A's own, fully-correct fields still succeeds
+   // - proves the registry genuinely holds a valid approval, so the
+   // failure asserted below is caused by the mismatched argument, not
+   // by some unrelated setup problem.
+   Check(ManualApprovalRegistry_HasValidApproval(reqA.execution_request_id, reqA.execution_request_hash,
+         reqA.execution_policy_version, reqA.candidate_id, reqA.correlation_id, ts),
+         "control: HasValidApproval(A's own correct fields) is true");
+
+   // The actual RA-16.2 assertion: same query, A's id/policy/candidate/
+   // correlation, but B's real execution_request_hash substituted in.
+   Check(!ManualApprovalRegistry_HasValidApproval(reqA.execution_request_id, reqB.execution_request_hash,
+         reqA.execution_policy_version, reqA.candidate_id, reqA.correlation_id, ts),
+         "HasValidApproval(A's id/policy/candidate/correlation + B's hash) is false - single-field mismatch fails closed, no partial match");
+}
+
+//=====================================================================
 // Two real, valid grants for the SAME execution_request_id are both
 // preserved, never collapsed to one - a legitimate second approval
 // (e.g. after the first expired) is real audit history.
@@ -719,6 +779,7 @@ void OnStart()
 
    Test_ValidGrant_HasValidApproval_ExpiryBoundary();
    Test_NoApprovalAtAll_HasValidApprovalFalse();
+   Test_QueryTimeSingleFieldMismatch_HasValidApprovalFalse();
    Test_TwoValidGrants_SameRequestId_BothApplied_NeverDeduped();
    Test_DuplicateApprovalEventReplay_Idempotent();
    Test_ConflictingLogEventId_FailsClosed();

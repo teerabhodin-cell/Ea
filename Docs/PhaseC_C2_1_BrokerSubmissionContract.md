@@ -466,6 +466,20 @@ C2.2 integration follow-up patch (separately scoped, after C2.3's
     opt-in smoke test.
 ```
 
+**RA-16.1 implementation status note**: `SubmissionAttemptRegistry_HasAttempt`
+landed with the original C2.2/C2.3 integration patch, but
+`SubmissionAttemptRegistry_IsUnresolved` — named above from the start —
+had zero callers anywhere in the gate chain until RA-16.1 (a real,
+`MLQuantAI_BrokerSubmissionGate.mqh`-level implementation gap against
+this already-frozen text, found at RA-15, closed at RA-16). Both
+functions are now explicitly consulted in `BrokerSubmissionGate_Evaluate`
+(`IsUnresolved` checked first, then `HasAttempt` as the unchanged
+catch-all), matching this section's original intent exactly. The
+"simplest policy" paragraph above is unchanged and still governs: any
+historical attempt, resolved or not, still blocks resubmission — RA-16.1
+made that outcome explicit and directly tested for the unresolved case,
+without altering the policy itself.
+
 ### A real design tension, found and resolved before any code exists
 
 C1.3 froze a hard rule for this project: a projection rebuild must be a

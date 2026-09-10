@@ -7,9 +7,17 @@
 //| interface as a third check, after the in-session guard. Proves the  |
 //| durable check works purely from EventStore replay (no in-session    |
 //| state), blocks resubmission of a RESOLVED attempt too (the frozen   |
-//| "simplest policy" - HasAttempt, not IsUnresolved), and is isolated  |
-//| per execution_request_id (no false positives). Uses the real        |
-//| B5-C1/C2.2/C2.3 pipeline for every fixture - no fabricated hashes.  |
+//| "simplest policy" - HasAttempt still blocks a resolved attempt      |
+//| unchanged), and is isolated per execution_request_id (no false      |
+//| positives). Uses the real B5-C1/C2.2/C2.3 pipeline for every         |
+//| fixture - no fabricated hashes.                                      |
+//|                                                                     |
+//| RA-16.1 addition: BrokerSubmissionGate_Evaluate now ALSO consults    |
+//| SubmissionAttemptRegistry_IsUnresolved() explicitly, ahead of        |
+//| HasAttempt() - see Test_UnresolvedDurableAttempt_                    |
+//| BlocksResubmission_ExplicitCheck below. The policy outcome is        |
+//| unchanged (both branches reject with REASON_DUPLICATE_EVENT); only   |
+//| the unresolved sub-case now has its own dedicated, tested code path. |
 //+------------------------------------------------------------------+
 #property copyright "MLQuantAI"
 #property script_show_inputs
@@ -319,6 +327,52 @@ void Test_DurableAttempt_BlocksResubmission_IgnoresInSessionState()
             "on a non-DEMO account: still rejects on environment, before the durable check is ever reached");
 }
 
+// RA-16.1: dedicated, explicit test for the UNRESOLVED sub-case,
+// separate from Test_DurableAttempt_BlocksResubmission_IgnoresInSessionState
+// above (which also happens to be unresolved, since it never calls
+// ProcessSendResult, but was written before RA-16.1 and asserts nothing
+// about IsUnresolved specifically). This test exists to prove the NEW
+// explicit SubmissionAttemptRegistry_IsUnresolved() check added to
+// BrokerSubmissionGate_Evaluate at RA-16.1 is genuinely reachable and
+// correctly fires for this exact scenario - not just that the outcome
+// happens to still be REJECTED via the unchanged HasAttempt() catch-all.
+void Test_UnresolvedDurableAttempt_BlocksResubmission_ExplicitCheck()
+{
+   Print("--- RA-16.1: an UNRESOLVED durable attempt (attempted, no outcome yet), recovered via a simulated restart, is explicitly caught by SubmissionAttemptRegistry_IsUnresolved() inside the gate ---");
+   ResetAllProjections(); BrokerSubmissionGate_Reset(); BrokerSubmissionAuditReadiness_Reset();
+   string file = "MLQuantAI_Test_C2Integ_UnresolvedExplicit.jsonl";
+   FileDelete(file, FILE_COMMON);
+   EventStore_Open(file);
+
+   TradeCandidate c; ExecutionRequest req; ExecutionPolicy policy;
+   // BuildFullChainThroughAttempt records the attempt but never calls
+   // ProcessSendResult - no outcome event exists for this request, so
+   // it is genuinely unresolved, not merely "not yet checked".
+   Check(BuildFullChainThroughAttempt(c, req, policy, "UNRESOLVEDEXPLICIT", 7), "sanity: full chain + attempt built, no outcome recorded");
+   EventStore_Close();
+
+   ResetAllProjections(); BrokerSubmissionAuditReadiness_Reset(); // simulate restart
+   BrokerSubmissionAuditProjectionReport report = BrokerSubmissionAudit_StartupRebuild(file);
+   Check(report.ok, "startup rebuild succeeds");
+   Check(BrokerSubmissionAuditReadiness_IsReady(), "audit registry is ready after the simulated restart");
+   Check(SubmissionAttemptRegistry_HasAttempt(req.execution_request_id), "sanity: HasAttempt is true");
+   // The precondition this whole test exists to establish: this exact
+   // scenario genuinely exercises the RA-16.1 IsUnresolved branch, not
+   // just the pre-existing HasAttempt catch-all.
+   Check(SubmissionAttemptRegistry_IsUnresolved(req.execution_request_id), "precondition: IsUnresolved is true - no outcome was ever recorded for this attempt");
+
+   DryRunExecutionResult result;
+   Check(BrokerSubmissionGate_Evaluate(req, policy, result), "evaluation completes");
+
+   long tradeMode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
+   if(tradeMode == ACCOUNT_TRADE_MODE_DEMO)
+      Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == REASON_DUPLICATE_EVENT,
+            "on a real DEMO account: rejected, REASON_DUPLICATE_EVENT - via the RA-16.1 explicit IsUnresolved check, not merely HasAttempt's broader catch-all");
+   else
+      Check(result.decision == SAFETY_GATE_REJECTED && result.reason_code == REASON_EXECUTION_ENVIRONMENT_NOT_PERMITTED,
+            "on a non-DEMO account: still rejects on environment, before the durable checks are ever reached");
+}
+
 void Test_ResolvedDurableAttempt_StillBlocksResubmission()
 {
    Print("--- strongest policy: a durable attempt that IS resolved (SUBMITTED), recovered via an actual simulated restart, still blocks resubmission - HasAttempt is consulted, not IsUnresolved ---");
@@ -536,6 +590,7 @@ void OnStart()
    Print("=== MLQuantAI Test: C2.2/C2.3 integration patch - BrokerSubmissionGate durable idempotency + startup-rebuild readiness ===");
 
    Test_DurableAttempt_BlocksResubmission_IgnoresInSessionState();
+   Test_UnresolvedDurableAttempt_BlocksResubmission_ExplicitCheck();
    Test_ResolvedDurableAttempt_StillBlocksResubmission();
    Test_NoDurableAttempt_StillAcceptedAndIsolatedFromOtherRequests();
 

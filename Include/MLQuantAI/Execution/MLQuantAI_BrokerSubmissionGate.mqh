@@ -17,10 +17,29 @@
 //| deliverable" section): a check added after the in-session guard,    |
 //| consulting C2.3's already-frozen SubmissionAttemptRegistry_         |
 //| HasAttempt() interface - no parsing/replay logic duplicated here,   |
-//| just a call into that interface. Per the frozen "simplest policy"   |
-//| this checks HasAttempt (not IsUnresolved) - ANY durable historical  |
-//| attempt for this exact execution_request_id, resolved or not,       |
-//| blocks resubmission.                                                |
+//| just a call into that interface. The frozen "simplest policy" is    |
+//| that ANY durable historical attempt for this exact                  |
+//| execution_request_id, resolved or not, blocks resubmission -        |
+//| HasAttempt alone is sufficient to enforce that outcome.              |
+//|                                                                     |
+//| RA-16.1 hardening: the frozen contract text above always named      |
+//| BOTH SubmissionAttemptRegistry_HasAttempt/_IsUnresolved as           |
+//| consulted by this integration patch, but only HasAttempt was ever   |
+//| actually wired in - IsUnresolved existed, fully implemented, with   |
+//| zero callers anywhere in the gate chain. The unresolved-attempt     |
+//| case was still correctly blocked (HasAttempt is true for it too),   |
+//| but only as an unnamed side effect of the broader rule, not as its  |
+//| own explicit, deterministic check - a latent gap, not an active     |
+//| one (found at RA-15, closed here). Fixed by adding an explicit      |
+//| SubmissionAttemptRegistry_IsUnresolved() check ahead of the         |
+//| HasAttempt() check below. This does NOT relax or change the         |
+//| "historical attempt = duplicate" policy in any way - both checks    |
+//| reject with the same REASON_DUPLICATE_EVENT, and a RESOLVED prior   |
+//| attempt is still blocked exactly as before, unchanged, by the       |
+//| HasAttempt() check. The only change is that the unresolved case is  |
+//| now caught by its own named, purpose-built check, so a future       |
+//| change to HasAttempt's own policy could never silently drop         |
+//| unresolved-attempt protection along with it.                        |
 //|                                                                     |
 //| C2.2/C2.3 startup-rebuild integration patch: the check above only   |
 //| reflects reality once the registry has actually been rebuilt from   |
@@ -136,14 +155,28 @@ bool BrokerSubmissionGate_Evaluate(const ExecutionRequest &request, const Execut
       return true;
    }
 
+   // RA-16.1: explicit, dedicated unresolved-attempt check - see this
+   // file's header comment for the full rationale. Rejects with the
+   // same REASON_DUPLICATE_EVENT the resolved-attempt check below
+   // already uses; the policy outcome is unchanged, only the code path
+   // that reaches it for this specific sub-case is now explicit.
+   if(SubmissionAttemptRegistry_IsUnresolved(request.execution_request_id))
+   {
+      outResult.decision    = SAFETY_GATE_REJECTED;
+      outResult.reason_code = REASON_DUPLICATE_EVENT;
+      return true;
+   }
+
    // C2.2/C2.3 integration patch: the durable counterpart of the
    // in-session check above. Reuses REASON_DUPLICATE_EVENT - the same
    // underlying condition (already attempted), just proven from the
-   // event store instead of an in-session array. HasAttempt (not
-   // IsUnresolved) per the frozen "simplest policy" - a RESOLVED prior
+   // event store instead of an in-session array. A RESOLVED prior
    // attempt (SUBMITTED/REJECTED/ERROR/UNKNOWN) still blocks automatic
-   // resubmission; only a brand-new execution_request_id, never a
-   // reused one, may ever pass this check.
+   // resubmission here, unchanged since before RA-16; only a brand-new
+   // execution_request_id, never a reused one, may ever pass this
+   // check. (The unresolved sub-case is caught explicitly above; this
+   // remains the catch-all for every historical attempt regardless of
+   // resolution status, exactly as it was before RA-16.)
    if(SubmissionAttemptRegistry_HasAttempt(request.execution_request_id))
    {
       outResult.decision    = SAFETY_GATE_REJECTED;
