@@ -32,6 +32,7 @@
 #include <MLQuantAI/Execution/MLQuantAI_AsyncTerminalRejectionStartupDiagnostics.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_LifecycleAuthorityProcessor.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_RecoveryReconciliationStartup.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_RecoveryReconciliationEmission.mqh>
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_Contract.mqh>
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_ToTradeCandidate.mqh>
 #include <MLQuantAI/Strategies/MLQuantAI_CRT_V1_EventEmission.mqh>
@@ -537,6 +538,20 @@ int OnInit()
       InpC44CoverageBrokerIdentity, InpC44CoverageAccountIdentity, InpC44CoverageServerTimeBasis,
       InpC44CoverageFrom, InpC44CoverageTo, InpC44CoverageValidUntil,
       InpC44CoverageIssuerIdentity, InpC44CoverageEvidenceReference, InpC44CoverageIntegrityIdentifier);
+
+   // RA-33.2 (QA-frozen C4.4 Row-Level Evidence Emission): durably record
+   // every NON-CLEAN row the scan above already computed, before
+   // c44RecoveryCoverageReport.rows[] goes out of scope and that
+   // row-level detail is lost for good (previously only a summary count
+   // was ever logged). Reads report.rows[] only - never re-runs or
+   // mutates the scan, never changes report.ok, diagnostic-only exactly
+   // like the scan itself (see the comment block above).
+   RecoveryReconciliationEmissionReport c44RowEmissionReport =
+      RecoveryReconciliationEmission_EmitNonCleanRows(c44RecoveryCoverageReport);
+   if(c44RowEmissionReport.rows_non_clean > 0)
+      LogInfo(StringFormat("RA-33.2: C4.4 row-level evidence - %d/%d row(s) total were non-clean, %d emitted durably, %d emit failure(s).",
+              c44RowEmissionReport.rows_non_clean, c44RowEmissionReport.rows_total,
+              c44RowEmissionReport.rows_emitted, c44RowEmissionReport.rows_emit_failed));
 
    EventStore_LogSystem(EventTypeToString(EVENT_TYPE_SYSTEM_STARTED),
                          StringFormat("%s v%s", MLQUANTAI_EA_NAME, MLQUANTAI_EA_VERSION),

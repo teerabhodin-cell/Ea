@@ -358,7 +358,17 @@ enum ENUM_EVENT_TYPE
    // (RA-30.3 condition D) - this event never carries a broker transaction
    // and must never be interpreted as L3 by any parser/replay. Same
    // append-at-end rule as every entry above.
-   EVENT_TYPE_ENTRY_COMPATIBILITY_EVALUATED
+   EVENT_TYPE_ENTRY_COMPATIBILITY_EVALUATED,
+
+   // RA-33.2 (QA-frozen C4.4 Row-Level Evidence Emission): one durable
+   // record of a single NON-CLEAN row already computed by C4.4's own
+   // RecoveryReconciliation_StartupScan() (MLQuantAI_RecoveryReconciliation.mqh,
+   // unmodified) - never a broker transaction, never a live OnTradeTransaction
+   // observation, and structurally distinct from EVENT_TYPE_BROKER_TRANSACTION_
+   // OBSERVED (no ticket/retcode top-level shape) so no parser/replay can
+   // mistake this for L3 (QA condition AC-8). Same append-at-end rule as
+   // every entry above.
+   EVENT_TYPE_RECOVERY_RECONCILIATION_ROW_OBSERVED
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -405,6 +415,7 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_CEREMONY_COMMAND_STATE_CHANGED:        return "CEREMONY_COMMAND_STATE_CHANGED";
       case EVENT_TYPE_BROKER_TRANSACTION_RECOVERED_FROM_HISTORY: return "BROKER_TRANSACTION_RECOVERED_FROM_HISTORY";
       case EVENT_TYPE_ENTRY_COMPATIBILITY_EVALUATED:      return "ENTRY_COMPATIBILITY_EVALUATED";
+      case EVENT_TYPE_RECOVERY_RECONCILIATION_ROW_OBSERVED: return "RECOVERY_RECONCILIATION_ROW_OBSERVED";
    }
    return "UNKNOWN";
 }
@@ -451,6 +462,7 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "CEREMONY_COMMAND_STATE_CHANGED")        return EVENT_TYPE_CEREMONY_COMMAND_STATE_CHANGED;
    if(s == "BROKER_TRANSACTION_RECOVERED_FROM_HISTORY") return EVENT_TYPE_BROKER_TRANSACTION_RECOVERED_FROM_HISTORY;
    if(s == "ENTRY_COMPATIBILITY_EVALUATED")             return EVENT_TYPE_ENTRY_COMPATIBILITY_EVALUATED;
+   if(s == "RECOVERY_RECONCILIATION_ROW_OBSERVED")      return EVENT_TYPE_RECOVERY_RECONCILIATION_ROW_OBSERVED;
    return EVENT_TYPE_UNKNOWN;
 }
 
