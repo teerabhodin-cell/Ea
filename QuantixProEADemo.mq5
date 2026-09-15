@@ -3751,8 +3751,8 @@ void DrawSystemDecisionCard(int x, int y, int w, int h, int openPos)
    DashCanvas.TextOut(x + w / 2 - rw / 2, y + S(78), reason, ColorToARGB(C'150,150,170'));
 
    int innerW = w - S(24);
-   DrawKV(x + S(12), y + S(112), innerW, GetUIString("ซื้อถัดไป", "NEXT BUY"), DoubleToString(GetNextGridTargetPrice(true), _Digits), C'140,140,160', C'34,197,94', 13);
-   DrawKV(x + S(12), y + S(136), innerW, GetUIString("ขายถัดไป", "NEXT SELL"), DoubleToString(GetNextGridTargetPrice(false), _Digits), C'140,140,160', C'239,68,68', 13);
+   DrawKV(x + S(12), y + S(130), innerW, GetUIString("ซื้อถัดไป", "NEXT BUY"), DoubleToString(GetNextGridTargetPrice(true), _Digits), C'140,140,160', C'34,197,94', 13);
+   DrawKV(x + S(12), y + S(164), innerW, GetUIString("ขายถัดไป", "NEXT SELL"), DoubleToString(GetNextGridTargetPrice(false), _Digits), C'140,140,160', C'239,68,68', 13);
 }
 
 // สถานะรวม 5 อย่างของระบบ (EA/Connection/Auto Trading/Hedge/Recovery) แต่ละแถวมีจุดสีบอกสถานะ -
@@ -3773,7 +3773,7 @@ void DrawSystemStatusCard(int x, int y, int w, int h)
    labels[3] = GetUIString("ฟอร์ซเฮดจ์", "HEDGE");           dots[3] = hedgeOn     ? C'34,197,94' : C'100,100,120'; vals[3] = hedgeOn     ? "ON" : "OFF";
    labels[4] = GetUIString("โหมดแก้ไม้", "RECOVERY");        dots[4] = recoveryOn  ? C'34,197,94' : C'100,100,120'; vals[4] = recoveryOn  ? "ON" : "OFF";
 
-   int rowH = S(30);
+   int rowH = S(36);
    int ry = y + S(44);
    for(int i = 0; i < 5; i++)
    {
@@ -3808,10 +3808,10 @@ void DrawRiskControlCard(int x, int y, int w, int h)
    UIFontSet(SF(12), FW_BOLD);
    int ltw = EstimateTextWidth(lossTxt, SF(12));
    DashCanvas.TextOut(barX + barW - ltw, ry, lossTxt, ColorToARGB((UseDailyLossLimit && effLossLimit > 0) ? (lossPct >= 100 ? C'239,68,68' : clrWhite) : C'100,100,120'));
-   ry += S(17);
+   ry += S(19);
    FillRoundedRect(barX, ry, barX + barW, ry + S(7), S(3), ColorToARGB(C'40,40,55'));
    if(UseDailyLossLimit && effLossLimit > 0 && lossPct > 0) FillRoundedRect(barX, ry, barX + (int)(barW * lossPct / 100.0), ry + S(7), S(3), ColorToARGB(C'239,68,68'));
-   ry += S(24);
+   ry += S(29);
 
    UIFontSet(SF(12));
    DashCanvas.TextOut(barX, ry, GetUIString("เป้ากำไรวันนี้", "DAILY GOAL"), ColorToARGB(C'160,160,180'));
@@ -3819,14 +3819,14 @@ void DrawRiskControlCard(int x, int y, int w, int h)
    UIFontSet(SF(12), FW_BOLD);
    int gtw = EstimateTextWidth(goalTxt, SF(12));
    DashCanvas.TextOut(barX + barW - gtw, ry, goalTxt, ColorToARGB((UseDailyGoalStop && effGoal > 0) ? (goalPct >= 100 ? C'34,197,94' : clrWhite) : C'100,100,120'));
-   ry += S(17);
+   ry += S(19);
    FillRoundedRect(barX, ry, barX + barW, ry + S(7), S(3), ColorToARGB(C'40,40,55'));
    if(UseDailyGoalStop && effGoal > 0 && goalPct > 0) FillRoundedRect(barX, ry, barX + (int)(barW * goalPct / 100.0), ry + S(7), S(3), ColorToARGB(C'34,197,94'));
-   ry += S(28);
+   ry += S(34);
 
    DrawKV(barX, ry, barW, GetUIString("Max DD Guard", "MAX DD GUARD"), (UseTotalDDGuard || UseMaxDDStop) ? GetUIString("เปิดใช้งาน", "ON") : GetUIString("ปิด", "OFF"),
           C'160,160,180', (UseTotalDDGuard || UseMaxDDStop) ? C'34,197,94' : C'100,100,120', 12);
-   ry += S(20);
+   ry += S(26);
 
    bool volLow  = IsVolatilityTooLow();  // ตัวตัดสินจริงตัวเดียวกับที่ ExecuteGridLogic() ใช้เช็ค
    bool volHigh = IsVolatilityTooHigh(); // ไม่เขียนเงื่อนไข Use*VolatilityFilter/Points ซ้ำเองอีกชุด
@@ -3849,7 +3849,7 @@ string TruncateForNarrowCard(string s, int maxChars)
 // จะเหลือพื้นที่ว่างด้านล่างนิดหน่อย ซึ่งตั้งใจ ดีกว่าความสูงไม่เท่ากันแล้วแถวเยื้องกัน
 int DrawSidebarCards(int y, int openPos, int sideX, int sideW)
 {
-   int cardH = S(204);
+   int cardH = S(240); // สูงกว่าเดิม (204) ให้แต่ละการ์ดมีที่หายใจ ไม่อัดแถวชิดกันเกินไป
    int gap   = S(12);
    int colW  = (sideW - gap) / 2;
    int innerW = colW - S(24);
@@ -3875,10 +3875,10 @@ int DrawSidebarCards(int y, int openPos, int sideX, int sideW)
    int nextLevel = MathMax(buyCount, sellCount) + 1;
    double smartFactor = GetSmartLotFactor(nextLevel);
    int liveDist = (CachedGridDistance > 0) ? CachedGridDistance : GetDynamicGridDistance();
-   DrawKV(col1X + S(12), ry, innerW, GetUIString("สถานะ", "Status"), UseSmartLot ? GetUIString("ทำงาน", "ACTIVE") : GetUIString("ปิด", "OFF"), C'160,160,180', UseSmartLot ? C'34,197,94' : C'100,100,120', 12); ry += S(25);
-   DrawKV(col1X + S(12), ry, innerW, GetUIString("Lot ถัดไป", "Next Lot Factor"), DoubleToString(smartFactor * 100.0, 0) + "%", C'160,160,180', UseSmartLot ? C'251,193,7' : clrWhite, 12); ry += S(25);
-   DrawKV(col1X + S(12), ry, innerW, GetUIString("Level ถัดไป", "Next Level"), IntegerToString(nextLevel), C'160,160,180', clrWhite, 12); ry += S(25);
-   DrawKV(col1X + S(12), ry, innerW, GetUIString("DD ปัจจุบัน", "Current DD"), DoubleToString(MaxDrawdownPercent, 2) + "%", C'160,160,180', MaxDrawdownPercent > 5 ? C'239,68,68' : clrWhite, 12); ry += S(25);
+   DrawKV(col1X + S(12), ry, innerW, GetUIString("สถานะ", "Status"), UseSmartLot ? GetUIString("ทำงาน", "ACTIVE") : GetUIString("ปิด", "OFF"), C'160,160,180', UseSmartLot ? C'34,197,94' : C'100,100,120', 12); ry += S(29);
+   DrawKV(col1X + S(12), ry, innerW, GetUIString("Lot ถัดไป", "Next Lot Factor"), DoubleToString(smartFactor * 100.0, 0) + "%", C'160,160,180', UseSmartLot ? C'251,193,7' : clrWhite, 12); ry += S(29);
+   DrawKV(col1X + S(12), ry, innerW, GetUIString("Level ถัดไป", "Next Level"), IntegerToString(nextLevel), C'160,160,180', clrWhite, 12); ry += S(29);
+   DrawKV(col1X + S(12), ry, innerW, GetUIString("DD ปัจจุบัน", "Current DD"), DoubleToString(MaxDrawdownPercent, 2) + "%", C'160,160,180', MaxDrawdownPercent > 5 ? C'239,68,68' : clrWhite, 12); ry += S(29);
    DrawKV(col1X + S(12), ry, innerW, GetUIString("Grid Distance", "Grid Distance"), IntegerToString(liveDist) + " P", C'160,160,180', clrWhite, 12);
 
    // แถว 3: Session Monitor | Execution Monitor
@@ -3889,10 +3889,10 @@ int DrawSidebarCards(int y, int openPos, int sideX, int sideW)
    GetSessionLabel(curSession, sessTH, sessEN);
    bool sessBlocked = IsSessionBlocked();
    color sessClr = sessBlocked ? C'239,68,68' : (curSession == SESSION_OFF ? C'100,100,120' : C'34,197,94');
-   DrawKV(col0X + S(12), ry, innerW, GetUIString("สถานะ", "Status"), UseSessionEngine ? GetUIString("ทำงาน", "ACTIVE") : GetUIString("ปิด", "OFF"), C'160,160,180', UseSessionEngine ? C'34,197,94' : C'100,100,120', 12); ry += S(25);
-   DrawKV(col0X + S(12), ry, innerW, GetUIString("Session ปัจจุบัน", "Current Session"), GetUIString(sessTH, sessEN), C'160,160,180', sessClr, 12); ry += S(25);
-   DrawKV(col0X + S(12), ry, innerW, GetUIString("Risk Profile", "Risk Profile"), GetSessionRiskProfileLabel(GetSessionRiskProfile()), C'160,160,180', sessBlocked ? C'239,68,68' : clrWhite, 12); ry += S(25);
-   DrawKV(col0X + S(12), ry, innerW, GetUIString("ตัวคูณ Lot", "Lot Factor"), DoubleToString(GetSessionLotMultiplier() * 100.0, 0) + "%", C'160,160,180', clrWhite, 12); ry += S(25);
+   DrawKV(col0X + S(12), ry, innerW, GetUIString("สถานะ", "Status"), UseSessionEngine ? GetUIString("ทำงาน", "ACTIVE") : GetUIString("ปิด", "OFF"), C'160,160,180', UseSessionEngine ? C'34,197,94' : C'100,100,120', 12); ry += S(29);
+   DrawKV(col0X + S(12), ry, innerW, GetUIString("Session ปัจจุบัน", "Current Session"), GetUIString(sessTH, sessEN), C'160,160,180', sessClr, 12); ry += S(29);
+   DrawKV(col0X + S(12), ry, innerW, GetUIString("Risk Profile", "Risk Profile"), GetSessionRiskProfileLabel(GetSessionRiskProfile()), C'160,160,180', sessBlocked ? C'239,68,68' : clrWhite, 12); ry += S(29);
+   DrawKV(col0X + S(12), ry, innerW, GetUIString("ตัวคูณ Lot", "Lot Factor"), DoubleToString(GetSessionLotMultiplier() * 100.0, 0) + "%", C'160,160,180', clrWhite, 12); ry += S(29);
    DrawKV(col0X + S(12), ry, innerW, GetUIString("ตัวคูณ Grid", "Grid Factor"), DoubleToString(GetSessionGridMultiplier() * 100.0, 0) + "%", C'160,160,180', clrWhite, 12);
 
    DrawCardBG(col1X, row2Y, colW, cardH, "⚡ " + GetUIString("คุณภาพการส่งคำสั่ง", "EXECUTION MONITOR"));
@@ -3902,10 +3902,10 @@ int DrawSidebarCards(int y, int openPos, int sideX, int sideW)
    // ยังค้างเป็นเวลาในอนาคตอยู่ แดชบอร์ดจะโชว์ "ACTIVE" ผิดๆ ทั้งที่ระบบจริงเลิกสนใจค่านี้ไปแล้ว
    bool latencyGuard = IsLatencyGuardActive();
    bool connected = (bool)TerminalInfoInteger(TERMINAL_CONNECTED);
-   DrawKV(col1X + S(12), ry, innerW, GetUIString("การเชื่อมต่อ", "Connection"), connected ? "ONLINE" : "OFFLINE", C'160,160,180', connected ? C'34,197,94' : C'239,68,68', 12); ry += S(25);
-   DrawKV(col1X + S(12), ry, innerW, GetUIString("Latency ล่าสุด", "Last Latency"), IntegerToString((int)LastFillLatencyMs) + " ms", C'160,160,180', latencyGuard ? C'239,68,68' : clrWhite, 12); ry += S(25);
-   DrawKV(col1X + S(12), ry, innerW, GetUIString("Slippage ล่าสุด", "Last Slippage"), DoubleToString(LastFillSlippagePoints, 1) + " P", C'160,160,180', clrWhite, 12); ry += S(25);
-   DrawKV(col1X + S(12), ry, innerW, GetUIString("Latency Guard", "Latency Guard"), latencyGuard ? GetUIString("กำลังพัก", "ACTIVE") : "OFF", C'160,160,180', latencyGuard ? C'239,68,68' : C'100,100,120', 12); ry += S(25);
+   DrawKV(col1X + S(12), ry, innerW, GetUIString("การเชื่อมต่อ", "Connection"), connected ? "ONLINE" : "OFFLINE", C'160,160,180', connected ? C'34,197,94' : C'239,68,68', 12); ry += S(29);
+   DrawKV(col1X + S(12), ry, innerW, GetUIString("Latency ล่าสุด", "Last Latency"), IntegerToString((int)LastFillLatencyMs) + " ms", C'160,160,180', latencyGuard ? C'239,68,68' : clrWhite, 12); ry += S(29);
+   DrawKV(col1X + S(12), ry, innerW, GetUIString("Slippage ล่าสุด", "Last Slippage"), DoubleToString(LastFillSlippagePoints, 1) + " P", C'160,160,180', clrWhite, 12); ry += S(29);
+   DrawKV(col1X + S(12), ry, innerW, GetUIString("Latency Guard", "Latency Guard"), latencyGuard ? GetUIString("กำลังพัก", "ACTIVE") : "OFF", C'160,160,180', latencyGuard ? C'239,68,68' : C'100,100,120', 12); ry += S(29);
    string serverName = TruncateForNarrowCard(AccountInfoString(ACCOUNT_SERVER), 16);
    DrawKV(col1X + S(12), ry, innerW, "Server", serverName, C'160,160,180', clrWhite, 12);
 
@@ -3915,27 +3915,27 @@ int DrawSidebarCards(int y, int openPos, int sideX, int sideW)
    ENUM_CONNECTION_STATE connGuardState = GetConnectionState();
    string connLabel; color connClr;
    GetConnectionStateLabel(connGuardState, connLabel, connClr);
-   DrawKV(col0X + S(12), ry, innerW, GetUIString("สถานะ", "Status"), UseConnectionGuard ? GetUIString("ทำงาน", "ACTIVE") : GetUIString("ปิด", "OFF"), C'160,160,180', UseConnectionGuard ? C'34,197,94' : C'100,100,120', 12); ry += S(25);
-   DrawKV(col0X + S(12), ry, innerW, GetUIString("State", "State"), connLabel, C'160,160,180', connClr, 12); ry += S(25);
+   DrawKV(col0X + S(12), ry, innerW, GetUIString("สถานะ", "Status"), UseConnectionGuard ? GetUIString("ทำงาน", "ACTIVE") : GetUIString("ปิด", "OFF"), C'160,160,180', UseConnectionGuard ? C'34,197,94' : C'100,100,120', 12); ry += S(29);
+   DrawKV(col0X + S(12), ry, innerW, GetUIString("State", "State"), connLabel, C'160,160,180', connClr, 12); ry += S(29);
    string cooldownTxt = "—";
    if(connGuardState == CONN_RECOVERING)
    {
       int remain = (int)MathMax(0, ConnectionResumeCooldownSec - (TimeCurrent() - ConnectionRestoredTime));
       cooldownTxt = IntegerToString(remain) + " s";
    }
-   DrawKV(col0X + S(12), ry, innerW, GetUIString("คูลดาวน์เหลือ", "Cooldown Left"), cooldownTxt, C'160,160,180', clrWhite, 12); ry += S(25);
+   DrawKV(col0X + S(12), ry, innerW, GetUIString("คูลดาวน์เหลือ", "Cooldown Left"), cooldownTxt, C'160,160,180', clrWhite, 12); ry += S(29);
    DrawKV(col0X + S(12), ry, innerW, GetUIString("เปิดไม้ได้ไหม", "Entries Allowed"), IsConnectionBlocked() ? GetUIString("ไม่ได้", "NO") : GetUIString("ได้", "YES"), C'160,160,180', IsConnectionBlocked() ? C'239,68,68' : C'34,197,94', 12);
 
    DrawCardBG(col1X, row3Y, colW, cardH, "🧾 " + GetUIString("Trade/Basket Journal", "TRADE/BASKET JOURNAL"));
    ry = row3Y + S(44);
-   DrawKV(col1X + S(12), ry, innerW, GetUIString("สถานะ", "Status"), UseTradeJournal ? GetUIString("บันทึกอยู่", "RECORDING") : GetUIString("ปิด", "OFF"), C'160,160,180', UseTradeJournal ? C'34,197,94' : C'100,100,120', 12); ry += S(25);
+   DrawKV(col1X + S(12), ry, innerW, GetUIString("สถานะ", "Status"), UseTradeJournal ? GetUIString("บันทึกอยู่", "RECORDING") : GetUIString("ปิด", "OFF"), C'160,160,180', UseTradeJournal ? C'34,197,94' : C'100,100,120', 12); ry += S(29);
    string basketId = JournalBasketID;
    if(basketId == "") basketId = GetUIString("ยังไม่มี Basket", "No active basket");
    basketId = TruncateForNarrowCard(basketId, 12);
-   DrawKV(col1X + S(12), ry, innerW, GetUIString("Basket ID", "Basket ID"), basketId, C'160,160,180', clrWhite, 12); ry += S(25);
+   DrawKV(col1X + S(12), ry, innerW, GetUIString("Basket ID", "Basket ID"), basketId, C'160,160,180', clrWhite, 12); ry += S(29);
    string journalMode = JournalLogEveryDeal ? "EVERY DEAL" : "BASKET EVENTS";
-   DrawKV(col1X + S(12), ry, innerW, GetUIString("รูปแบบ", "Mode"), journalMode, C'160,160,180', clrWhite, 12); ry += S(25);
-   DrawKV(col1X + S(12), ry, innerW, GetUIString("ไฟล์", "File"), TruncateForNarrowCard(JournalFileName, 14), C'160,160,180', clrWhite, 12); ry += S(25);
+   DrawKV(col1X + S(12), ry, innerW, GetUIString("รูปแบบ", "Mode"), journalMode, C'160,160,180', clrWhite, 12); ry += S(29);
+   DrawKV(col1X + S(12), ry, innerW, GetUIString("ไฟล์", "File"), TruncateForNarrowCard(JournalFileName, 14), C'160,160,180', clrWhite, 12); ry += S(29);
    DrawKV(col1X + S(12), ry, innerW, GetUIString("ข้อมูล", "Scope"), GetUIString("Deal + Basket", "Deal + Basket"), C'160,160,180', clrWhite, 12);
 
    return row3Y + cardH + gap;
@@ -4022,7 +4022,7 @@ int ComputeDashboardContentHeight()
    h += S(38);              // DrawServerTimeRow
    // Both columns begin at the top-card row. The sidebar continues from the
    // right edge of RISK, rather than beginning below the left dashboard.
-   int sideH = (S(204) + S(12)) * 4; // DrawSidebarCards: 2 คอลัมน์ x 4 แถว การ์ดสูงเท่ากันหมด
+   int sideH = (S(240) + S(12)) * 4; // DrawSidebarCards: 2 คอลัมน์ x 4 แถว การ์ดสูงเท่ากันหมด
    int leftH = (S(258) * 2 + S(12) * 2) + (S(84) + S(12)) + (S(265) + S(12)) + (S(162) + S(14));
    h += MathMax(sideH, leftH);
    return h;
