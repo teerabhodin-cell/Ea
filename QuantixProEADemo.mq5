@@ -73,10 +73,24 @@ input bool   UseDynamicLot          = false;   // Dynamic Lot by Equity (Lot ต
 input double BalancePerLot          = 8000.0;  // Equity per 0.01 Lot
 input bool   UseEquityLock          = false;   // Equity Lock (ล็อคพอร์ต)
 input double MinEquityLimit         = 4000.0;  // Min Equity Limit
-input bool   UseAutoReduceLot       = false;   // Auto Reduce Lot on DD (ลด Lot อัตโนมัติ)
-input double ReduceLotThresholdDD   = 20.0;    // Reduce Lot DD Trigger %
 input bool   UseMaxLotCap           = false;   // Use Max Lot Cap (จำกัด Lot สูงสุด)
 input double MaxLotCap              = 5.0;     // Max Lot Cap (Lot สูงสุดต่อไม้)
+
+// Smart Lot Management (V9)
+input bool   UseSmartLot             = false;  // Smart Lot Management
+input double SmartLotMinFactor       = 0.35;   // Minimum lot factor at high risk (35%=ลดได้สูงสุด 65%)
+input double SmartLotDDStartPct      = 5.0;    // Start reducing lot when basket DD reaches this %
+input double SmartLotDDMaxPct        = 15.0;   // Minimum factor is reached at this DD %
+input int    SmartLotLevelStart      = 3;      // Start reducing from this grid level
+input double SmartLotLevelFactor     = 0.10;   // Lot reduction per level after start (10%/level)
+input bool   SmartLotVolatilityGuard = true;   // Reduce lot when current grid distance is unusually wide
+input double SmartLotVolatilityStart = 300.0;  // Grid distance (points) where volatility reduction starts
+input double SmartLotVolatilityMax   = 600.0;  // Grid distance (points) where minimum factor is reached
+
+input group "===== 2B. Trade / Basket Journal ====="
+input bool   UseTradeJournal          = true;    // Save structured trade/basket journal to CSV
+input string JournalFileName          = "QuantixProEA_Journal.csv"; // CSV file name (Common Files)
+input bool   JournalLogEveryDeal      = true;    // Log every broker deal transaction
 
 input group "===== 3. Grid ====="
 input ENUM_GRID_TYPE GridType       = GRID_VIRTUAL; // Grid Type (รูปแบบ Grid)
@@ -348,6 +362,18 @@ string PersistKey(string key);
 void   PersistSet(string key, double value);
 double PersistGet(string key, double defaultValue);
 void   PersistAllStats();
+
+string   JournalBasketID = "";
+
+// Trade/Basket Journal
+string JournalGetBasketID();
+string JournalDealEntryText(long entry);
+string JournalDealTypeText(long type);
+string JournalDealReasonText(long reason);
+void   JournalWrite(string eventType, string action, string side, int level, double lot, double price, double profit, double swap, double commission, string reason, string detail);
+void   JournalEnsureBasketStarted(string trigger);
+void   JournalWriteDeal(const MqlTradeTransaction& trans);
+void   JournalWriteBasketClose(double profit, int positionCount, string closeReason);
 
 // UI Engine Functions
 void InitDashboard();
@@ -881,6 +907,56 @@ ENUM_SYSTEM_DECISION ComputeSystemDecision(int openPos)
 //| SYMBOL_VOLUME_MIN/MAX so OrderSend can't be rejected with an      |
 //| invalid-volume error on brokers whose lot step isn't 0.01.       |
 //+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+//| Smart Lot Management                                              |
+//| Rule-based risk scaling layered on top of the existing lot engine.|
+//| It never creates a new lot size by itself; it only scales down    |
+//| the already-calculated lot when DD / grid depth / volatility rises.|
+//+------------------------------------------------------------------+
+double GetSmartLotFactor(int nextLevel)
+{
+   if(!UseSmartLot) return 1.0;
+
+   double factor = 1.0;
+   double minFactor = MathMax(0.05, MathMin(1.0, SmartLotMinFactor));
+
+   // 1) Basket DD pressure: linear reduction between DD start/max.
+   if(SmartLotDDMaxPct > SmartLotDDStartPct && MaxDrawdownPercent > SmartLotDDStartPct)
+   {
+      double ddRatio = (MaxDrawdownPercent - SmartLotDDStartPct) /
+                       (SmartLotDDMaxPct - SmartLotDDStartPct);
+      ddRatio = MathMax(0.0, MathMin(1.0, ddRatio));
+      double ddFactor = 1.0 - ddRatio * (1.0 - minFactor);
+      factor = MathMin(factor, ddFactor);
+   }
+
+   // 2) Grid-depth pressure: later levels get progressively smaller lots.
+   if(SmartLotLevelStart > 0 && nextLevel >= SmartLotLevelStart && SmartLotLevelFactor > 0.0)
+   {
+      int extraLevels = nextLevel - SmartLotLevelStart + 1;
+      double levelFactor = 1.0 - (extraLevels * SmartLotLevelFactor);
+      levelFactor = MathMax(minFactor, MathMin(1.0, levelFactor));
+      factor = MathMin(factor, levelFactor);
+   }
+
+   // 3) Volatility pressure: a wider ATR/BB-derived grid means less lot.
+   if(SmartLotVolatilityGuard && SmartLotVolatilityMax > SmartLotVolatilityStart)
+   {
+      double dist = (CachedGridDistance > 0) ? (double)CachedGridDistance
+                                             : (double)GetDynamicGridDistance();
+      if(dist > SmartLotVolatilityStart)
+      {
+         double volRatio = (dist - SmartLotVolatilityStart) /
+                           (SmartLotVolatilityMax - SmartLotVolatilityStart);
+         volRatio = MathMax(0.0, MathMin(1.0, volRatio));
+         double volFactor = 1.0 - volRatio * (1.0 - minFactor);
+         factor = MathMin(factor, volFactor);
+      }
+   }
+
+   return MathMax(minFactor, MathMin(1.0, factor));
+}
+
 double GetCalculatedLotSize(int nextLevel)
 {
    double base = BaseLot;
@@ -914,10 +990,6 @@ double GetCalculatedLotSize(int nextLevel)
 
    double lot = base * MathPow(LotMultiplier, nextLevel - 1);
 
-   if(UseAutoReduceLot && MaxDrawdownPercent >= ReduceLotThresholdDD)
-   {
-      lot = lot * 0.5;
-   }
 
    // FIXED: UseRecoveryMode used to boost every lot by a flat 1.2x unconditionally,
    // even at zero drawdown - despite its own description saying it's meant to
@@ -928,6 +1000,13 @@ double GetCalculatedLotSize(int nextLevel)
    {
       lot = lot * RecoveryLotBoost;
    }
+
+   // Smart Lot is applied LAST before broker normalization/caps.
+   // This makes Smart Lot a safety governor: even RecoveryLotBoost cannot
+   // push the calculated normal-grid lot above the Smart Lot risk factor.
+   double smartFactor = GetSmartLotFactor(nextLevel);
+   if(smartFactor < 1.0)
+      lot = lot * smartFactor;
 
    lot = MathMax(0.01, lot);
 
@@ -1078,7 +1157,7 @@ bool TryOpenForceHedgeOrder(string reasonTag, string logDetail)
    // Recovery Mode's passive boost-when-the-grid-triggers-anyway) - it computes
    // lot from the same BaseLot/LotMultiplier progression directly instead of
    // going through GetCalculatedLotSize(), which would also bake in
-   // UseAutoReduceLot's cut and UseRecoveryMode's boost. Stacking those on top
+   // UseRecoveryMode's boost. Stacking those on top
    // of ForceHedgeLotMultiplier made the two DD-recovery systems compound in a
    // way that's hard to reason about (and RecoveryMode's own trigger check uses
    // the session's all-time-peak DD, which never resets, so it could stay
@@ -1422,7 +1501,9 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTradeTransaction(const MqlTradeTransaction& trans, const MqlTradeRequest& request, const MqlTradeResult& result)
 {
-   // Transaction Hook (Reserved)
+   if(!UseTradeJournal || !JournalLogEveryDeal) return;
+   if(trans.type != TRADE_TRANSACTION_DEAL_ADD || trans.deal == 0) return;
+   JournalWriteDeal(trans);
 }
 
 //+------------------------------------------------------------------+
@@ -2125,6 +2206,7 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
                // ฝั่ง Sell ที่ยังไม่ fill ไม่ถูกแตะเลย ยังรอที่เป้าเดิมต่อไป
                if(IsPerSideDistanceActive()) BuyGridDistance = GetDynamicGridDistance();
                LogEvent(StringFormat(GetUIString("เปิดออเดอร์ Buy ชั้น %d", "Opened Buy Level %d"), nextLevel));
+               JournalEnsureBasketStarted("GRID_BUY");
                return;
             }
          }
@@ -2218,6 +2300,7 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
                // ฝั่ง Buy ที่ยังไม่ fill ไม่ถูกแตะเลย ยังรอที่เป้าเดิมต่อไป
                if(IsPerSideDistanceActive()) SellGridDistance = GetDynamicGridDistance();
                LogEvent(StringFormat(GetUIString("เปิดออเดอร์ Sell ชั้น %d", "Opened Sell Level %d"), nextLevel));
+               JournalEnsureBasketStarted("GRID_SELL");
                return;
             }
          }
@@ -2437,6 +2520,7 @@ void ClearEverythingAsync()
       }
 
       PersistAllStats(); // เซฟทันทีตอนบาสเก็ตปิดจริง ไม่ต้องรอรอบเซฟ periodic ใน UpdateDashboard
+      if(UseTradeJournal) JournalWriteBasketClose(statsSnapshotProfit, statsPosCount, "BASKET_CLOSE");
    }
 
    GridCreated           = false;
@@ -2511,6 +2595,125 @@ void UIFontSet(int fontSize, uint style = 0) // 0 = CCanvas::FontSet's own defau
 {
    if(Language != LNG_TH) style = FW_BOLD;
    DashCanvas.FontSet(GetUIFont(), fontSize, style);
+}
+
+//+------------------------------------------------------------------+
+//| Trade/Basket Journal                                             |
+//| Persistent CSV audit trail. EventLog is only the short UI feed.  |
+//+------------------------------------------------------------------+
+string JournalGetBasketID()
+{
+   if(JournalBasketID != "") return JournalBasketID;
+   datetime t = BasketStartTime;
+   if(t <= 0) t = TimeCurrent();
+   JournalBasketID = StringFormat("%s_%I64d", _Symbol, (long)t);
+   return JournalBasketID;
+}
+
+string JournalDealEntryText(long entry)
+{
+   if(entry == DEAL_ENTRY_IN) return "IN";
+   if(entry == DEAL_ENTRY_OUT) return "OUT";
+   if(entry == DEAL_ENTRY_INOUT) return "INOUT";
+   if(entry == DEAL_ENTRY_OUT_BY) return "OUT_BY";
+   return "OTHER";
+}
+
+string JournalDealTypeText(long type)
+{
+   if(type == DEAL_TYPE_BUY) return "BUY";
+   if(type == DEAL_TYPE_SELL) return "SELL";
+   return EnumToString((ENUM_DEAL_TYPE)type);
+}
+
+string JournalDealReasonText(long reason)
+{
+   return EnumToString((ENUM_DEAL_REASON)reason);
+}
+
+string JournalGetContextDetail()
+{
+   double atr = 0.0, ema = 0.0, rsi = 0.0;
+   double buf[1];
+   if(atrHandle != INVALID_HANDLE && CopyBuffer(atrHandle, 0, 1, 1, buf) > 0) atr = buf[0];
+   if(emaHandle != INVALID_HANDLE && CopyBuffer(emaHandle, 0, 1, 1, buf) > 0) ema = buf[0];
+   if(rsiHandle != INVALID_HANDLE && CopyBuffer(rsiHandle, 0, 1, 1, buf) > 0) rsi = buf[0];
+
+   return StringFormat("Strategy=%s;LevelBase=%.5f;RSI=%.2f;EMA=%.5f;ATR=%.5f;SmartLot=%s",
+                       EnumToString(GridType), GridBasePrice, rsi, ema, atr, UseSmartLot ? "ON" : "OFF");
+}
+
+void JournalWrite(string eventType, string action, string side, int level, double lot, double price, double profit, double swap, double commission, string reason, string detail)
+{
+   if(!UseTradeJournal) return;
+   int h = FileOpen(JournalFileName, FILE_COMMON|FILE_CSV|FILE_READ|FILE_WRITE|FILE_SHARE_READ|FILE_SHARE_WRITE, ',');
+   if(h == INVALID_HANDLE)
+   {
+      PrintFormat("[JOURNAL] FileOpen failed: %d", GetLastError());
+      return;
+   }
+   bool empty = (FileSize(h) == 0);
+   FileSeek(h, 0, SEEK_END);
+   if(empty)
+      FileWrite(h, "Time", "Event", "BasketID", "Symbol", "Action", "Side", "Level", "Lot", "Price", "Profit", "Swap", "Commission", "Balance", "Equity", "DD%", "GridDistancePts", "Reason", "Detail");
+
+   double eq = AccountInfoDouble(ACCOUNT_EQUITY);
+   double bal = AccountInfoDouble(ACCOUNT_BALANCE);
+   int gridPts = (CachedGridDistance > 0) ? CachedGridDistance : GetDynamicGridDistance();
+   FileWrite(h, TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS), eventType, JournalGetBasketID(), _Symbol, action, side,
+             IntegerToString(level), DoubleToString(lot, 2), DoubleToString(price, _Digits),
+             DoubleToString(profit, 2), DoubleToString(swap, 2), DoubleToString(commission, 2),
+             DoubleToString(bal, 2), DoubleToString(eq, 2), DoubleToString(MaxDrawdownPercent, 2),
+             IntegerToString(gridPts), reason, detail + ";" + JournalGetContextDetail());
+   FileFlush(h);
+   FileClose(h);
+}
+
+void JournalEnsureBasketStarted(string trigger)
+{
+   if(!UseTradeJournal || JournalBasketID != "") return;
+   JournalBasketID = StringFormat("%s_%I64d", _Symbol, (long)(BasketStartTime > 0 ? BasketStartTime : TimeCurrent()));
+   JournalWrite("BASKET", "START", "-", 0, 0.0, SymbolInfoDouble(_Symbol, SYMBOL_BID), 0.0, 0.0, 0.0, trigger, "Basket started / journal identity armed");
+}
+
+void JournalWriteDeal(const MqlTradeTransaction& trans)
+{
+   if(!UseTradeJournal || trans.deal == 0 || !HistoryDealSelect(trans.deal)) return;
+   string symbol = HistoryDealGetString(trans.deal, DEAL_SYMBOL);
+   long magic = HistoryDealGetInteger(trans.deal, DEAL_MAGIC);
+   if(symbol != _Symbol || (ulong)magic != MagicNumber) return;
+
+   long entry = HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
+   long type = HistoryDealGetInteger(trans.deal, DEAL_TYPE);
+   long reason = HistoryDealGetInteger(trans.deal, DEAL_REASON);
+   double lot = HistoryDealGetDouble(trans.deal, DEAL_VOLUME);
+   double price = HistoryDealGetDouble(trans.deal, DEAL_PRICE);
+   double profit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT);
+   double swap = HistoryDealGetDouble(trans.deal, DEAL_SWAP);
+   double commission = HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
+   string comment = HistoryDealGetString(trans.deal, DEAL_COMMENT);
+
+   if(entry == DEAL_ENTRY_IN || entry == DEAL_ENTRY_INOUT)
+      JournalEnsureBasketStarted("DEAL_" + JournalDealEntryText(entry));
+   else if(JournalBasketID == "")
+      JournalEnsureBasketStarted("RECOVERED_BASKET");
+
+   int level = 0;
+   if(StringFind(comment, "V-BUY-") == 0 || StringFind(comment, "V-SELL-") == 0 || StringFind(comment, "P-BUY-") == 0 || StringFind(comment, "P-SELL-") == 0)
+      level = (int)StringToInteger(StringSubstr(comment, 6));
+
+   JournalWrite("DEAL", JournalDealEntryText(entry), JournalDealTypeText(type), level, lot, price, profit, swap, commission, JournalDealReasonText(reason), comment);
+}
+
+void JournalWriteBasketClose(double profit, int positionCount, string closeReason)
+{
+   if(!UseTradeJournal) return;
+   if(JournalBasketID == "") JournalEnsureBasketStarted("CLOSE_WITHOUT_ID");
+   string detail = StringFormat("positions=%d;duration_sec=%d;win=%s", positionCount,
+                                (BasketStartTime > 0 ? (int)(TimeCurrent() - BasketStartTime) : 0),
+                                profit > 0 ? "true" : "false");
+   JournalWrite("BASKET", "CLOSE", "-", 0, 0.0, SymbolInfoDouble(_Symbol, SYMBOL_BID), profit, 0.0, 0.0, closeReason, detail);
+   JournalBasketID = "";
 }
 
 //+------------------------------------------------------------------+
@@ -2938,12 +3141,15 @@ int DrawServerTimeRow(int y, int openPos, int pendingOrders)
    return y + S(38);
 }
 
-// 6 การ์ดสถิติเรียงแถวเดียวแนวนอน: Account | Performance | Basket | Orders | Grid | Risk
-int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, double currentProfit, double maxProfit)
+// 6 stat cards in one horizontal row: Account | Performance | Basket |
+// Orders | Grid | Risk. The monitoring stack continues from Risk's right edge.
+int DrawStatCardsRow(int y, int x0, int availW, double balance, double equity, double dailyProfit, double currentProfit, double maxProfit)
 {
    int cols   = 6;
    int gap    = S(10);
-   int cardW  = (DASH_W - S(14) * 2 - gap * (cols - 1)) / cols;
+   // Keep the stat cards in the left/main column; its visible right edge is
+   // the anchor for the monitoring stack drawn beside the RISK card.
+   int cardW  = (availW - S(14) * 2 - gap * (cols - 1)) / cols;
    int cardH  = S(258);
    int innerW = cardW - S(24);
    int rowStep = S(29);
@@ -2961,7 +3167,7 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    double bidNow    = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ddLimit   = UseTotalDDGuard ? MaxTotalDD_Pct : (UseMaxDDStop ? MaxAllowedDD_Pct : 0.0);
 
-   int cx = S(14);
+   int cx = x0 + S(14);
 
    // คอลัมน์ 1: ข้อมูลบัญชี
    DrawCardBG(cx, y, cardW, cardH, "👤 " + GetUIString("บัญชี", "ACCOUNT"));
@@ -3003,8 +3209,10 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    DrawKV(cx + S(12), ry, innerW, GetUIString("บาสเก็ตปิด", "Baskets"), IntegerToString(StatsTotalBaskets), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ออเดอร์รวม", "Orders"), IntegerToString(totalOrders), C'160,160,180', clrWhite);
 
-   // คอลัมน์ 4: ข้อมูลออเดอร์
+   // Column 4: order information.
    cx += cardW + gap;
+
+   // คอลัมน์ 4: ข้อมูลออเดอร์
    DrawCardBG(cx, y, cardW, cardH, "📋 " + GetUIString("ออเดอร์", "ORDERS"));
    ry = y + S(44);
    DrawKV(cx + S(12), ry, innerW, GetUIString("ไม้ Buy", "Buy"), IntegerToString(buyCount), C'160,160,180', C'34,197,94'); ry += rowStep;
@@ -3045,6 +3253,8 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
    DrawKV(cx + S(12), ry, innerW, GetUIString("ล็อตเริ่มต้น", "Base Lot"), DoubleToString(BaseLot, 2), C'160,160,180', clrWhite); ry += rowStep;
    string lotModeTxt = (LotType == LOT_RISK_PERCENT) ? GetUIString("% ความเสี่ยง", "% of Risk") : (UseDynamicLot ? GetUIString("อัตโนมัติ", "Dynamic") : GetUIString("คงที่", "Fixed"));
    DrawKV(cx + S(12), ry, innerW, GetUIString("โหมดล็อต", "Lot Mode"), lotModeTxt, C'160,160,180', clrWhite); ry += rowStep;
+   string smartLotTxt = UseSmartLot ? (DoubleToString(GetSmartLotFactor(1) * 100.0, 0) + "%") : "OFF";
+   DrawKV(cx + S(12), ry, innerW, GetUIString("Smart Lot", "Smart Lot"), smartLotTxt, C'160,160,180', UseSmartLot ? clrWhite : C'120,120,130'); ry += rowStep;
    string riskStatusTxt = GetUIString("ปลอดภัย", "SAFE");
    color  riskStatusClr = C'34,197,94';
    if(TradingHalted) { riskStatusTxt = GetUIString("หยุดถาวร", "HALTED"); riskStatusClr = C'239,68,68'; }
@@ -3055,24 +3265,24 @@ int DrawStatCardsRow(int y, double balance, double equity, double dailyProfit, d
 }
 
 // แถวที่สอง: กราฟเส้นทุน (ซ้าย) + กริดฟีเจอร์ที่ใช้งาน (ขวา) เรียงข้างกันแนวนอน
-int DrawEquityFeatureRow(int y)
+int DrawEquityFeatureRow(int y, int x0, int availW)
 {
    int gap   = S(12);
-   int totalW = DASH_W - S(14) * 2 - gap;
+   int totalW = availW - S(14) * 2 - gap;
    int eqW   = (int)(totalW * 0.58);
    int ftW   = totalW - eqW;
    int rowH  = S(265);
 
-   DrawCardBG(S(14), y, eqW, rowH, "📈 " + GetUIString("กราฟเส้นทุน", "EQUITY CURVE"));
+   DrawCardBG(x0 + S(14), y, eqW, rowH, "📈 " + GetUIString("กราฟเส้นทุน", "EQUITY CURVE"));
    int chartY = y + S(44);
    int chartH = rowH - S(44) - S(32);
-   DrawEquityCurveChart(S(14) + S(10), chartY, eqW - S(20), chartH);
+   DrawEquityCurveChart(x0 + S(14) + S(10), chartY, eqW - S(20), chartH);
    UIFontSet(SF(14), FW_BOLD);
    string ddTxt = GetUIString("ย่อตัวสูงสุด: ", "MAX DRAWDOWN: ") + DoubleToString(MaxDrawdownPercent, 2) + "%";
    int tw = EstimateTextWidth(ddTxt, SF(14));
-   DashCanvas.TextOut(S(14) + eqW - S(14) - tw, y + rowH - S(27), ddTxt, ColorToARGB(C'239,68,68'));
+   DashCanvas.TextOut(x0 + S(14) + eqW - S(14) - tw, y + rowH - S(27), ddTxt, ColorToARGB(C'239,68,68'));
 
-   int fx = S(14) + eqW + gap;
+   int fx = x0 + S(14) + eqW + gap;
    DrawCardBG(fx, y, ftW, rowH, "🧩 " + GetUIString("ฟีเจอร์ที่ใช้งาน", "ACTIVE FEATURES"));
    int cols  = 4;
    int cellW = (ftW - S(20)) / cols;
@@ -3095,17 +3305,18 @@ int DrawEquityFeatureRow(int y)
    return y + rowH + S(12);
 }
 
-int DrawStatsRow(int y)
+int DrawStatsRow(int y, int x0, int availW)
 {
-   int cardW = DASH_W - S(14) * 2;
+   int cardW = availW - S(14) * 2;
    int cardH = S(84);
    int r = S(10);
-   DrawPanelShadow(S(14), y, S(14) + cardW, y + cardH, r);
-   FillRoundedRect(S(14), y, S(14) + cardW, y + cardH, r, ColorToARGB(C'23,23,39'));
-   DashCanvas.Line(S(14) + r, y,     S(14) + cardW - r, y,     ColorToARGB(C'96,82,138'));
-   DashCanvas.Line(S(14) + r, y + cardH, S(14) + cardW - r, y + cardH, ColorToARGB(C'52,48,74'));
-   DashCanvas.Line(S(14),         y + r, S(14),         y + cardH - r, ColorToARGB(C'52,48,74'));
-   DashCanvas.Line(S(14) + cardW, y + r, S(14) + cardW, y + cardH - r, ColorToARGB(C'52,48,74'));
+   int cardX = x0 + S(14);
+   DrawPanelShadow(cardX, y, cardX + cardW, y + cardH, r);
+   FillRoundedRect(cardX, y, cardX + cardW, y + cardH, r, ColorToARGB(C'23,23,39'));
+   DashCanvas.Line(cardX + r, y,     cardX + cardW - r, y,     ColorToARGB(C'96,82,138'));
+   DashCanvas.Line(cardX + r, y + cardH, cardX + cardW - r, y + cardH, ColorToARGB(C'52,48,74'));
+   DashCanvas.Line(cardX,         y + r, cardX,         y + cardH - r, ColorToARGB(C'52,48,74'));
+   DashCanvas.Line(cardX + cardW, y + r, cardX + cardW, y + cardH - r, ColorToARGB(C'52,48,74'));
 
    double winRate = (StatsTotalBaskets > 0) ? (StatsWinCount * 100.0 / StatsTotalBaskets) : 0.0;
    double avgWin   = (StatsWinCount  > 0) ? (StatsSumWinProfit  / StatsWinCount)  : 0.0;
@@ -3134,7 +3345,7 @@ int DrawStatsRow(int y)
    int colW = cardW / 6;
    for(int i = 0; i < 6; i++)
    {
-      int cx = S(14) + colW * i + colW / 2;
+      int cx = cardX + colW * i + colW / 2;
       UIFontSet(SF(20), FW_BOLD);
       int vw = EstimateTextWidth(values[i], SF(20));
       DashCanvas.TextOut(cx - vw / 2, y + S(15), values[i], ColorToARGB(valColors[i]));
@@ -3275,27 +3486,78 @@ void DrawRiskControlCard(int x, int y, int w, int h)
 
 // 3 การ์ดเรียงแถวเดียวแนวนอน (System Decision | System Status | Risk Control) แทนที่จะวางเต็ม
 // ความกว้างซ้อนกันทีละอัน - ประหยัดพื้นที่แนวตั้งลงไปมาก เพราะเนื้อหาแต่ละอันไม่ได้กว้างขนาดนั้นจริงๆ
-int DrawStatusRow(int y, int openPos)
+int DrawStatusRow(int y, int openPos, int sideX, int sideW)
 {
-   int gap   = S(12);
-   int cardW = (DASH_W - S(14) * 2 - gap * 2) / 3;
    int cardH = S(204);
-   int x1 = S(14);
-   int x2 = x1 + cardW + gap;
-   int x3 = x2 + cardW + gap;
+   int gap   = S(12);
 
-   DrawSystemDecisionCard(x1, y, cardW, cardH, openPos);
-   DrawSystemStatusCard(x2, y, cardW, cardH);
-   DrawRiskControlCard(x3, y, cardW, cardH);
+   // Right sidebar: 3 system-control cards stacked vertically.
+   DrawSystemDecisionCard(sideX, y, sideW, cardH, openPos);
+   y += cardH + gap;
+   DrawSystemStatusCard(sideX, y, sideW, cardH);
+   y += cardH + gap;
+   DrawRiskControlCard(sideX, y, sideW, cardH);
 
-   return y + cardH + S(12);
+   return y + cardH + gap;
 }
 
-int DrawNewsCard(int y)
+int DrawAdvancedMonitorRow(int y, int openPos, int sideX, int sideW)
 {
-   int cardW = DASH_W - S(14) * 2;
+   int cardH = S(178);
+   int gap   = S(12);
+   int innerW = sideW - S(24);
+
+   // SMART LOT MONITOR
+   DrawCardBG(sideX, y, sideW, cardH, "🧠 " + GetUIString("Smart Lot Monitor", "SMART LOT MONITOR"));
+   int ry = y + S(44);
+   int buyCount, sellCount; double totalLots;
+   CountPositions(buyCount, sellCount, totalLots);
+   int nextLevel = MathMax(buyCount, sellCount) + 1;
+   double smartFactor = GetSmartLotFactor(nextLevel);
+   int liveDist = (CachedGridDistance > 0) ? CachedGridDistance : GetDynamicGridDistance();
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("สถานะ", "Status"), UseSmartLot ? GetUIString("ทำงาน", "ACTIVE") : GetUIString("ปิด", "OFF"), C'160,160,180', UseSmartLot ? C'34,197,94' : C'100,100,120', 12); ry += S(25);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("Lot ถัดไป", "Next Lot Factor"), DoubleToString(smartFactor * 100.0, 0) + "%", C'160,160,180', UseSmartLot ? C'251,193,7' : clrWhite, 12); ry += S(25);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("Level ถัดไป", "Next Level"), IntegerToString(nextLevel), C'160,160,180', clrWhite, 12); ry += S(25);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("DD ปัจจุบัน", "Current DD"), DoubleToString(MaxDrawdownPercent, 2) + "%", C'160,160,180', MaxDrawdownPercent > 5 ? C'239,68,68' : clrWhite, 12); ry += S(25);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("Grid Distance", "Grid Distance"), IntegerToString(liveDist) + " P", C'160,160,180', clrWhite, 12);
+
+   y += cardH + gap;
+
+   // EXECUTION MONITOR
+   DrawCardBG(sideX, y, sideW, cardH, "⚡ " + GetUIString("คุณภาพการส่งคำสั่ง", "EXECUTION MONITOR"));
+   ry = y + S(44);
+   bool latencyGuard = (LatencyGuardActiveUntil > TimeCurrent());
+   bool connected = (bool)TerminalInfoInteger(TERMINAL_CONNECTED);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("การเชื่อมต่อ", "Connection"), connected ? "ONLINE" : "OFFLINE", C'160,160,180', connected ? C'34,197,94' : C'239,68,68', 12); ry += S(25);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("Latency ล่าสุด", "Last Latency"), IntegerToString((int)LastFillLatencyMs) + " ms", C'160,160,180', latencyGuard ? C'239,68,68' : clrWhite, 12); ry += S(25);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("Slippage ล่าสุด", "Last Slippage"), DoubleToString(LastFillSlippagePoints, 1) + " P", C'160,160,180', clrWhite, 12); ry += S(25);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("Latency Guard", "Latency Guard"), latencyGuard ? GetUIString("กำลังพัก", "ACTIVE") : "OFF", C'160,160,180', latencyGuard ? C'239,68,68' : C'100,100,120', 12); ry += S(25);
+   string serverName = AccountInfoString(ACCOUNT_SERVER);
+   DrawKV(sideX + S(12), ry, innerW, "Server", serverName, C'160,160,180', clrWhite, 12);
+
+   y += cardH + gap;
+
+   // TRADE / BASKET JOURNAL
+   DrawCardBG(sideX, y, sideW, cardH, "🧾 " + GetUIString("Trade/Basket Journal", "TRADE/BASKET JOURNAL"));
+   ry = y + S(44);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("สถานะ", "Status"), UseTradeJournal ? GetUIString("บันทึกอยู่", "RECORDING") : GetUIString("ปิด", "OFF"), C'160,160,180', UseTradeJournal ? C'34,197,94' : C'100,100,120', 12); ry += S(25);
+   string basketId = JournalBasketID;
+   if(basketId == "") basketId = GetUIString("ยังไม่มี Basket", "No active basket");
+   if(StringLen(basketId) > 22) basketId = StringSubstr(basketId, 0, 22) + "...";
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("Basket ID", "Basket ID"), basketId, C'160,160,180', clrWhite, 12); ry += S(25);
+   string journalMode = JournalLogEveryDeal ? "EVERY DEAL" : "BASKET EVENTS";
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("รูปแบบ", "Mode"), journalMode, C'160,160,180', clrWhite, 12); ry += S(25);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("ไฟล์", "File"), JournalFileName, C'160,160,180', clrWhite, 12); ry += S(25);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("ข้อมูล", "Scope"), GetUIString("Deal + Basket", "Deal + Basket"), C'160,160,180', clrWhite, 12);
+
+   return y + cardH + gap;
+}
+
+int DrawNewsCard(int y, int x0, int availW)
+{
+   int cardW = availW - S(14) * 2;
    int cardH = S(162);
-   DrawCardBG(S(14), y, cardW, cardH, "📰 " + GetUIString("ข่าวและการแจ้งเตือน", "NEWS & ALERTS"));
+   DrawCardBG(x0 + S(14), y, cardW, cardH, "📰 " + GetUIString("ข่าวและการแจ้งเตือน", "NEWS & ALERTS"));
 
    int ry = y + S(46);
    bool any = false;
@@ -3307,14 +3569,14 @@ int DrawNewsCard(int y)
       TimeToStruct(EventLogTimeVal[i], dt);
       string line = StringFormat("%02d:%02d  %s", dt.hour, dt.min, EventLogText[i]);
       UIFontSet(SF(15), FW_BOLD);
-      DashCanvas.TextOut(S(14) + S(14), ry, "✓", ColorToARGB(C'34,197,94'));
-      DashCanvas.TextOut(S(14) + S(34), ry, line, ColorToARGB(C'190,190,205'));
+      DashCanvas.TextOut(x0 + S(14) + S(14), ry, "✓", ColorToARGB(C'34,197,94'));
+      DashCanvas.TextOut(x0 + S(14) + S(34), ry, line, ColorToARGB(C'190,190,205'));
       ry += S(23);
    }
    if(!any)
    {
       UIFontSet(SF(15));
-      DashCanvas.TextOut(S(14) + S(14), ry, GetUIString("ยังไม่มีเหตุการณ์", "No events yet"), ColorToARGB(C'110,110,130'));
+      DashCanvas.TextOut(x0 + S(14) + S(14), ry, GetUIString("ยังไม่มีเหตุการณ์", "No events yet"), ColorToARGB(C'110,110,130'));
    }
 
    return y + cardH + S(14);
@@ -3333,8 +3595,8 @@ int DrawNewsCard(int y)
 //| buffer's real size, so it just got clipped instead of scaled).   |
 //+------------------------------------------------------------------+
 double UIScale       = 1.0;
-int    DASH_W_BASE   = 1450;
-int    DASH_H_BASE   = 1450; // ใช้อ้างอิงคำนวณ UIScale เท่านั้น (ความสูงจริงของ canvas มาจาก
+int    DASH_W_BASE   = 1520;
+int    DASH_H_BASE   = 1100; // ใช้อ้างอิงคำนวณ UIScale เท่านั้น (ความสูงจริงของ canvas มาจาก
                               // ComputeDashboardContentHeight() แบบ dynamic ตามจำนวนไม้ที่เปิดอยู่จริง)
 
 int S(double v)  { return (int)MathRound(v * UIScale); }
@@ -3370,11 +3632,11 @@ int ComputeDashboardContentHeight()
    h += S(90);              // DrawHeader
    h += S(46);              // DrawInfoBar
    h += S(38);              // DrawServerTimeRow
-   h += S(258) + S(12);     // DrawStatCardsRow
-   h += S(265) + S(12);     // DrawEquityFeatureRow
-   h += S(84)  + S(12);     // DrawStatsRow
-   h += S(204) + S(12);     // DrawStatusRow
-   h += S(162) + S(14);     // DrawNewsCard
+   // Both columns begin at the top-card row. The sidebar continues from the
+   // right edge of RISK, rather than beginning below the left dashboard.
+   int sideH = (S(204) + S(12)) * 3 + (S(178) + S(12)) * 3;
+   int leftH = (S(258) + S(12)) + (S(84) + S(12)) + (S(265) + S(12)) + (S(162) + S(14));
+   h += MathMax(sideH, leftH);
    return h;
 }
 
@@ -3450,11 +3712,38 @@ void UpdateDashboard(double currentProfit, double maxProfit, double currentTS, i
    y = DrawHeader(y);
    y = DrawInfoBar(y);
    y = DrawServerTimeRow(y, openPos, pendingOrders);
-   y = DrawStatCardsRow(y, balance, equity, dailyProfit, currentProfit, maxProfit);
-   y = DrawEquityFeatureRow(y);
-   y = DrawStatsRow(y);
-   y = DrawStatusRow(y, openPos);
-   y = DrawNewsCard(y);
+
+   // Split at the top-card row: the monitor/risk stack continues immediately
+   // to the right of the six cards, directly after RISK.
+   // A tight seam makes the monitor stack read as a direct continuation of
+   // the RISK card, while still leaving a small visual separation.
+   int layoutGap = S(6);
+   int contentW = DASH_W - S(14) * 2;
+   int mainX = S(14);
+
+   // The last stat card has its own right padding. Start the sidebar after
+   // that visible edge, leaving only the normal inter-card gap after RISK.
+   int mainW = S(1009);
+   int sideX = mainX + mainW - S(14) + layoutGap;
+   int sideW = DASH_W - sideX - S(14);
+
+   // Safety fallback for unusually narrow charts.
+   if(sideW < S(220))
+   {
+      sideW = MathMax(S(220), contentW - mainW - layoutGap);
+      sideX = mainX + mainW - S(14) + layoutGap;
+   }
+
+   int splitY = y;
+   y = DrawStatCardsRow(y, mainX, mainW, balance, equity, dailyProfit, currentProfit, maxProfit);
+   y = DrawStatsRow(y, mainX, mainW);
+
+   int leftY = DrawEquityFeatureRow(y, mainX - S(0), mainW);
+   leftY = DrawNewsCard(leftY, mainX - S(0), mainW);
+
+   int rightY = DrawStatusRow(splitY, openPos, sideX, sideW);
+   rightY = DrawAdvancedMonitorRow(rightY, openPos, sideX, sideW);
+   y = MathMax(leftY, rightY);
 
    DashCanvas.Update();
 }
