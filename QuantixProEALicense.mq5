@@ -3374,10 +3374,13 @@ int DrawServerTimeRow(int y, int openPos, int pendingOrders)
 
 // 6 stat cards in one horizontal row: Account | Performance | Basket |
 // Orders | Grid | Risk. The monitoring stack continues from Risk's right edge.
+// 6 การ์ดจัด 3 คอลัมน์ x 2 แถว (เดิมยัด 6 คอลัมน์แถวเดียว การ์ดแคบเกินจนตัวหนังสือ/ค่าทับกัน) -
+// แถว 1: บัญชี/ผลงานวันนี้/บาสเก็ต, แถว 2: ออเดอร์/กริด/ความเสี่ยง เรียงต่อจากลำดับเดิมเป๊ะ
 int DrawStatCardsRow(int y, int x0, int availW, double balance, double equity, double dailyProfit, double currentProfit, double maxProfit)
 {
-   int cols   = 6;
+   int cols   = 3;
    int gap    = S(10);
+   int rowGap = S(12);
    // Keep the stat cards in the left/main column; its visible right edge is
    // the anchor for the monitoring stack drawn beside the RISK card.
    int cardW  = (availW - S(14) * 2 - gap * (cols - 1)) / cols;
@@ -3398,22 +3401,24 @@ int DrawStatCardsRow(int y, int x0, int availW, double balance, double equity, d
    double bidNow    = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ddLimit   = UseTotalDDGuard ? MaxTotalDD_Pct : (UseMaxDDStop ? MaxAllowedDD_Pct : 0.0);
 
+   int row1Y = y;
+   int row2Y = y + cardH + rowGap;
    int cx = x0 + S(14);
 
-   // คอลัมน์ 1: ข้อมูลบัญชี
-   DrawCardBG(cx, y, cardW, cardH, "👤 " + GetUIString("บัญชี", "ACCOUNT"));
-   int ry = y + S(44);
+   // แถว 1, คอลัมน์ 1: ข้อมูลบัญชี
+   DrawCardBG(cx, row1Y, cardW, cardH, "👤 " + GetUIString("บัญชี", "ACCOUNT"));
+   int ry = row1Y + S(44);
    DrawKV(cx + S(12), ry, innerW, GetUIString("ยอดเงิน", "Balance"), "$" + DoubleToString(balance, 2), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("มูลค่าสุทธิ", "Equity"), "$" + DoubleToString(equity, 2), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("หลักประกัน", "Margin"), "$" + DoubleToString(margin, 2), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ประกันเหลือ", "Free Mgn"), "$" + DoubleToString(freeMargin, 2), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ระดับประกัน", "Mgn Lvl"), (marginLevel > 0 ? DoubleToString(marginLevel, 1) + "%" : "—"), C'160,160,180', C'34,197,94');
 
-   // คอลัมน์ 2: ผลงานวันนี้
+   // แถว 1, คอลัมน์ 2: ผลงานวันนี้
    cx += cardW + gap;
-   DrawCardBG(cx, y, cardW, cardH, "📅 " + GetUIString("ผลงานวันนี้", "TODAY"));
+   DrawCardBG(cx, row1Y, cardW, cardH, "📅 " + GetUIString("ผลงานวันนี้", "TODAY"));
    int gcx = cx + cardW / 2;
-   int gcy = y + S(44) + S(58);
+   int gcy = row1Y + S(44) + S(58);
    double dailyPct = (DailyProfitGoal > 0) ? (dailyProfit / DailyProfitGoal) : 0.0;
    DrawArcGauge(gcx, gcy, S(48), S(11), dailyPct);
    string pctTxt = StringFormat("%+.1f%%", dailyPct * 100.0);
@@ -3421,17 +3426,17 @@ int DrawStatCardsRow(int y, int x0, int availW, double balance, double equity, d
    UIFontSet(pctFs, FW_BOLD);
    int pw = EstimateNumericTextWidth(pctTxt, pctFs);
    DashCanvas.TextOut(gcx - pw / 2, gcy - (int)(pctFs * 0.42), pctTxt, ColorToARGB(dailyProfit >= 0 ? C'34,197,94' : C'239,68,68'));
-   int py2 = y + S(44) + S(128);
+   int py2 = row1Y + S(44) + S(128);
    DrawKV(cx + S(12), py2, innerW, GetUIString("กำไรวันนี้", "Daily P/L"),
           (dailyProfit >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(dailyProfit), 2), C'160,160,180', dailyProfit >= 0 ? C'34,197,94' : C'239,68,68');
    py2 += rowStep;
    DrawKV(cx + S(12), py2, innerW, GetUIString("เป้าหมาย", "Goal"),
           "$" + DoubleToString(DailyProfitGoal, 0) + " (" + DoubleToString(MathMax(0, dailyPct * 100.0), 0) + "%)", C'160,160,180', clrWhite);
 
-   // คอลัมน์ 3: สถานะบาสเก็ต
+   // แถว 1, คอลัมน์ 3: สถานะบาสเก็ต
    cx += cardW + gap;
-   DrawCardBG(cx, y, cardW, cardH, "📦 " + GetUIString("บาสเก็ต", "BASKET"));
-   ry = y + S(44);
+   DrawCardBG(cx, row1Y, cardW, cardH, "📦 " + GetUIString("บาสเก็ต", "BASKET"));
+   ry = row1Y + S(44);
    DrawKV(cx + S(12), ry, innerW, GetUIString("กำไรลอย", "Floating"), (currentProfit >= 0 ? "+$" : "-$") + DoubleToString(MathAbs(currentProfit), 2), C'160,160,180', currentProfit >= 0 ? C'34,197,94' : C'239,68,68'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("สูงสุด", "Peak"), "+$" + DoubleToString(maxProfit, 2), C'160,160,180', C'34,197,94'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ล็อกไว้", "Locked"), (lockedProfit > 0 ? "+$" + DoubleToString(lockedProfit, 2) : "—"), C'160,160,180', clrWhite); ry += rowStep;
@@ -3440,12 +3445,10 @@ int DrawStatCardsRow(int y, int x0, int availW, double balance, double equity, d
    DrawKV(cx + S(12), ry, innerW, GetUIString("บาสเก็ตปิด", "Baskets"), IntegerToString(StatsTotalBaskets), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ออเดอร์รวม", "Orders"), IntegerToString(totalOrders), C'160,160,180', clrWhite);
 
-   // Column 4: order information.
-   cx += cardW + gap;
-
-   // คอลัมน์ 4: ข้อมูลออเดอร์
-   DrawCardBG(cx, y, cardW, cardH, "📋 " + GetUIString("ออเดอร์", "ORDERS"));
-   ry = y + S(44);
+   // แถว 2, คอลัมน์ 1: ข้อมูลออเดอร์
+   cx = x0 + S(14);
+   DrawCardBG(cx, row2Y, cardW, cardH, "📋 " + GetUIString("ออเดอร์", "ORDERS"));
+   ry = row2Y + S(44);
    DrawKV(cx + S(12), ry, innerW, GetUIString("ไม้ Buy", "Buy"), IntegerToString(buyCount), C'160,160,180', C'34,197,94'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ไม้ Sell", "Sell"), IntegerToString(sellCount), C'160,160,180', C'239,68,68'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("รวม", "Total"), IntegerToString(totalOrders), C'160,160,180', clrWhite); ry += rowStep;
@@ -3461,10 +3464,10 @@ int DrawStatCardsRow(int y, int x0, int availW, double balance, double equity, d
    DrawKV(cx + S(12), ry, innerW, "ATR", (UseATRDistance ? IntegerToString(GetCurrentATRPoints()) + " P" : "—"), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("สเปรด", "Spread"), IntegerToString(adjSpread) + " P", C'160,160,180', adjSpread > MaxSpreadAllowed * m_multiplier ? C'239,68,68' : clrWhite);
 
-   // คอลัมน์ 5: สถานะกริด
+   // แถว 2, คอลัมน์ 2: สถานะกริด
    cx += cardW + gap;
-   DrawCardBG(cx, y, cardW, cardH, "⚙️ " + GetUIString("กริด", "GRID"));
-   ry = y + S(44);
+   DrawCardBG(cx, row2Y, cardW, cardH, "⚙️ " + GetUIString("กริด", "GRID"));
+   ry = row2Y + S(44);
    string gridModeLabel = (GridType == GRID_VIRTUAL) ? "VIRTUAL" : (GridType == GRID_VIRTUAL_LIMIT ? "VIRTUAL LIMIT" : "PENDING");
    DrawKV(cx + S(12), ry, innerW, GetUIString("โหมด", "Mode"), gridModeLabel, C'160,160,180', C'251,193,7'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ชั้น", "Levels"), IntegerToString(curLevel) + " / " + IntegerToString(TotalLevels), C'160,160,180', clrWhite); ry += rowStep;
@@ -3475,10 +3478,10 @@ int DrawStatCardsRow(int y, int x0, int availW, double balance, double equity, d
    DrawKV(cx + S(12), ry, innerW, GetUIString("ฐาน Sell", "Base Sell"), DoubleToString(GetNextGridTargetPrice(false), _Digits), C'160,160,180', C'239,68,68'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ราคาตลาด", "Price"), DoubleToString(bidNow, _Digits), C'160,160,180', clrWhite);
 
-   // คอลัมน์ 6: บริหารความเสี่ยง
+   // แถว 2, คอลัมน์ 3: บริหารความเสี่ยง
    cx += cardW + gap;
-   DrawCardBG(cx, y, cardW, cardH, "🛡️ " + GetUIString("ความเสี่ยง", "RISK"));
-   ry = y + S(44);
+   DrawCardBG(cx, row2Y, cardW, cardH, "🛡️ " + GetUIString("ความเสี่ยง", "RISK"));
+   ry = row2Y + S(44);
    DrawKV(cx + S(12), ry, innerW, GetUIString("ย่อตัวสูงสุด", "Max DD"), DoubleToString(MaxDrawdownPercent, 2) + "%", C'160,160,180', MaxDrawdownPercent > 5 ? C'239,68,68' : C'34,197,94'); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ลิมิต", "DD Limit"), (ddLimit > 0 ? DoubleToString(ddLimit, 1) + "%" : "—"), C'160,160,180', clrWhite); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, GetUIString("ล็อตเริ่มต้น", "Base Lot"), DoubleToString(BaseLot, 2), C'160,160,180', clrWhite); ry += rowStep;
@@ -3492,7 +3495,7 @@ int DrawStatCardsRow(int y, int x0, int availW, double balance, double equity, d
    else if(ddLimit > 0 && MaxDrawdownPercent >= ddLimit * 0.7) { riskStatusTxt = GetUIString("เฝ้าระวัง", "WARNING"); riskStatusClr = C'251,146,60'; }
    DrawKV(cx + S(12), ry, innerW, GetUIString("สถานะ", "Status"), riskStatusTxt, C'160,160,180', riskStatusClr);
 
-   return y + cardH + S(12);
+   return row2Y + cardH + rowGap;
 }
 
 // แถวที่สอง: กราฟเส้นทุน (ซ้าย) + กริดฟีเจอร์ที่ใช้งาน (ขวา) เรียงข้างกันแนวนอน
@@ -3888,7 +3891,7 @@ int ComputeDashboardContentHeight()
    // Both columns begin at the top-card row. The sidebar continues from the
    // right edge of RISK, rather than beginning below the left dashboard.
    int sideH = (S(204) + S(12)) * 3 + (S(178) + S(12)) * 4;
-   int leftH = (S(258) + S(12)) + (S(84) + S(12)) + (S(265) + S(12)) + (S(162) + S(14));
+   int leftH = (S(258) * 2 + S(12) * 2) + (S(84) + S(12)) + (S(265) + S(12)) + (S(162) + S(14));
    h += MathMax(sideH, leftH);
    return h;
 }
