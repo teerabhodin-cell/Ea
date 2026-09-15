@@ -79,6 +79,9 @@
 #include "MLQuantAI_ExecutionSubmissionContract.mqh"
 #include "MLQuantAI_EnvironmentLockGate.mqh"
 #include "MLQuantAI_EntryCompatibilityGate.mqh"
+// RA-43 (QA-frozen StateProjector Live-Sync Remediation Design): needed
+// only for StateProjector_Apply() at the two new sync points below.
+#include "../Infrastructure/EventStore/MLQuantAI_StateProjector.mqh"
 
 // MqlTradeResult also contains a string member (comment) - same
 // ZeroMemory pitfall as MqlTradeRequest_ZeroInit above, same fix.
@@ -149,6 +152,67 @@ bool BrokerSubmission_RecordAttempt(TradeCandidate &candidate, const ExecutionRe
    candidate.correlation_id = request.correlation_id;
    BrokerSubmissionGate_MarkAttempted(request.execution_request_id);
    return true;
+}
+
+// RA-43 (QA-frozen StateProjector Live-Sync Remediation Design): recovers
+// the REAL durably-written CANDIDATE_SUBMITTED line for candidateId -
+// never fabricates a LifecycleEvent, same discipline C3.7's
+// C37_FindMatchingExecutedLine / C3.10B's C310B_FindMatchingRejectionTransition
+// already established. Deliberately a SEPARATE, local implementation
+// rather than reusing either of those: BrokerSubmissionAdapter is the
+// low-level execution boundary, C3.7/C3.10B are OnInit-only startup
+// authorities in a different layer - same recovery pattern, no
+// cross-subsystem dependency, no risk of altering either existing
+// matcher's behavior even indirectly. By construction (StateMachine_
+// CanTransition: CREATED -> SUBMITTED is one-way, never revisited) at
+// most one such line can ever exist for a given candidate_id.
+int BSA_FindMatchingSubmittedLine(const string &lines[], int n, string candidateId, LifecycleEvent &outEvent)
+{
+   int matchCount = 0;
+   for(int i = n - 1; i >= 0; i--)
+   {
+      string line = lines[i];
+      if(line == "") continue;
+      if(EventSerializer_PeekCategory(line) != EVENT_CAT_LIFECYCLE) continue;
+
+      LifecycleEvent e;
+      if(!EventSerializer_ParseLifecycle(line, e)) continue;
+
+      if(e.candidate_id != candidateId) continue;
+      if(e.from_state != CANDIDATE_CREATED || e.to_state != CANDIDATE_SUBMITTED) continue;
+      if(e.reason != REASON_SUBMITTED_OK) continue;
+
+      matchCount++;
+      if(matchCount == 1) outEvent = e;
+   }
+   return matchCount;
+}
+
+// RA-43: same discipline, for the synchronous CANDIDATE_REJECTED_BY_BROKER
+// transition. reason is NOT filtered (classifyReason varies by broker
+// retcode - see BrokerSubmission_ClassifyRetcode) - only candidate_id and
+// the from/to state pair identify this line. REJECTED_BY_BROKER is a
+// terminal state (StateMachine_IsTerminal), so at most one such line can
+// ever exist for a given candidate_id.
+int BSA_FindMatchingRejectedByBrokerLine(const string &lines[], int n, string candidateId, LifecycleEvent &outEvent)
+{
+   int matchCount = 0;
+   for(int i = n - 1; i >= 0; i--)
+   {
+      string line = lines[i];
+      if(line == "") continue;
+      if(EventSerializer_PeekCategory(line) != EVENT_CAT_LIFECYCLE) continue;
+
+      LifecycleEvent e;
+      if(!EventSerializer_ParseLifecycle(line, e)) continue;
+
+      if(e.candidate_id != candidateId) continue;
+      if(e.from_state != CANDIDATE_SUBMITTED || e.to_state != CANDIDATE_REJECTED_BY_BROKER) continue;
+
+      matchCount++;
+      if(matchCount == 1) outEvent = e;
+   }
+   return matchCount;
 }
 
 // Step 6 of the frozen sequence: pure orchestration, no OrderSend call
@@ -229,6 +293,41 @@ bool BrokerSubmission_ProcessSendResult(TradeCandidate &candidate, const Executi
    if(!EventStore_LogTransition(candidate, CANDIDATE_SUBMITTED, REASON_SUBMITTED_OK, ""))
       return false; // SafeMode already tripped inside EventStore_LogTransition
 
+   // RA-43 (QA-frozen StateProjector Live-Sync Remediation Design):
+   // recover the REAL just-appended CANDIDATE_SUBMITTED line and apply it
+   // to StateProjector so same-session consumers observe SUBMITTED
+   // without waiting for a restart (R1/R2/R4/R7 - durable write already
+   // succeeded above, apply happens only now, using the same
+   // StateProjector_Apply() ReplayEngine itself uses at cold rebuild).
+   //
+   // A failure here is a post-durable read-model integrity problem, NOT a
+   // durability failure - per QA's frozen ruling this function's return
+   // value must stay TRUE in that case (returning false would make
+   // SubmitOrderCommand() misclassify it as an RA-31.2 condition B
+   // "unresolved L2 durability write" and wrongly block every future
+   // SUBMIT_ORDER globally, which does not match what actually happened).
+   // SafeMode_Trip() is the correct signal instead: halts further live EA
+   // action without corrupting the ceremony's own unresolved-submission
+   // semantics.
+   {
+      string bsaLinesSubmitted[];
+      int bsaNSubmitted = EventStore_ReadAllLines(g_EventStore_FileName, bsaLinesSubmitted);
+      LifecycleEvent bsaRecoveredSubmitted;
+      int bsaSubmittedMatchCount = BSA_FindMatchingSubmittedLine(bsaLinesSubmitted, bsaNSubmitted, candidate.candidate_id, bsaRecoveredSubmitted);
+      if(bsaSubmittedMatchCount != 1)
+      {
+         SafeMode_Trip(StringFormat("RA-43 C2.2: durable CANDIDATE_SUBMITTED write succeeded but exact appended lifecycle evidence %s for %s (matchCount=%d)",
+                        bsaSubmittedMatchCount == 0 ? "could not be recovered" : "was ambiguous", candidate.candidate_id, bsaSubmittedMatchCount));
+      }
+      else
+      {
+         string bsaApplyErrSubmitted;
+         if(!StateProjector_Apply(bsaRecoveredSubmitted, bsaApplyErrSubmitted))
+            SafeMode_Trip(StringFormat("RA-43 C2.2: StateProjector_Apply failed after a successful durable CANDIDATE_SUBMITTED write for %s: %s",
+                           candidate.candidate_id, bsaApplyErrSubmitted));
+      }
+   }
+
    if(classification == SUBMISSION_STATUS_SUBMITTED)
    {
       outResult.submission_status = SUBMISSION_STATUS_SUBMITTED;
@@ -249,6 +348,32 @@ bool BrokerSubmission_ProcessSendResult(TradeCandidate &candidate, const Executi
 
    if(!EventStore_LogTransition(candidate, CANDIDATE_REJECTED_BY_BROKER, classifyReason, ""))
       return false; // ORDER_REJECTED already durable and NOT rolled back; SafeMode already tripped
+
+   // RA-43: same sync + same non-rollback-of-return-value discipline as
+   // the SUBMITTED sync point above, for the synchronous
+   // CANDIDATE_REJECTED_BY_BROKER transition. By the time this line runs,
+   // the SUBMITTED sync point above has already applied SUBMITTED to
+   // StateProjector for this candidate_id, so the from_state precondition
+   // StateProjector_Apply() checks is satisfied in the same order the
+   // durable log itself records these two transitions.
+   {
+      string bsaLinesRejected[];
+      int bsaNRejected = EventStore_ReadAllLines(g_EventStore_FileName, bsaLinesRejected);
+      LifecycleEvent bsaRecoveredRejected;
+      int bsaRejectedMatchCount = BSA_FindMatchingRejectedByBrokerLine(bsaLinesRejected, bsaNRejected, candidate.candidate_id, bsaRecoveredRejected);
+      if(bsaRejectedMatchCount != 1)
+      {
+         SafeMode_Trip(StringFormat("RA-43 C2.2: durable CANDIDATE_REJECTED_BY_BROKER write succeeded but exact appended lifecycle evidence %s for %s (matchCount=%d)",
+                        bsaRejectedMatchCount == 0 ? "could not be recovered" : "was ambiguous", candidate.candidate_id, bsaRejectedMatchCount));
+      }
+      else
+      {
+         string bsaApplyErrRejected;
+         if(!StateProjector_Apply(bsaRecoveredRejected, bsaApplyErrRejected))
+            SafeMode_Trip(StringFormat("RA-43 C2.2: StateProjector_Apply failed after a successful durable CANDIDATE_REJECTED_BY_BROKER write for %s: %s",
+                           candidate.candidate_id, bsaApplyErrRejected));
+      }
+   }
 
    return true;
 }
