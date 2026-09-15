@@ -310,15 +310,59 @@ void Test_NonPositiveLotSize_Rejects()
    Check(result.reason_code == REASON_ERROR_INTERNAL, "reason_code == REASON_ERROR_INTERNAL");
 }
 
-void Test_InvalidBidAskOrTickValue_NotIndependentlyReproducible()
+// RA-52 (QA-frozen Test Debt Resolution Design): EntryCompatibility_
+// PriceContextValid/EntryCompatibility_TickValueValid (MLQuantAI_
+// EntryCompatibilityGate.mqh) are pure functions - no SymbolInfo/
+// EventStore/Risk/Execution/state access of any kind - so they are
+// deterministically testable with synthetic inputs directly, closing
+// the test debt RA-51 found (the two REASON_ERROR_INTERNAL branches
+// inside EntryCompatibilityGate_Evaluate were previously only
+// "verified by inspection", since a connected live terminal always
+// reports real positive bid/ask/tick_value for a valid, subscribed,
+// tradable symbol and cannot be coerced into an invalid quote from
+// outside the function under test).
+void Test_PriceContextValid_BothPositive_True()
 {
-   Print("--- Gate: SymbolInfoDouble returning <= 0 for bid/ask/tick_value is treated as invalid (documented, not independently reproducible in a live terminal) ---");
-   Check(true, "verified by inspection: EntryCompatibilityGate_Evaluate checks bid <= 0.0 || ask <= 0.0 immediately "
-               "after reading them, and tickValue <= 0.0 immediately after reading SYMBOL_TRADE_TICK_VALUE, both "
-               "rejecting with REASON_ERROR_INTERNAL before any further computation - not reproducible as a live "
-               "automated check since a connected terminal always reports real positive values for a valid, "
-               "subscribed, tradable symbol (same category of live-terminal caveat as "
-               "Test_Build_InvalidBoundPriceRejects in Tests/MLQuantAI_Test_C2_2_BrokerSubmissionGate.mq5).");
+   Print("--- EntryCompatibility_PriceContextValid: bid > 0 && ask > 0 -> true ---");
+   Check(EntryCompatibility_PriceContextValid(1.2345, 1.2347), "both positive -> valid");
+}
+
+void Test_PriceContextValid_BidZero_False()
+{
+   Print("--- EntryCompatibility_PriceContextValid: bid == 0 -> false ---");
+   Check(!EntryCompatibility_PriceContextValid(0.0, 1.2347), "bid == 0 -> invalid");
+}
+
+void Test_PriceContextValid_AskZero_False()
+{
+   Print("--- EntryCompatibility_PriceContextValid: ask == 0 -> false ---");
+   Check(!EntryCompatibility_PriceContextValid(1.2345, 0.0), "ask == 0 -> invalid");
+}
+
+void Test_PriceContextValid_NegativeValues_False()
+{
+   Print("--- EntryCompatibility_PriceContextValid: negative bid and/or ask -> false ---");
+   Check(!EntryCompatibility_PriceContextValid(-1.0, 1.2347), "negative bid -> invalid");
+   Check(!EntryCompatibility_PriceContextValid(1.2345, -1.0), "negative ask -> invalid");
+   Check(!EntryCompatibility_PriceContextValid(-1.0, -1.0), "both negative -> invalid");
+}
+
+void Test_TickValueValid_Positive_True()
+{
+   Print("--- EntryCompatibility_TickValueValid: tickValue > 0 -> true ---");
+   Check(EntryCompatibility_TickValueValid(1.0), "positive tick value -> valid");
+}
+
+void Test_TickValueValid_Zero_False()
+{
+   Print("--- EntryCompatibility_TickValueValid: tickValue == 0 -> false ---");
+   Check(!EntryCompatibility_TickValueValid(0.0), "zero tick value -> invalid");
+}
+
+void Test_TickValueValid_Negative_False()
+{
+   Print("--- EntryCompatibility_TickValueValid: tickValue < 0 -> false ---");
+   Check(!EntryCompatibility_TickValueValid(-1.0), "negative tick value -> invalid");
 }
 
 //=====================================================================
@@ -379,7 +423,14 @@ void OnStart()
    Test_EmptyExecutionRequestId_StructuralFailure();
    Test_DegenerateStopDistance_Rejects();
    Test_NonPositiveLotSize_Rejects();
-   Test_InvalidBidAskOrTickValue_NotIndependentlyReproducible();
+
+   Test_PriceContextValid_BothPositive_True();
+   Test_PriceContextValid_BidZero_False();
+   Test_PriceContextValid_AskZero_False();
+   Test_PriceContextValid_NegativeValues_False();
+   Test_TickValueValid_Positive_True();
+   Test_TickValueValid_Zero_False();
+   Test_TickValueValid_Negative_False();
 
    Test_PlannedFieldsUnchanged_Pass();
    Test_NoRetry_StructuralProof();

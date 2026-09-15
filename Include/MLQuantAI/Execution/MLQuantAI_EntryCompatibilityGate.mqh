@@ -61,6 +61,27 @@ void EntryCompatibilityResult_Init(EntryCompatibilityResult &r)
    r.risk_divergence_pct = 0.0;
 }
 
+// RA-52 (QA-frozen Test Debt Resolution Design): pure decision logic,
+// factored out of EntryCompatibilityGate_Evaluate below so the two
+// REASON_ERROR_INTERNAL branches it guards are deterministically
+// unit-testable with synthetic (bid, ask)/(tickValue) inputs, instead of
+// relying on a live terminal happening to report an invalid quote - same
+// "live SymbolInfo read feeds a pure decision" split already established
+// by BrokerSubmission_SelectFillingMode (MLQuantAI_BrokerSubmissionBuilder
+// .mqh, RA-20.1) and EnvironmentLock_TradeModePermitsNewPosition
+// (MLQuantAI_EnvironmentLockGate.mqh, RA-49). Structural refactor only -
+// identical comparison, no SymbolInfo/EventStore/Risk/Execution access,
+// no state of any kind.
+bool EntryCompatibility_PriceContextValid(double bid, double ask)
+{
+   return bid > 0.0 && ask > 0.0;
+}
+
+bool EntryCompatibility_TickValueValid(double tickValue)
+{
+   return tickValue > 0.0;
+}
+
 // Returns false only on a structural failure (empty execution_request_id) -
 // no EntryCompatibilityResult is produced at all in that case, same
 // convention SafetyGate_Evaluate (MLQuantAI_SafetyGate.mqh) already
@@ -87,7 +108,7 @@ bool EntryCompatibilityGate_Evaluate(const ExecutionRequest &request, EntryCompa
    // re-read later by this file or by the caller for the same attempt.
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   if(bid <= 0.0 || ask <= 0.0)
+   if(!EntryCompatibility_PriceContextValid(bid, ask))
    {
       outResult.decision    = SAFETY_GATE_REJECTED;
       outResult.reason_code = REASON_ERROR_INTERNAL;
@@ -115,7 +136,7 @@ bool EntryCompatibilityGate_Evaluate(const ExecutionRequest &request, EntryCompa
    // read directly here instead of threaded through a RiskContext this
    // gate has no access to.
    double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   if(tickValue <= 0.0)
+   if(!EntryCompatibility_TickValueValid(tickValue))
    {
       outResult.decision    = SAFETY_GATE_REJECTED;
       outResult.reason_code = REASON_ERROR_INTERNAL;
