@@ -3884,7 +3884,7 @@ int DrawSidebarCards(int y, int openPos, int sideX, int sideW)
    DrawKV(col1X + S(12), ry, innerW, GetUIString("Latency ล่าสุด", "Last Latency"), IntegerToString((int)LastFillLatencyMs) + " ms", C'160,160,180', latencyGuard ? C'239,68,68' : clrWhite, 12); ry += S(29);
    DrawKV(col1X + S(12), ry, innerW, GetUIString("Slippage ล่าสุด", "Last Slippage"), DoubleToString(LastFillSlippagePoints, 1) + " P", C'160,160,180', clrWhite, 12); ry += S(29);
    DrawKV(col1X + S(12), ry, innerW, GetUIString("Latency Guard", "Latency Guard"), latencyGuard ? GetUIString("กำลังพัก", "ACTIVE") : "OFF", C'160,160,180', latencyGuard ? C'239,68,68' : C'100,100,120', 12); ry += S(29);
-   string serverName = TruncateForNarrowCard(AccountInfoString(ACCOUNT_SERVER), 16);
+   string serverName = TruncateForNarrowCard(AccountInfoString(ACCOUNT_SERVER), 22);
    DrawKV(col1X + S(12), ry, innerW, "Server", serverName, C'160,160,180', clrWhite, 12);
 
    // แถว 4: Connection Guard | Trade/Basket Journal
@@ -3909,11 +3909,11 @@ int DrawSidebarCards(int y, int openPos, int sideX, int sideW)
    DrawKV(col1X + S(12), ry, innerW, GetUIString("สถานะ", "Status"), UseTradeJournal ? GetUIString("บันทึกอยู่", "RECORDING") : GetUIString("ปิด", "OFF"), C'160,160,180', UseTradeJournal ? C'34,197,94' : C'100,100,120', 12); ry += S(29);
    string basketId = JournalBasketID;
    if(basketId == "") basketId = GetUIString("ยังไม่มี Basket", "No active basket");
-   basketId = TruncateForNarrowCard(basketId, 12);
+   basketId = TruncateForNarrowCard(basketId, 16);
    DrawKV(col1X + S(12), ry, innerW, GetUIString("Basket ID", "Basket ID"), basketId, C'160,160,180', clrWhite, 12); ry += S(29);
    string journalMode = JournalLogEveryDeal ? "EVERY DEAL" : "BASKET EVENTS";
    DrawKV(col1X + S(12), ry, innerW, GetUIString("รูปแบบ", "Mode"), journalMode, C'160,160,180', clrWhite, 12); ry += S(29);
-   DrawKV(col1X + S(12), ry, innerW, GetUIString("ไฟล์", "File"), TruncateForNarrowCard(JournalFileName, 14), C'160,160,180', clrWhite, 12); ry += S(29);
+   DrawKV(col1X + S(12), ry, innerW, GetUIString("ไฟล์", "File"), TruncateForNarrowCard(JournalFileName, 18), C'160,160,180', clrWhite, 12); ry += S(29);
    DrawKV(col1X + S(12), ry, innerW, GetUIString("ข้อมูล", "Scope"), GetUIString("Deal + Basket", "Deal + Basket"), C'160,160,180', clrWhite, 12);
 
    return row3Y + cardH + gap;
@@ -3961,7 +3961,8 @@ int DrawNewsCard(int y, int x0, int availW)
 //| buffer's real size, so it just got clipped instead of scaled).   |
 //+------------------------------------------------------------------+
 double UIScale       = 1.0;
-int    DASH_W_BASE   = 1520;
+int    DASH_W_BASE   = 1700; // เพิ่มจาก 1520 ให้ไซด์บาร์ 2 คอลัมน์ (DrawSidebarCards) กว้างขึ้นจริง โดย
+                              // mainW (คอลัมน์สถิติซ้าย) คงที่เท่าเดิม - ส่วนที่เพิ่มไปตกที่ sideW ทั้งหมด
 int    DASH_H_BASE   = 1100; // ใช้อ้างอิงคำนวณ UIScale เท่านั้น (ความสูงจริงของ canvas มาจาก
                               // ComputeDashboardContentHeight() แบบ dynamic ตามจำนวนไม้ที่เปิดอยู่จริง)
 
