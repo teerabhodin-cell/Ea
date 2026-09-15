@@ -22,6 +22,15 @@
 #include "MLQuantAI_CRT_V1_ToTradeCandidate.mqh"
 #include "../Infrastructure/EventStore/MLQuantAI_EventStore.mqh"
 #include "../Infrastructure/EventStore/MLQuantAI_StateProjector.mqh"
+#include "../Market/MLQuantAI_MarketContext.mqh"
+// RA-39 (QA-frozen Projection Live-Sync Hardening, RA-38 design, amended
+// scope per QA's CandidateProjection overload ruling): needed only by
+// the new 3-argument CRT_EmitCandidateCreated() overload below -
+// CandidateProjection_ApplyLineWithContext() is the SAME function
+// CandidateProjection_RebuildFromFile() already uses at rebuild time,
+// reused here (Pattern A) so cold rebuild and live-apply share one
+// validation path (R6).
+#include "../Infrastructure/EventStore/MLQuantAI_CandidateProjection.mqh"
 
 // Generic string[] -> JSON array, escaped the same way every other
 // string field in an event line already is (EventSerializer_Escape) -
@@ -119,6 +128,75 @@ bool CRT_EmitCandidateCreated(const TradeCandidate &c, int digits)
    e.to_state        = CANDIDATE_CREATED;
    string projectorError;
    StateProjector_Apply(e, projectorError); // best-effort - the durable write already succeeded; this only keeps live lookups accurate before the next real replay
+
+   return true;
+}
+
+// RA-39 (QA-frozen Projection Live-Sync Hardening, RA-38 design, amended
+// scope): a SEPARATE 3-argument overload, added alongside the 2-argument
+// function above WITHOUT MODIFYING IT AT ALL (AC-CAND-01) - every one of
+// the ~30 existing sealed test files calling the 2-argument form keeps
+// compiling and keeps its pre-RA-39 behavior exactly, including
+// deliberate orphan-candidate fixtures that have no MarketContext to
+// supply (AC-CAND-04).
+//
+// This overload is authorized for use ONLY at the two real production/
+// ceremony call sites (MLQuantAI.mq5's RunC22CeremonyFixtureCommand and
+// the C5.0 OnTick fixture pipeline) - AC-CAND-02. No other call site is
+// migrated to this overload solely to obtain a ctx to pass (AC-CAND-05).
+//
+// After the same durable append and StateProjector_Apply() the 2-argument
+// version already performs (R5: StateProjector_Apply()'s own invocation,
+// arguments, and best-effort failure handling are UNCHANGED - copied
+// verbatim below, not refactored into a shared helper, to avoid any risk
+// of altering the 2-argument function's behavior even indirectly), this
+// overload additionally live-applies the SAME LifecycleEvent to
+// CandidateProjection via CandidateProjection_ApplyLineWithContext() -
+// the identical function CandidateProjection_RebuildFromFile() uses, so
+// cold rebuild and live-apply share one validation path (R6).
+//
+// Per R4 (frozen, re-scoped to this overload only): the live-apply
+// context set is restricted to exactly the ONE MarketContext that
+// produced this candidate (ctx.context_event_id/context_hash) - never a
+// broader scan (AC-CAND-03). A durable-succeeded-but-apply-failed
+// outcome returns false (R3, fail-closed), mirroring RA-30.4's pattern.
+bool CRT_EmitCandidateCreated(const TradeCandidate &c, int digits, const MarketContext &ctx)
+{
+   if(c.candidate_id == "") return false;
+
+   ENUM_CANDIDATE_STATE existingState;
+   if(StateProjector_TryGetState(c.candidate_id, existingState)) return false;
+
+   string extraJson = CRT_CandidateCreatedExtraJson(c, digits);
+
+   LifecycleEvent e;
+   LifecycleEvent_Init(e);
+   e.candidate_id     = c.candidate_id;
+   e.root_event_id    = c.root_event_id;
+   e.correlation_id   = c.correlation_id;
+   e.strategy_id      = c.strategy_id;
+   e.from_state        = CANDIDATE_CREATED;
+   e.to_state          = CANDIDATE_CREATED;
+   e.reason             = REASON_NONE;
+   e.extra_json         = extraJson;
+   e.base.event_type   = EventTypeToString(EVENT_TYPE_CANDIDATE_CREATED);
+   if(!EventStore_AppendLifecycle(e))
+   {
+      SafeMode_Trip(StringFormat("failed to durably write CANDIDATE_CREATED for %s", c.candidate_id));
+      return false;
+   }
+
+   string candidateLine = EventSerializer_ToJson(e);
+   string knownContextIds[1];
+   string knownContextHashes[1];
+   knownContextIds[0]   = ctx.context_event_id;
+   knownContextHashes[0] = ctx.context_hash;
+   string applyReason;
+   if(!CandidateProjection_ApplyLineWithContext(candidateLine, knownContextIds, knownContextHashes, applyReason))
+      return false; // durable append already succeeded (append-only, never rolled back) - fail closed on the live-apply step (R3)
+
+   string projectorError2;
+   StateProjector_Apply(e, projectorError2); // best-effort, unchanged (R5) - the durable write already succeeded; this only keeps live lookups accurate before the next real replay
 
    return true;
 }

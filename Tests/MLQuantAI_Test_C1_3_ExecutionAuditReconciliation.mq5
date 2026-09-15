@@ -359,7 +359,7 @@ void Test_MultipleReevaluations_AllPreservedNotDeduped()
 
 void Test_DuplicateRequestSameHash_NoOp()
 {
-   Print("--- replay: re-emitting the identical request (same id + same hash) under a fresh session is a no-op ---");
+   Print("--- replay: re-emitting the identical request (same id + same hash) in the SAME session is a live no-op ---");
    ResetAllProjections();
    string file = "MLQuantAI_Test_C1_3_DupRequest.jsonl";
    FileDelete(file, FILE_COMMON);
@@ -372,10 +372,20 @@ void Test_DuplicateRequestSameHash_NoOp()
          "sanity: full chain built and emitted");
    EventStore_Close();
 
-   ResetAllProjections();
+   // RA-39.1 (QA-frozen test fixture correction): the store is closed and
+   // reopened (still exercises a real close/reopen cycle), but the
+   // projections themselves are deliberately NOT reset here - a
+   // ResetAllProjections() call would wipe RiskPlanProjection/
+   // EligibilityDecisionProjection/AIDecisionProjection too, not just
+   // ExecutionRequestProjection/DryRunResultProjection, which is not a
+   // real EA lifecycle state (OnInit always rebuilds before anything
+   // else runs) and would make ExecutionRequestProjection_
+   // ApplyLineWithLineage's own upstream lineage check reject this as an
+   // orphan (R3 fail-closed, correctly) rather than reach the intended
+   // same-hash-duplicate no-op path this test exists to prove.
    EventStore_Open(file);
    DryRunExecutionResult secondResult;
-   Check(ExecutionRequest_EmitAndEvaluate(req, execPolicy, secondResult), "sanity: identical request re-emits under a fresh session");
+   Check(ExecutionRequest_EmitAndEvaluate(req, execPolicy, secondResult), "sanity: identical request re-emits in the same session (live duplicate no-op, RA-39)");
    EventStore_Close();
 
    ExecutionAuditProjectionReport report = ExecutionAuditProjection_RebuildFromFile(file);
@@ -408,10 +418,22 @@ void Test_CollisionDifferentHash_Rejected()
    Check(colliding.execution_request_id == req.execution_request_id, "sanity: execution_request_id unaffected by risk_amount");
    Check(colliding.execution_request_hash != req.execution_request_hash, "sanity: execution_request_hash DOES move with risk_amount");
 
-   ResetAllProjections();
+   // RA-39.1 (QA-frozen test fixture correction, same reasoning as
+   // Test_DuplicateRequestSameHash_NoOp above): no ResetAllProjections()
+   // here either - upstream lineage (RiskPlan/Eligibility/AIDecision)
+   // must stay valid so the live-apply step reaches the intended
+   // id-collision check in ExecutionRequestProjection_
+   // ApplyLineWithLineage, rather than rejecting earlier as an orphan
+   // for an unrelated reason. With lineage intact, the collision is now
+   // correctly caught IMMEDIATELY at live-apply time (a strictly
+   // stronger guarantee than the old rebuild-only detection) - the
+   // durable append still happens first regardless (append-only, never
+   // rolled back), so the full-file rebuild below still independently
+   // re-detects the same collision.
    EventStore_Open(file);
    DryRunExecutionResult collidingResult;
-   Check(ExecutionRequest_EmitAndEvaluate(colliding, execPolicy, collidingResult), "sanity: the colliding request emits under a fresh session");
+   Check(!ExecutionRequest_EmitAndEvaluate(colliding, execPolicy, collidingResult),
+         "RA-39: the colliding request is rejected IMMEDIATELY at live-apply time (fail-closed, R3) - durable append still happened first");
    EventStore_Close();
 
    ExecutionAuditProjectionReport report = ExecutionAuditProjection_RebuildFromFile(file);

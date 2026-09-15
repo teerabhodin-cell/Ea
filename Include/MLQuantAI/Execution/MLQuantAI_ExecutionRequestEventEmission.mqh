@@ -15,6 +15,13 @@
 
 #include "../Infrastructure/EventStore/MLQuantAI_EventStore.mqh"
 #include "MLQuantAI_SafetyGate.mqh"
+// RA-39 (QA-frozen Projection Live-Sync Hardening, RA-38 design):
+// ExecutionRequestProjection_ApplyLineWithLineage()/DryRunResultProjection_
+// ApplyLineWithLineage() are the SAME functions ExecutionAuditProjection_
+// RebuildFromFile() already uses at rebuild time - reusing them here
+// (Pattern A) is what makes cold rebuild and live-apply provably
+// equivalent (R6), rather than duplicating a second hand-written mapping.
+#include "MLQuantAI_ExecutionAuditProjection.mqh"
 
 string ExecutionRequest_ToExtraJson(const ExecutionRequest &r)
 {
@@ -76,6 +83,22 @@ string DryRunExecutionResult_ToExtraJson(const DryRunExecutionResult &d)
 // append-only. The caller must treat a false return as "the request is
 // durably recorded, but its dry-run result may not be" - never as
 // "nothing happened."
+//
+// RA-39 (QA-frozen RA-38 design, R1/R2/R3/R6/R7/R9): each durable append
+// is immediately followed by a live-apply of the SAME event into the
+// corresponding projection (Pattern A - re-serialize the exact appended
+// struct, feed it into the existing rebuild-time ApplyLineWithLineage()
+// function, so cold rebuild and live-apply share one validation path).
+// A durable-succeeded-but-apply-failed outcome returns false (R3,
+// fail-closed) - mirrors RA-30.4's ManualApproval_Grant() pattern
+// exactly. Per R9 (frozen, evidence-backed): DryRunResultProjection has
+// no same-session mutating-authority consumer (GrantManualApprovalCommand/
+// SubmitOrderCommand read only ExecutionRequestProjection;
+// BrokerSubmissionGate_Evaluate re-derives its decision live via a fresh
+// SafetyGate_Evaluate() call, never by reading DryRunResultProjection) -
+// so a live-apply failure on the DRY_RUN_COMPLETED half still returns
+// false here (the caller is still told the operation didn't fully
+// succeed), but requires no additional "lineage unusable" mechanism.
 bool ExecutionRequest_EmitAndEvaluate(const ExecutionRequest &request, const ExecutionPolicy &policy,
                                         DryRunExecutionResult &outResult)
 {
@@ -83,15 +106,33 @@ bool ExecutionRequest_EmitAndEvaluate(const ExecutionRequest &request, const Exe
 
    if(request.execution_request_id == "") return false;
 
-   string requestJson = ExecutionRequest_ToExtraJson(request);
-   if(!EventStore_LogSystem(EventTypeToString(EVENT_TYPE_EXECUTION_REQUEST_CREATED), "execution request created", requestJson))
+   SystemEvent reqEvent;
+   SystemEvent_Init(reqEvent);
+   reqEvent.base.event_type = EventTypeToString(EVENT_TYPE_EXECUTION_REQUEST_CREATED);
+   reqEvent.message         = "execution request created";
+   reqEvent.extra_json      = ExecutionRequest_ToExtraJson(request);
+   if(!EventStore_AppendSystem(reqEvent))
       return false;
+
+   string reqLine = EventSerializer_ToJson(reqEvent);
+   string reqApplyReason;
+   if(!ExecutionRequestProjection_ApplyLineWithLineage(reqLine, reqApplyReason))
+      return false; // durable append already succeeded (append-only, never rolled back) - fail closed on the live-apply step (R3)
 
    if(!SafetyGate_Evaluate(request, policy, outResult))
       return false; // structural failure inside SafetyGate_Evaluate itself - should be unreachable given the gate above, but never silently swallowed
 
-   string resultJson = DryRunExecutionResult_ToExtraJson(outResult);
-   return EventStore_LogSystem(EventTypeToString(EVENT_TYPE_EXECUTION_DRY_RUN_COMPLETED), "execution dry-run completed", resultJson);
+   SystemEvent resEvent;
+   SystemEvent_Init(resEvent);
+   resEvent.base.event_type = EventTypeToString(EVENT_TYPE_EXECUTION_DRY_RUN_COMPLETED);
+   resEvent.message         = "execution dry-run completed";
+   resEvent.extra_json      = DryRunExecutionResult_ToExtraJson(outResult);
+   if(!EventStore_AppendSystem(resEvent))
+      return false;
+
+   string resLine = EventSerializer_ToJson(resEvent);
+   string resApplyReason;
+   return DryRunResultProjection_ApplyLineWithLineage(resLine, resApplyReason); // R9: non-authoritative for same-session mutation, but still fail-closed at this boundary
 }
 
 #endif // __MLQUANTAI_EXECUTIONREQUESTEVENTEMISSION_MQH__

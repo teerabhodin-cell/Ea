@@ -847,7 +847,7 @@ void RunC22CeremonyFixtureCommand(CeremonyCommand &cmd)
    TradeCandidate c;
    if(!CRT_ToTradeCandidate(ctx, r, c))
    { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "crt_to_trade_candidate_failed", ""); return; }
-   if(!CRT_EmitCandidateCreated(c, ctx.symbol_spec.digits))
+   if(!CRT_EmitCandidateCreated(c, ctx.symbol_spec.digits, ctx))
    { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "candidate_created_log_failed", ""); return; }
 
    FeatureSnapshot snapshot;
@@ -1428,7 +1428,7 @@ void OnTick()
    // simply never called them before. Each one self-dedupes via its own
    // live-sync ProjectionRecord guard, independent of the discovery
    // guard above.
-   CRT_EmitCandidateCreated(c5Candidate, ctx.symbol_spec.digits);
+   CRT_EmitCandidateCreated(c5Candidate, ctx.symbol_spec.digits, ctx);
 
    FeatureSnapshot c5Snapshot;
    if(!Candidate_ToFeatureSnapshot(c5Candidate, ctx, c5Snapshot))
