@@ -282,7 +282,7 @@ input ENUM_SESSION_RISK_PROFILE OffSessionRiskProfile = SESSION_RISK_NORMAL; // 
 // Emergency Connection & Power Protection: MQL5 ไม่มี event ตรวจจับหลุดการเชื่อมต่อ ต้อง poll
 // TERMINAL_CONNECTED ทุก tick เอง (ดู UpdateConnectionGuard) - Cooldown หลัง reconnect ป้องกันไม่ให้
 // EA รีบยิง Order ทันทีตอนกลับมาออนไลน์ทั้งที่ spread/latency ยังไม่นิ่งจากปัญหาที่เพิ่งเกิด
-input group "===== 15. Emergency Connection Protection (V9) ====="
+input group "===== 14. Emergency Connection Protection (V9) ====="
 input bool UseConnectionGuard           = true;  // Use Emergency Connection & Power Protection
 input int  ConnectionResumeCooldownSec  = 30;    // Resume Cooldown After Reconnect, Sec (ช่วง RECOVERING)
 
