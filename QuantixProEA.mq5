@@ -3300,11 +3300,14 @@ int DrawStatsRow(int y, int x0, int availW)
    double avgWin   = (StatsWinCount  > 0) ? (StatsSumWinProfit  / StatsWinCount)  : 0.0;
    double avgLoss  = (StatsLossCount > 0) ? (StatsSumLossAmount / StatsLossCount) : 0.0;
 
+   // "ชนะ/แพ้" นับที่ระดับบาสเก็ต (ยอดกำไรสุทธิรวมของทุกไม้ที่ปิดพร้อมกันในบาสเก็ตนั้น) ไม่ใช่นับ
+   // ทีละไม้ - บาสเก็ตหนึ่งอาจมีไม้ที่กำไรบางไม้ปนอยู่ แต่ถ้าผลรวมสุทธิติดลบ จะถูกนับเป็น "แพ้" ทั้งบาสเก็ต
+   // (ตรงกับที่ ClearEverythingAsync() ใช้ตัดสิน ไม่ใช่บั๊ก - แค่ป้ายชื่อเดิมไม่ได้บอกไว้ชัดว่านับระดับไหน)
    string labels[6];
    labels[0] = GetUIString("บาสเก็ตรวม", "TOTAL BASKETS");
    labels[1] = GetUIString("อัตราชนะ", "WIN RATE");
-   labels[2] = GetUIString("ชนะ", "WINS");
-   labels[3] = GetUIString("แพ้", "LOSSES");
+   labels[2] = GetUIString("บาสเก็ตชนะ", "BASKET WINS");
+   labels[3] = GetUIString("บาสเก็ตแพ้", "BASKET LOSSES");
    labels[4] = GetUIString("ชนะเฉลี่ย", "AVG WIN");
    labels[5] = GetUIString("แพ้เฉลี่ย", "AVG LOSS");
 
