@@ -592,7 +592,13 @@ void Test_OrphanExecutionRequestId_Rejected()
    g.approval_timestamp           = D'2026.03.06 09:00:00';
    g.approval_expiry              = D'2026.03.06 09:10:00';
    g.approval_nonce               = ManualApproval_NewNonce();
-   Check(ManualApproval_Grant(g), "the durable write itself succeeds - ManualApproval_Grant has no lineage validation of its own");
+   // RA-41 (QA-frozen test contract alignment): ManualApproval_Grant()
+   // has done fail-closed live-apply since RA-30.4 - the durable append
+   // still happens first (append-only, never rolled back, which is what
+   // the rebuild-time checks below independently re-confirm), but the
+   // function itself now rejects an orphan execution_request_id
+   // immediately, not just at the next rebuild.
+   Check(!ManualApproval_Grant(g), "RA-30.4: ManualApproval_Grant() rejects an orphan execution_request_id immediately (fail-closed live-apply)");
 
    EventStore_Close();
    ResetAllProjections();
@@ -624,7 +630,11 @@ void RunMismatchCase(string label, string suffix, int dayOffset, bool wrongHash,
    if(wrongCandidate)     g.candidate_id              = "WRONG_" + g.candidate_id;
    if(wrongCorrelation)    g.correlation_id             = "WRONG_" + g.correlation_id;
 
-   Check(ManualApproval_Grant(g), "the durable write itself succeeds (" + label + ") - no lineage validation at write time");
+   // RA-41 (QA-frozen test contract alignment): same reasoning as
+   // Test_OrphanExecutionRequestId_Rejected above - the durable append
+   // still happens first, but the four-field lineage cross-check now
+   // rejects immediately at grant time (fail-closed live-apply, RA-30.4).
+   Check(!ManualApproval_Grant(g), "RA-30.4: ManualApproval_Grant() rejects " + label + " immediately (fail-closed live-apply)");
 
    EventStore_Close();
    ResetAllProjections();
@@ -664,7 +674,11 @@ void Test_NoAcceptedDryRun_Rejected()
 
    ManualApprovalGrant g;
    BuildValidGrantFor(req, "reviewer_a", D'2026.03.10 09:00:00', D'2026.03.10 09:10:00', g);
-   Check(ManualApproval_Grant(g), "the durable write itself succeeds - no dry-run-status validation at write time");
+   // RA-41 (QA-frozen test contract alignment): same reasoning as above -
+   // the durable append still happens first, but a grant referencing a
+   // request with no SAFETY_GATE_ACCEPTED dry-run record now rejects
+   // immediately (fail-closed live-apply, RA-30.4).
+   Check(!ManualApproval_Grant(g), "RA-30.4: ManualApproval_Grant() rejects a missing-accepted-dry-run request immediately (fail-closed live-apply)");
 
    EventStore_Close();
    ResetAllProjections();
@@ -705,7 +719,13 @@ void Test_NonceCollisionAcrossDifferentGrants_FailsClosed()
    ManualApprovalGrant g2;
    BuildValidGrantFor(req2, "reviewer_b", D'2026.04.01 10:00:00', D'2026.04.01 10:10:00', g2);
    g2.approval_nonce = g1.approval_nonce;
-   Check(ManualApproval_Grant(g2), "sanity: second grant (with the colliding nonce) written - no nonce-uniqueness check at write time");
+   // RA-41 (QA-frozen test contract alignment): g1 above is unaffected -
+   // it's a genuinely valid, non-colliding grant, and RA-30.4's live-apply
+   // still accepts it normally. g2 reuses g1's own nonce, already
+   // live-applied earlier in this same session, so it now rejects
+   // immediately (fail-closed live-apply, RA-30.4) rather than only at
+   // the next rebuild.
+   Check(!ManualApproval_Grant(g2), "RA-30.4: ManualApproval_Grant() rejects a same-session nonce collision immediately (fail-closed live-apply)");
 
    EventStore_Close();
    ResetAllProjections();
