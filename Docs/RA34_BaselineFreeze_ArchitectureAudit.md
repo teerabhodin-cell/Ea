@@ -370,6 +370,13 @@ new OrderSend       = NOT AUTHORIZED
 
 No baseline-freeze document should be interpreted as an execution authorization.
 
+> **Amended by §13 (RA-35.1, 2026-09-15):** two additional real DEMO
+> tickets not listed above at freeze time — `3798882166` and
+> `3799401055` — were investigated and confirmed CLOSED via direct
+> broker History evidence. Neither requires a DO-NOT-TOUCH restriction.
+> `3800463826` remains the only open position. See §13 for the full
+> finding.
+
 ---
 
 ## 10. Current QA Boundary
@@ -433,3 +440,89 @@ Required corrections embodied by this revision:
 **Commit authorization: GRANTED.**
 
 The next QA decision should be based on this corrected document only after the working tree contains exactly this scope and no unrelated source or EventStore changes.
+
+---
+
+## 13. RA-34 Amendment 1 (RA-35 / RA-35.1) — 2026-09-15
+
+### 13.1 Background
+
+RA-35 (read-only) investigated whether any real DEMO order existed that
+RA-34's original §9 Standing Restrictions did not account for. A code
+comment introduced by RA-31 (`MLQuantAI.mq5`, line ~1095) referenced two
+tickets — `3798882166` and `3799401055` — as prior real `OrderSend`
+fills, neither of which appeared anywhere in RA-34 as originally frozen.
+
+Git history alone could not establish current disposition: no EventStore
+`.jsonl` file is tracked in this repository, and `3799401055` had no
+commit-message evidence at all beyond that one code comment.
+
+### 13.2 RA-35 initial ruling (superseded by 13.3 below)
+
+RA-35's first verdict classified `3798882166` as `VERIFIED REAL / STILL
+OPEN / DO NOT TOUCH`, based on incident-follow-up evidence available at
+that time, and left `3799401055` as `UNRESOLVED`.
+
+### 13.3 RA-35.1 — direct broker verification (supersedes 13.2)
+
+RA-35.1 authorized direct, read-only verification against the live MT5
+terminal's History tab — no OrderSend, no close, no modify, no
+EventStore write, no code/Docs change during the check itself.
+
+Account identity was independently confirmed via two cross-checks: the
+account tree (`Exness-MT5Trial14`, login `416337755: Pro`) and a matching
+account Balance figure (`10,689.37 USD`) present in both the History-tab
+screenshot and the live Trade-tab screenshot that also showed
+`3800463826` open — establishing both screenshots came from the same
+account/terminal instance.
+
+Broker History evidence for both tickets:
+
+```text
+3798882166
+  type/volume = buy / 0.04 xauusd
+  open        = 2026.09.10 15:59:27 @ 4367.246 (S/L 4261.602, T/P 4561.905)
+  close       = 2026.09.10 16:02:09 @ 4367.275
+  profit      = +0.12
+  status      = CLOSED (complete round-trip, ~3 minutes held)
+
+3799401055
+  type/volume = buy / 0.04 xauusd
+  open        = 2026.09.10 17:34:43 @ 4363.830 (S/L 4261.437, T/P 4561.740)
+  close       = 2026.09.10 19:11:01 @ 4321.408
+  profit      = -169.69
+  status      = CLOSED (complete round-trip, ~1h36m held)
+```
+
+Neither ticket appears in the account's current Trade tab. The only
+position currently open on this account is `3800463826`.
+
+As a side effect, this same History screenshot independently
+corroborated the RA-33.1/RA-33.2 attribution: the `3442407998` row shown
+(`balance`, 2026.09.10 23:36:24, +1,000.00, comment
+`D-trial-USD-1f2b9d87f3684c`) matches the `deal_ticket=3442407998` /
+`DEAL_TYPE_BALANCE` record already identified as the root cause of
+`TransactionMatching unmatched=1` and `C4.4 block_recommended=1` —
+confirming it is a demo balance top-up, not a trade.
+
+### 13.4 Final disposition
+
+```text
+3798882166 = CLOSED / HISTORICAL — no restriction required
+3799401055 = CLOSED / HISTORICAL — no restriction required
+3800463826 = STILL OPEN — DO NOT TOUCH (unchanged, sole standing restriction)
+```
+
+The §13.2 "STILL OPEN" classification for `3798882166` is superseded by
+this direct broker-evidence finding and must not be relied upon.
+
+### 13.5 Effect on §9 Standing Restrictions
+
+§9's restriction list is **unchanged and remains complete as originally
+written** — `3798882166` and `3799401055` are confirmed closed and
+require no restriction; `3800463826` was already, and remains, the only
+listed restriction. §9's own text is not rewritten by this amendment; see
+the cross-reference note added there.
+
+RA-34's baseline content (§§1–12) otherwise remains VALID and is not
+reopened by this amendment.
