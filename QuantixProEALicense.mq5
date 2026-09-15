@@ -759,18 +759,23 @@ void LogFilterBlockReason(bool isBuy)
 
    string blockers = "";
 
-   if(UseEMAFilter && emaHandle != INVALID_HANDLE)
+   // เหตุผลบล็อกจริงต้องมาจาก CheckEMATrend() เดียวเท่านั้น (เดิมโค้ดตรงนี้ก็อปเงื่อนไข EMA มาเขียน
+   // ซ้ำเองอีกชุด - ถ้ามีคนแก้เงื่อนไขจริงแล้วลืมแก้ที่นี่ด้วย log จะโกหกว่าบล็อกด้วยเหตุผลที่ไม่ตรงกับ
+   // ที่ระบบใช้จริง) ที่นี่แค่ถามผลจากฟังก์ชันจริง แล้วดึงค่า EMA มาแสดงประกอบข้อความเฉยๆ
+   if(UseEMAFilter && !CheckEMATrend(isBuy))
    {
       double emaVals[];
       ArraySetAsSeries(emaVals, true);
-      if(CopyBuffer(emaHandle, 0, 1, 1, emaVals) > 0)
+      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      if(emaHandle != INVALID_HANDLE && CopyBuffer(emaHandle, 0, 1, 1, emaVals) > 0)
       {
-         double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-         double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-         if(isBuy && StrictBuyFilter && ask < emaVals[0])
-            blockers += StringFormat("EMA(Ask %.3f < %.3f) ", ask, emaVals[0]);
-         if(!isBuy && StrictSellFilter && bid > emaVals[0])
-            blockers += StringFormat("EMA(Bid %.3f > %.3f) ", bid, emaVals[0]);
+         if(isBuy) blockers += StringFormat("EMA(Ask %.3f < %.3f) ", ask, emaVals[0]);
+         else      blockers += StringFormat("EMA(Bid %.3f > %.3f) ", bid, emaVals[0]);
+      }
+      else
+      {
+         blockers += "EMA "; // บล็อกจริงแต่ดึงค่ามาโชว์ตัวเลขไม่ได้ (เช่น handle ยังไม่พร้อม) - บอกแค่ชื่อฟิลเตอร์
       }
    }
    if(UseMTFFilter && !CheckMTFFilter(isBuy)) blockers += "MTF ";
