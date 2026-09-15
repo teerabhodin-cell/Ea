@@ -312,6 +312,11 @@ separately as `TD-INFRA-001`. This document makes no claim about that
 item's current status — it is out of scope here and not investigated
 by RA-36.
 
+> **Amended by §10 (RA-36.3, 2026-09-15):** `TD-INFRA-001` has since
+> been confirmed CLOSED/RESOLVED — it was already fixed before this
+> document's original RA-36 audit even ran, by a commit already
+> present on `HEAD` at that time. See §10 for the full finding.
+
 ---
 
 ## 8. Explicit non-goals / what C6.1–C6.3 do not cover
@@ -340,5 +345,90 @@ This document does not reopen, alter, or reinterpret that
 classification — it records the evidence behind C6.1/C6.2/C6.3
 specifically.
 
-**QA STATUS: DRAFT — awaiting review (RA-36.2).** Not yet staged, not
+**RA-36.2 STATUS: VERIFIED / FROZEN / DEPLOYED** (commit `1351b2e`,
+pushed to `origin/mlquantai`). §10 below is a subsequent, narrower
+documentation-correction amendment — it does not reopen this status.
+
+---
+
+## 10. RA-36.3 Amendment — TD-INFRA-001 Status Correction — 2026-09-15
+
+### 10.1 Background
+
+§7 above states, as originally written during the RA-36 audit, that
+`TD-INFRA-001`'s current status was "not claimed... out of scope here
+and not investigated by RA-36." That sentence is left unchanged above
+— it accurately reflects what RA-36 actually checked at the time it
+was written. This amendment does not rewrite that history; it adds a
+finding discovered afterward, in a follow-up checkpoint (RA-36.3).
+
+### 10.2 Finding
+
+A deeper `git log`/`git merge-base` check (RA-36.3, read-only) found
+that `TD-INFRA-001` was not merely deferred — it was actually fixed one
+commit after the deferral:
+
+```text
+5d5b22f  feat(c6.2/c6.3): ... TD-INFRA-001 explicitly deferred
+d732615  perf(infra): amortized-doubling growth in
+         EventStore_ReadAllLines (TD-INFRA-001)     ← the fix, same day
+```
+
+`git merge-base --is-ancestor d732615 HEAD` confirms `d732615` **is**
+an ancestor of the current `HEAD` — meaning the fix was already merged
+into this branch, and was already present on `HEAD` before RA-36's
+original audit ever ran on 2026-09-15. RA-36 simply didn't check past
+`5d5b22f`'s own deferral note at the time.
+
+### 10.3 What the fix does (per commit `d732615`'s own message)
+
+`EventStore_ReadAllLines()` previously grew its output array by exactly
+one element per line — an O(n) sequence of individual `ArrayResize()`
+calls. On a real store with 190k+ lines, this exhausted the allocator
+(`VirtualAlloc` failure) and crashed with an array-out-of-range write.
+
+The fix replaces this with amortized-doubling growth: capacity doubles
+starting at 4096 on each growth (O(log n) resizes), with a trailing
+`ArrayResize(outLines, count)` to trim back to the exact count.
+Behavior-preserving per the commit's own verification: the returned
+count and `ArraySize(outLines)` are unchanged, checked against both
+call patterns used across the ~90 real call sites in the codebase.
+
+### 10.4 Independent confirmation (RA-36.3, this checkpoint)
+
+The fix was read directly from the current file, not just inferred
+from the commit message:
+
+```text
+Include/MLQuantAI/Infrastructure/EventStore/MLQuantAI_EventStore.mqh:250-290
+```
+
+confirms the amortized-doubling logic is live on `HEAD` right now,
+matching commit `d732615`'s description exactly, including its own
+inline comment restating the same O(n)-crash / O(log n)-fix rationale.
+
+### 10.5 Final disposition
+
+```text
+TD-INFRA-001 = CLOSED / RESOLVED
+Fix commit    = d732615 (perf(infra): amortized-doubling growth in
+                EventStore_ReadAllLines)
+Relative to   = already an ancestor of HEAD at RA-36.3 audit time
+Deployed      = already on origin/mlquantai (part of the existing
+                mlquantai branch history, not newly pushed by RA-36.3)
+```
+
+No source, test, or EventStore file is touched by this amendment —
+`d732615` was not written by RA-36.3; it already existed. This section
+records that fact; it does not implement it.
+
+### 10.6 No RA-37 required
+
+Per QA's RA-36.3 authorization: since the item that prompted opening a
+new checkpoint turned out to already be resolved, no further
+implementation checkpoint (e.g. an "RA-37") is opened for
+`TD-INFRA-001`. RA-36.3 is scoped narrowly to this documentation
+correction only.
+
+**QA STATUS: DRAFT — awaiting review (RA-36.3).** Not yet staged, not
 committed, not pushed.
