@@ -82,6 +82,9 @@
 // RA-43 (QA-frozen StateProjector Live-Sync Remediation Design): needed
 // only for StateProjector_Apply() at the two new sync points below.
 #include "../Infrastructure/EventStore/MLQuantAI_StateProjector.mqh"
+// RA-49 (QA-frozen Pre-Order Broker Constraint & Margin Gate Design):
+// needed only for BrokerSubmissionMarginGuard_Evaluate() below.
+#include "MLQuantAI_MarginGuard.mqh"
 
 // MqlTradeResult also contains a string member (comment) - same
 // ZeroMemory pitfall as MqlTradeRequest_ZeroInit above, same fix.
@@ -429,6 +432,21 @@ bool BrokerSubmission_Submit(TradeCandidate &candidate, const ExecutionRequest &
    if(entryCompatResult.decision != SAFETY_GATE_ACCEPTED)
    {
       outResult.reason_code = entryCompatResult.reason_code;
+      return false; // gate blocked - no event, no OrderSend, no state change
+   }
+
+   // RA-49 (QA-frozen Pre-Order Broker Constraint & Margin Gate Design):
+   // proactive margin-sufficiency check, positioned here (after
+   // EntryCompatibilityGate, before BuildTradeRequest) specifically so
+   // it can reuse entryCompatResult.execution_reference_price - the SAME
+   // bound price that will actually be submitted (C2.4 AC-10 discipline,
+   // never an independent reread). On BLOCK: no event, no OrderSend, no
+   // state change, no RiskPlan/ExecutionRequest mutation - identical
+   // shape to every other pre-construction gate rejection above.
+   ENUM_REASON_CODE marginRejectReason;
+   if(!BrokerSubmissionMarginGuard_Evaluate(request, entryCompatResult.execution_reference_price, marginRejectReason))
+   {
+      outResult.reason_code = marginRejectReason;
       return false; // gate blocked - no event, no OrderSend, no state change
    }
 

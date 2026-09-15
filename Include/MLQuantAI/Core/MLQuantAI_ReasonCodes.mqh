@@ -138,6 +138,21 @@ enum ENUM_REASON_CODE
    // discipline.
    REASON_ENTRY_PRICE_DEVIATION_EXCEEDED,
 
+   // RA-49 (QA-frozen Pre-Order Broker Constraint & Margin Gate Design):
+   // three genuinely new pre-submission structural checks the RA-48 gap
+   // audit found missing entirely (SYMBOL_TRADE_MODE was read into
+   // SymbolSpec but never gated; SYMBOL_VOLUME_MAX/STEP were only
+   // enforced at signal-time inside RiskSizing, never re-checked fresh
+   // at the final submission gate the way SYMBOL_VOLUME_MIN already is).
+   // REASON_INSUFFICIENT_MARGIN (above) is reused as-is for the new
+   // proactive OrderCalcMargin() check - same failure class, just
+   // detected before OrderSend instead of only reactively via
+   // TRADE_RETCODE_NO_MONEY. Appended at the tail, before REASON_COUNT,
+   // per this enum's append-only discipline.
+   REASON_EXECUTION_TRADE_MODE_NOT_PERMITTED,
+   REASON_EXECUTION_VOLUME_ABOVE_MAXIMUM,
+   REASON_EXECUTION_VOLUME_STEP_MISALIGNED,
+
    REASON_COUNT
 };
 
@@ -195,6 +210,9 @@ string ReasonCodeToString(ENUM_REASON_CODE r)
       case REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED: return "EXECUTION_MANUAL_APPROVAL_NOT_GRANTED";
       case REASON_ORDER_CANCELLED:                       return "ORDER_CANCELLED";
       case REASON_ENTRY_PRICE_DEVIATION_EXCEEDED:        return "ENTRY_PRICE_DEVIATION_EXCEEDED";
+      case REASON_EXECUTION_TRADE_MODE_NOT_PERMITTED:    return "EXECUTION_TRADE_MODE_NOT_PERMITTED";
+      case REASON_EXECUTION_VOLUME_ABOVE_MAXIMUM:        return "EXECUTION_VOLUME_ABOVE_MAXIMUM";
+      case REASON_EXECUTION_VOLUME_STEP_MISALIGNED:      return "EXECUTION_VOLUME_STEP_MISALIGNED";
    }
    return "UNKNOWN";
 }
@@ -261,6 +279,9 @@ ENUM_REASON_CODE ReasonCodeFromString(string s)
    if(s == "EXECUTION_MANUAL_APPROVAL_NOT_GRANTED") return REASON_EXECUTION_MANUAL_APPROVAL_NOT_GRANTED;
    if(s == "ORDER_CANCELLED")                     return REASON_ORDER_CANCELLED;
    if(s == "ENTRY_PRICE_DEVIATION_EXCEEDED")      return REASON_ENTRY_PRICE_DEVIATION_EXCEEDED;
+   if(s == "EXECUTION_TRADE_MODE_NOT_PERMITTED")  return REASON_EXECUTION_TRADE_MODE_NOT_PERMITTED;
+   if(s == "EXECUTION_VOLUME_ABOVE_MAXIMUM")      return REASON_EXECUTION_VOLUME_ABOVE_MAXIMUM;
+   if(s == "EXECUTION_VOLUME_STEP_MISALIGNED")    return REASON_EXECUTION_VOLUME_STEP_MISALIGNED;
    return REASON_NONE;
 }
 

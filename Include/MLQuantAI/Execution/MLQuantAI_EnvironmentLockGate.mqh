@@ -38,6 +38,21 @@
 #include "MLQuantAI_EnvironmentLockContract.mqh"
 #include "MLQuantAI_ManualApprovalReadiness.mqh"
 
+// RA-49: pure decision logic, factored out of EnvironmentLock_EvaluateNewChecks
+// below so it is unit-testable with synthetic (tradeMode, side) inputs -
+// same reasoning BrokerSubmission_SelectFillingMode() (MLQuantAI_
+// BrokerSubmissionBuilder.mqh) already established for exactly this
+// "live SymbolInfo read feeds a pure decision" split. FULL always
+// permits; LONGONLY/SHORTONLY permit only the matching new-position
+// side; DISABLED/CLOSEONLY/anything else never permits a new position.
+bool EnvironmentLock_TradeModePermitsNewPosition(ENUM_SYMBOL_TRADE_MODE tradeMode, ENUM_ORDER_TYPE side)
+{
+   if(tradeMode == SYMBOL_TRADE_MODE_FULL) return true;
+   if(tradeMode == SYMBOL_TRADE_MODE_LONGONLY)  return side == ORDER_TYPE_BUY;
+   if(tradeMode == SYMBOL_TRADE_MODE_SHORTONLY) return side == ORDER_TYPE_SELL;
+   return false; // DISABLED, CLOSEONLY, or any unrecognized value - never permits a new position
+}
+
 // Pure(ish): assumes outResult already carries an ACCEPTED verdict from
 // every earlier gate (the caller's responsibility, exactly as
 // BrokerSubmissionEnvironmentLock_Evaluate below does it) - never calls
@@ -83,6 +98,23 @@ bool EnvironmentLock_EvaluateNewChecks(const ExecutionRequest &request, const En
       return true;
    }
 
+   // RA-49 (QA-frozen Pre-Order Broker Constraint & Margin Gate Design):
+   // a fresh, live SYMBOL_TRADE_MODE re-check, directional per QA's
+   // required condition 1 - a symbol restricted to LONGONLY/SHORTONLY
+   // must reject the OPPOSITE new-position direction, and DISABLED/
+   // CLOSEONLY must reject every new-position direction regardless of
+   // side (closing an existing position is a wholly separate code path
+   // this project has never had - not touched here). RA-48 found this
+   // value was read into SymbolSpec but never once consulted as a gate
+   // anywhere in the codebase.
+   ENUM_SYMBOL_TRADE_MODE tradeMode2 = (ENUM_SYMBOL_TRADE_MODE)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_MODE);
+   if(!EnvironmentLock_TradeModePermitsNewPosition(tradeMode2, request.side))
+   {
+      outResult.decision    = SAFETY_GATE_REJECTED;
+      outResult.reason_code = REASON_EXECUTION_TRADE_MODE_NOT_PERMITTED;
+      return true;
+   }
+
    // A fresh, live re-check against the real broker's own current
    // minimum - deliberately re-read here rather than trusted from
    // RiskSizing's own earlier volume_min check (Core/MLQuantAI_RiskSizing.mqh),
@@ -95,6 +127,39 @@ bool EnvironmentLock_EvaluateNewChecks(const ExecutionRequest &request, const En
       outResult.decision    = SAFETY_GATE_REJECTED;
       outResult.reason_code = REASON_EXECUTION_VOLUME_BELOW_MINIMUM;
       return true;
+   }
+
+   // RA-49: same staleness principle as the volume_min re-check directly
+   // above, extended to volume_max and volume_step - RA-48 found these
+   // were only ever enforced once, at signal-time, inside RiskSizing
+   // (Core/MLQuantAI_RiskSizing.mqh), and never re-verified fresh here.
+   // Reject-only, per QA's frozen condition F: this gate NEVER clamps/
+   // rounds request.lot_size to make it fit a broker constraint that
+   // drifted since signal-time - doing so would silently submit a
+   // different lot size than the one Manual Approval actually approved.
+   // An operator must re-run the whole approval flow instead.
+   double maxVolume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   if(maxVolume > 0.0 && request.lot_size > maxVolume)
+   {
+      outResult.decision    = SAFETY_GATE_REJECTED;
+      outResult.reason_code = REASON_EXECUTION_VOLUME_ABOVE_MAXIMUM;
+      return true;
+   }
+
+   double volumeStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   if(volumeStep > 0.0)
+   {
+      double stepsFromMin = (request.lot_size - minVolume) / volumeStep;
+      double roundedSteps  = MathRound(stepsFromMin);
+      // Tolerance for float representation error only - not a policy
+      // relaxation. 1e-6 lots is many orders of magnitude below any
+      // real broker's volume_step (typically 0.01+).
+      if(MathAbs(stepsFromMin - roundedSteps) > 0.000001)
+      {
+         outResult.decision    = SAFETY_GATE_REJECTED;
+         outResult.reason_code = REASON_EXECUTION_VOLUME_STEP_MISALIGNED;
+         return true;
+      }
    }
 
    // Sixth check, third amendment: manual-approval registry readiness,
