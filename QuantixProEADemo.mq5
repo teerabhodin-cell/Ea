@@ -43,6 +43,9 @@ enum ENUM_SYSTEM_DECISION
 {
    DECISION_HALTED,           // TradingHalted - หยุดทำงานถาวร
    DECISION_CLOSING,          // IsClosingState - กำลังปิดไม้
+   DECISION_CONNECTION_LOST,       // ขาดการเชื่อมต่อ (CONN_RECONNECTING)
+   DECISION_CONNECTION_RECOVERING, // เพิ่งกลับมาต่อได้ กำลังรอ cooldown (CONN_RECOVERING)
+   DECISION_CONNECTION_PROTECTED,  // คูลดาวน์ครบแต่ spread/latency ยังไม่นิ่ง (CONN_PROTECTED)
    DECISION_LATENCY_GUARD,    // Latency Guard ทำงาน - พักไม้ชั่วคราว
    DECISION_NEWS_BLOCK,       // อยู่ในช่วงพักข่าว
    DECISION_DAILY_LOSS,       // ครบขาดทุนวันนี้
@@ -76,6 +79,21 @@ enum ENUM_SESSION_RISK_PROFILE
    SESSION_RISK_CONSERVATIVE,
    SESSION_RISK_AGGRESSIVE,
    SESSION_RISK_BLOCK        // ห้ามเปิดบาสเก็ตใหม่ช่วง session นี้ (บาสเก็ตที่เปิดค้างอยู่แล้วยังจัดการต่อปกติ)
+};
+
+// Emergency Connection & Power Protection - state machine เดียวสำหรับสุขภาพการเชื่อมต่อ (คนละมุมกับ
+// ENUM_SYSTEM_DECISION ซึ่งบอกว่า "กำลังทำอะไรอยู่") ครอบคลุมเฉพาะฝั่ง Entry เท่านั้น: ไม่แตะ Position ที่
+// เปิดค้างอยู่แล้วเลย เพราะ Broker ยังถือให้จริงต่อให้ EA/เชื่อมต่อหลุดไปก็ตาม MQL5 ไม่มี event
+// OnDisconnect() ต้อง poll TERMINAL_CONNECTED เองทุก tick (ดู UpdateConnectionGuard) - นี่เป็นแค่
+// Software Protection Layer ป้องกันไม่ให้ EA ทำสถานะเทรดเสียหายซ้ำหลังปัญหาเชื่อมต่อ/ไฟดับ/VPS restart
+// ไม่ใช่ระบบป้องกันไฟฟ้าจริง (UPS)
+enum ENUM_CONNECTION_STATE
+{
+   CONN_NORMAL,        // เชื่อมต่อปกติ
+   CONN_RECONNECTING,  // TERMINAL_CONNECTED = false ตอนนี้ - ห้ามส่ง Order ใหม่เด็ดขาด
+   CONN_RECOVERING,    // เพิ่งกลับมาเชื่อมต่อได้ - อยู่ในช่วง cooldown ก่อนกลับมาเปิดไม้ใหม่
+   CONN_PROTECTED,     // คูลดาวน์ครบแล้วแต่ spread/latency ยังไม่นิ่ง - ยังไม่ปล่อยเปิดไม้ใหม่
+   CONN_EMERGENCY      // = TradingHalted (Max Total DD Guard) - อ่านจากตัวแปรเดิม ไม่สร้างเงื่อนไขซ้ำ
 };
 
 //=========================== INPUT ================================//
@@ -261,6 +279,13 @@ input double OffSessionLotMultiplier  = 1.0;  // Off-Session Lot Multiplier (ช
 input double OffSessionGridMultiplier = 1.0;  // Off-Session Grid Multiplier
 input ENUM_SESSION_RISK_PROFILE OffSessionRiskProfile = SESSION_RISK_NORMAL; // Off-Session Risk Profile (ป้ายกำกับ, ดูหมายเหตุบน enum)
 
+// Emergency Connection & Power Protection: MQL5 ไม่มี event ตรวจจับหลุดการเชื่อมต่อ ต้อง poll
+// TERMINAL_CONNECTED ทุก tick เอง (ดู UpdateConnectionGuard) - Cooldown หลัง reconnect ป้องกันไม่ให้
+// EA รีบยิง Order ทันทีตอนกลับมาออนไลน์ทั้งที่ spread/latency ยังไม่นิ่งจากปัญหาที่เพิ่งเกิด
+input group "===== 15. Emergency Connection Protection (V9) ====="
+input bool UseConnectionGuard           = true;  // Use Emergency Connection & Power Protection
+input int  ConnectionResumeCooldownSec  = 30;    // Resume Cooldown After Reconnect, Sec (ช่วง RECOVERING)
+
 //=========================== GLOBAL ===============================//
 
 bool     GridCreated     = false;
@@ -296,6 +321,12 @@ uint   LastFillLatencyMs       = 0;    // เวลาระหว่างส�
 // เมื่อ execution แย่ต่อเนื่อง (กัน exposure เพิ่มตอนเน็ต/โบรกเกอร์มีปัญหา ซึ่งเป็นสาเหตุที่ทำให้บัญชีเบี่ยงเบนกันได้)
 int      ConsecutiveBadLatencyCount = 0;
 datetime LatencyGuardActiveUntil    = 0;
+
+// Emergency Connection & Power Protection - state machine ภายใน อัปเดตครั้งเดียวต่อ tick ใน
+// UpdateConnectionGuard() (เรียกต้น OnTick()) ห้ามอ่าน/เขียนตัวแปรนี้ตรงๆ ที่อื่น ใช้
+// GetConnectionState()/IsConnectionBlocked() แทนเสมอ (ดูเหตุผลเดียวกับ CurrentDecision ด้านล่าง)
+ENUM_CONNECTION_STATE ConnState              = CONN_NORMAL;
+datetime               ConnectionRestoredTime = 0; // เวลาที่กลับมาเชื่อมต่อได้ล่าสุด - ใช้จับเวลา cooldown ของ CONN_RECOVERING
 
 // สถานะ "ระบบกำลังทำ/รออะไรอยู่" ล่าสุด - คำนวณครั้งเดียวต่อรอบ UpdateDashboard() ผ่าน
 // ComputeSystemDecision() แล้วเก็บไว้ที่นี่ ให้ Dashboard อ่านไปแสดงผลอย่างเดียว
@@ -423,6 +454,9 @@ double GetSessionLotMultiplier();
 double GetSessionGridMultiplier();
 ENUM_SESSION_RISK_PROFILE GetSessionRiskProfile();
 bool IsSessionBlocked();
+void UpdateConnectionGuard();
+ENUM_CONNECTION_STATE GetConnectionState();
+bool IsConnectionBlocked();
 void RecalculateBasePrice();
 void ReconcileGridStateOnInit();
 ENUM_ORDER_TYPE_FILLING GetBestFillingMode();
@@ -735,6 +769,83 @@ string GetSessionRiskProfileLabel(ENUM_SESSION_RISK_PROFILE p)
       case SESSION_RISK_AGGRESSIVE:   return GetUIString("เชิงรุก", "AGGRESSIVE");
       case SESSION_RISK_BLOCK:        return GetUIString("บล็อก", "BLOCK");
       default:                        return GetUIString("ปกติ", "NORMAL");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Emergency Connection & Power Protection                          |
+//| MQL5 ไม่มี event หลุดการเชื่อมต่อ ต้อง poll TERMINAL_CONNECTED เองทุก  |
+//| tick - ฟังก์ชันนี้ต้องถูกเรียกครั้งเดียวต้น OnTick() ทุกรอบเท่านั้น (ไม่ใช่ |
+//| จาก dashboard/diagnostic ใดๆ) เพื่ออัปเดต ConnState ตาม state       |
+//| machine เดียว: NORMAL -> RECONNECTING (หลุด) -> RECOVERING (กลับมา   |
+//| แล้ว รอ cooldown) -> NORMAL หรือ PROTECTED (คูลดาวน์ครบแต่ spread/     |
+//| latency ยังไม่นิ่ง) -> NORMAL เมื่อนิ่งแล้ว ไม่แตะ Position ที่เปิดค้าง   |
+//| อยู่แล้วเลยตลอดทั้งสถานะ (Broker ยังถือให้จริง แค่ EA ไม่ส่ง Order ใหม่)   |
+//+------------------------------------------------------------------+
+void UpdateConnectionGuard()
+{
+   if(!UseConnectionGuard || IsTestingMode) { ConnState = CONN_NORMAL; return; }
+
+   bool connectedNow = (bool)TerminalInfoInteger(TERMINAL_CONNECTED);
+
+   if(!connectedNow)
+   {
+      ConnState = CONN_RECONNECTING;
+      return;
+   }
+
+   if(ConnState == CONN_RECONNECTING)
+   {
+      // เพิ่งกลับมาออนไลน์ - ห้ามกลับ NORMAL ทันที เข้า RECOVERING ก่อนเสมอ เผื่อ spread/latency
+      // ยังไม่นิ่งจากปัญหาที่เพิ่งเกิด (ตรงกับที่ user ระบุ: ห้ามรีบยิง Order ทันทีหลัง reconnect)
+      ConnState = CONN_RECOVERING;
+      ConnectionRestoredTime = TimeCurrent();
+      return;
+   }
+
+   if(ConnState == CONN_RECOVERING && TimeCurrent() - ConnectionRestoredTime < ConnectionResumeCooldownSec)
+      return; // ยังอยู่ในช่วงคูลดาวน์
+
+   if(ConnState == CONN_RECOVERING || ConnState == CONN_PROTECTED)
+   {
+      // คูลดาวน์ครบแล้ว (หรือเคยเข้า PROTECTED ไปแล้ว) เช็คสเปรด/latency จริงก่อนปล่อยกลับ NORMAL -
+      // ใช้ MaxSpreadAllowed/IsLatencyGuardActive() ตัวเดียวกับที่ระบบอื่นใช้จริง ไม่สร้างเกณฑ์แยกอีกชุด
+      int  liveSpread = (int)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+      bool spreadOK    = (liveSpread <= MaxSpreadAllowed * m_multiplier);
+      bool latencyOK   = !IsLatencyGuardActive();
+      ConnState = (spreadOK && latencyOK) ? CONN_NORMAL : CONN_PROTECTED;
+      return;
+   }
+
+   ConnState = CONN_NORMAL;
+}
+
+// ตัวอ่านสถานะจริงตัวเดียว - รวม TradingHalted (Max Total DD Guard) เข้ามาเป็น CONN_EMERGENCY ที่นี่
+// จุดเดียว แทนที่จะให้ทุกจุดเรียกไปเช็ค TradingHalted แยกเองอีกชุด (กัน pattern diagnostic-duplication
+// แบบเดียวกับที่เจอและแก้ไปแล้วกับ EMA/Latency Guard/Volatility Filter)
+ENUM_CONNECTION_STATE GetConnectionState()
+{
+   if(TradingHalted) return CONN_EMERGENCY;
+   return ConnState;
+}
+
+bool IsConnectionBlocked()
+{
+   if(!UseConnectionGuard) return false;
+   ENUM_CONNECTION_STATE s = GetConnectionState();
+   return (s != CONN_NORMAL);
+}
+
+// แปล ENUM_CONNECTION_STATE เป็นข้อความ/สีสำหรับ Dashboard เท่านั้น ไม่มี logic ตัดสินใจ
+void GetConnectionStateLabel(ENUM_CONNECTION_STATE s, string &label, color &clr)
+{
+   switch(s)
+   {
+      case CONN_RECONNECTING:  label = "🔴 " + GetUIString("ขาดการเชื่อมต่อ", "RECONNECTING");       clr = C'239,68,68'; break;
+      case CONN_RECOVERING:    label = "🟠 " + GetUIString("กำลังกู้คืน", "RECOVERING");             clr = C'251,146,60'; break;
+      case CONN_PROTECTED:     label = "🟠 " + GetUIString("ป้องกันอยู่", "PROTECTED");              clr = C'251,146,60'; break;
+      case CONN_EMERGENCY:     label = "🔴 " + GetUIString("ฉุกเฉิน", "EMERGENCY");                  clr = C'239,68,68'; break;
+      default:                 label = "🟢 " + GetUIString("ปกติ", "NORMAL");                       clr = C'34,197,94'; break;
    }
 }
 
@@ -1072,6 +1183,12 @@ ENUM_SYSTEM_DECISION ComputeSystemDecision(int openPos)
 {
    if(TradingHalted)                                   return DECISION_HALTED;
    if(IsClosingState)                                  return DECISION_CLOSING;
+   // Connection Guard เช็คก่อน Latency Guard เสมอ - เป็นปัญหาที่ "ใหญ่กว่า" (หลุดเชื่อมต่อจริง ไม่ใช่แค่
+   // fill ช้า) CONN_EMERGENCY ไม่มีทางถึงบรรทัดนี้ได้อยู่แล้วเพราะ TradingHalted ดักไปก่อนด้านบน
+   ENUM_CONNECTION_STATE connState = GetConnectionState();
+   if(connState == CONN_RECONNECTING)                  return DECISION_CONNECTION_LOST;
+   if(connState == CONN_RECOVERING)                    return DECISION_CONNECTION_RECOVERING;
+   if(connState == CONN_PROTECTED)                     return DECISION_CONNECTION_PROTECTED;
    if(IsLatencyGuardActive())                          return DECISION_LATENCY_GUARD;
    if(IsNewsBlackout())                                return DECISION_NEWS_BLOCK;
    if(IsDailyLossLimitReached())                       return DECISION_DAILY_LOSS;
@@ -1405,7 +1522,7 @@ bool TryOpenForceHedgeOrder(string reasonTag, string logDetail)
 
 void CheckForceHedgeOnDD()
 {
-   if(!UseForceHedgeOnDD || IsClosingState || TradingHalted) return;
+   if(!UseForceHedgeOnDD || IsClosingState || TradingHalted || IsConnectionBlocked()) return;
 
    double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    double liveDDPercent = 0.0;
@@ -1449,7 +1566,7 @@ void CheckForceHedgeOnDD()
 //+------------------------------------------------------------------+
 void CheckForceHedgeOnTime()
 {
-   if(!UseForceHedgeOnTime || IsClosingState || TradingHalted) return;
+   if(!UseForceHedgeOnTime || IsClosingState || TradingHalted || IsConnectionBlocked()) return;
 
    if(BasketNegativeSinceTime == 0)
    {
@@ -1721,6 +1838,10 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 //+------------------------------------------------------------------+
 void OnTick()
 {
+   // ต้องเรียกก่อนสุดของ OnTick() เสมอ - อัปเดต Emergency Connection & Power Protection state
+   // machine ก่อนที่โค้ดส่วนอื่นจะอ่าน IsConnectionBlocked()/GetConnectionState() ต่อในรอบเดียวกัน
+   UpdateConnectionGuard();
+
    // วัดระยะเวลาตั้งแต่ทิคก่อนหน้า - ใช้แยกแยะ "ราคาวิ่งแรงต่อเนื่อง" (ทิคยังเข้ามาปกติ)
    // ออกจาก "Gap จริง" (ไม่มีทิคเข้ามาเลยช่วงหนึ่ง เช่น ข้ามคืน/สุดสัปดาห์) ใน Gap Protection ด้านล่าง
    SecondsSinceLastTick = (lastTickTimeForGap > 0) ? (int)(TimeCurrent() - lastTickTimeForGap) : 0;
@@ -1930,7 +2051,7 @@ void OnTick()
    bool sessionBlocksEntry   = sessionBlocked   && (openPositions == 0);
    if(!timeBlocksEntry && !newsBlocked && !dailyLossBlocked && !latencyBlocked && !dailyGoalBlocksEntry && !lowVolBlocksEntry && !highVolBlocksEntry && !sessionBlocksEntry)
    {
-      if(!IsClosingState && !equityLocked && !TradingHalted && (MaxBasketProfit < effTargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
+      if(!IsClosingState && !equityLocked && !TradingHalted && !IsConnectionBlocked() && (MaxBasketProfit < effTargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
       {
          ExecuteGridLogic(buyCount, sellCount, lastBuyPrice, lastSellPrice);
       }
@@ -3326,6 +3447,7 @@ int DrawServerTimeRow(int y, int openPos, int pendingOrders)
 
    if(TradingHalted)                              { dotColor = C'239,68,68';  statusTxt = GetUIString("EA หยุดถาวร", "EA HALTED"); }
    else if(IsClosingState)                        { dotColor = C'251,146,60'; statusTxt = GetUIString("กำลังปิดไม้", "CLOSING"); }
+   else if(IsConnectionBlocked())                  { dotColor = C'239,68,68';  statusTxt = GetUIString("ป้องกันการเชื่อมต่อ", "CONNECTION GUARD"); }
    else if(!timeAllowed)                           { dotColor = C'239,68,68';  statusTxt = GetUIString("นอกเวลาเทรด", "OFF-TIME"); }
    else if(IsSessionBlocked())                     { dotColor = C'239,68,68';  statusTxt = GetUIString("ปิดรับไม้ Session", "SESSION BLOCKED"); }
    else if(IsNewsBlackout())                       { dotColor = C'168,85,247'; statusTxt = GetUIString("พักช่วงข่าว", "NEWS PAUSE"); }
@@ -3574,6 +3696,9 @@ void GetDecisionLabels(ENUM_SYSTEM_DECISION d, int openPos, string &headTH, stri
    {
       case DECISION_HALTED:          headTH = "หยุดทำงานถาวร";      headEN = "EA HALTED";             reasonTH = "เกิน Max Total Drawdown แล้ว ต้อง restart EA เอง"; reasonEN = "Max total drawdown exceeded - restart the EA to resume."; clr = C'239,68,68'; break;
       case DECISION_CLOSING:         headTH = "กำลังปิดไม้";         headEN = "CLOSING BASKET";        reasonTH = "กำลังปิดทุกไม้ในบาสเก็ตปัจจุบัน";                reasonEN = "Closing all positions in the current basket.";            clr = C'251,146,60'; break;
+      case DECISION_CONNECTION_LOST:       headTH = "ขาดการเชื่อมต่อ";      headEN = "CONNECTION LOST";       reasonTH = "ไม่มีสัญญาณจาก Server ตอนนี้ - ห้ามส่ง Order ใหม่";  reasonEN = "No connection to the trade server - new orders blocked.";  clr = C'239,68,68'; break;
+      case DECISION_CONNECTION_RECOVERING: headTH = "กำลังกู้คืนการเชื่อมต่อ"; headEN = "RECOVERING CONNECTION"; reasonTH = "กลับมาต่อได้แล้ว กำลังรอความนิ่งก่อนเปิดไม้ใหม่"; reasonEN = "Back online - waiting for conditions to settle before resuming."; clr = C'251,146,60'; break;
+      case DECISION_CONNECTION_PROTECTED:  headTH = "ป้องกันหลัง Reconnect"; headEN = "CONNECTION PROTECTED";  reasonTH = "Spread/Latency ยังไม่นิ่งหลังกลับมาต่อ";           reasonEN = "Spread/latency not yet stable after reconnecting.";        clr = C'251,146,60'; break;
       case DECISION_LATENCY_GUARD:   headTH = "พัก Latency Guard";   headEN = "LATENCY GUARD ACTIVE";  reasonTH = "Execution ช้าติดกันหลายไม้ - พักเปิดไม้ใหม่ชั่วคราว"; reasonEN = "Slow fills detected - pausing new entries temporarily.";  clr = C'251,146,60'; break;
       case DECISION_NEWS_BLOCK:      headTH = "พักช่วงข่าว";         headEN = "NEWS BLACKOUT";         reasonTH = "อยู่ในช่วงเวลาพักข่าวสำคัญ";                     reasonEN = "Currently inside the news blackout window.";              clr = C'168,85,247'; break;
       case DECISION_DAILY_LOSS:      headTH = "ครบขาดทุนวันนี้";     headEN = "DAILY LOSS LIMIT HIT";  reasonTH = "ขาดทุนวันนี้ถึงลิมิตที่ตั้งไว้แล้ว";              reasonEN = "Today's loss has reached the configured limit.";          clr = C'239,68,68'; break;
@@ -3764,6 +3889,25 @@ int DrawAdvancedMonitorRow(int y, int openPos, int sideX, int sideW)
 
    y += cardH + gap;
 
+   // CONNECTION GUARD (V9) - Emergency Connection & Power Protection state machine
+   DrawCardBG(sideX, y, sideW, cardH, "🛡️ " + GetUIString("ป้องกันการเชื่อมต่อ", "CONNECTION GUARD"));
+   ry = y + S(44);
+   ENUM_CONNECTION_STATE connGuardState = GetConnectionState();
+   string connLabel; color connClr;
+   GetConnectionStateLabel(connGuardState, connLabel, connClr);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("สถานะ", "Status"), UseConnectionGuard ? GetUIString("ทำงาน", "ACTIVE") : GetUIString("ปิด", "OFF"), C'160,160,180', UseConnectionGuard ? C'34,197,94' : C'100,100,120', 12); ry += S(25);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("State", "State"), connLabel, C'160,160,180', connClr, 12); ry += S(25);
+   string cooldownTxt = "—";
+   if(connGuardState == CONN_RECOVERING)
+   {
+      int remain = (int)MathMax(0, ConnectionResumeCooldownSec - (TimeCurrent() - ConnectionRestoredTime));
+      cooldownTxt = IntegerToString(remain) + " s";
+   }
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("คูลดาวน์เหลือ", "Cooldown Left"), cooldownTxt, C'160,160,180', clrWhite, 12); ry += S(25);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("เปิดไม้ได้ไหม", "Entries Allowed"), IsConnectionBlocked() ? GetUIString("ไม่ได้", "NO") : GetUIString("ได้", "YES"), C'160,160,180', IsConnectionBlocked() ? C'239,68,68' : C'34,197,94', 12);
+
+   y += cardH + gap;
+
    // TRADE / BASKET JOURNAL
    DrawCardBG(sideX, y, sideW, cardH, "🧾 " + GetUIString("Trade/Basket Journal", "TRADE/BASKET JOURNAL"));
    ry = y + S(44);
@@ -3861,7 +4005,7 @@ int ComputeDashboardContentHeight()
    h += S(38);              // DrawServerTimeRow
    // Both columns begin at the top-card row. The sidebar continues from the
    // right edge of RISK, rather than beginning below the left dashboard.
-   int sideH = (S(204) + S(12)) * 3 + (S(178) + S(12)) * 4;
+   int sideH = (S(204) + S(12)) * 3 + (S(178) + S(12)) * 5;
    int leftH = (S(258) * 2 + S(12) * 2) + (S(84) + S(12)) + (S(265) + S(12)) + (S(162) + S(14));
    h += MathMax(sideH, leftH);
    return h;
