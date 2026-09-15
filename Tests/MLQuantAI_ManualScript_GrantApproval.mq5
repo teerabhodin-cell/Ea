@@ -34,8 +34,29 @@ input string I_TargetExecutionRequestId = ""; // REQUIRED - execution_request_id
 input string I_ApproverIdentity         = ""; // REQUIRED - who is granting this approval (name/handle) - never blank
 input int    I_ValidityWindowMinutes    = 15;  // approval_expiry = approval_timestamp + this many minutes; must be > 0
 input int    I_PollTimeoutSeconds       = 30;
+input string I_EventStoreFileNameOverride = ""; // RA-60 tooling fix: blank (default) = compute the SAME auto date-stamped filename MLQuantAI.mq5's own BuildDefaultEventStoreFileName() uses (TimeCurrent()-based, matches whatever day the EA session is actually running); set explicitly ONLY if the EA was itself started with a non-blank EventStoreFileNameOverride input, to the exact same value.
 
-string CanonicalCeremonyFile() { return "MLQuantAI_SmokeTest_C2_2.jsonl"; }
+// RA-60 tooling fix: was a hardcoded stale filename ("MLQuantAI_SmokeTest_C2_2.jsonl")
+// left over from before this project adopted the auto date-stamped event-store
+// naming convention - caused every real command to be rejected with
+// eventstore_filename_mismatch, regardless of date, since it could never match
+// the EA's own g_EventStoreFileName. Root-cause fix, not a one-day patch:
+// replicates MLQuantAI.mq5's own BuildDefaultEventStoreFileName() formula
+// verbatim (TimeCurrent()-based date stamp), so this always matches whatever
+// the EA computes for itself on any given day, same as the EA's own default
+// (EventStoreFileNameOverride == "") path. If the EA session was started with
+// a non-blank EventStoreFileNameOverride, I_EventStoreFileNameOverride above
+// must be set to that exact same value instead. Identical fix pattern already
+// applied to Tests/MLQuantAI_SmokeTest_C2_2_RealOrderSend.mq5 (RA-60 Step 1a).
+string CanonicalCeremonyFile()
+{
+   if(I_EventStoreFileNameOverride != "")
+      return I_EventStoreFileNameOverride;
+
+   MqlDateTime tm;
+   TimeToStruct(TimeCurrent(), tm);
+   return StringFormat("MLQuantAI_events_%04d-%02d-%02d.jsonl", tm.year, tm.mon, tm.day);
+}
 
 int g_LocalCommandCounter = 0;
 string NewCommandId()

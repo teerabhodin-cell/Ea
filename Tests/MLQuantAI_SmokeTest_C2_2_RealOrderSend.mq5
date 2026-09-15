@@ -38,8 +38,28 @@ input int    I_PollTimeoutSeconds = 60; // how long to wait for the EA to claim 
 input group "=== SUBMIT_ORDER mode (QA EMP-01 authorization required before use) ==="
 input bool   I_IssueSubmitOrderInstead      = false; // false (default) = issue RUN_C22_CEREMONY_FIXTURE as before. true = issue SUBMIT_ORDER instead - THE ONLY MODE THAT CAN REACH A REAL OrderSend(). Every input above except I_ExpectedEABindingNonce/I_PollTimeoutSeconds is ignored in this mode.
 input string I_TargetExecutionRequestIdForSubmit = ""; // REQUIRED when I_IssueSubmitOrderInstead=true - the execution_request_id an EMP-01-authorized GRANT_MANUAL_APPROVAL command has already approved
+input string I_EventStoreFileNameOverride = ""; // RA-60 tooling fix: blank (default) = compute the SAME auto date-stamped filename MLQuantAI.mq5's own BuildDefaultEventStoreFileName() uses (TimeCurrent()-based, matches whatever day the EA session is actually running); set explicitly ONLY if the EA was itself started with a non-blank EventStoreFileNameOverride input, to the exact same value.
 
-string CanonicalCeremonyFile() { return "MLQuantAI_SmokeTest_C2_2.jsonl"; }
+// RA-60 tooling fix: was a hardcoded stale filename ("MLQuantAI_SmokeTest_C2_2.jsonl")
+// left over from before this project adopted the auto date-stamped event-store
+// naming convention - caused every real command to be rejected with
+// eventstore_filename_mismatch, regardless of date, since it could never match
+// the EA's own g_EventStoreFileName. Root-cause fix, not a one-day patch:
+// replicates MLQuantAI.mq5's own BuildDefaultEventStoreFileName() formula
+// verbatim (TimeCurrent()-based date stamp), so this always matches whatever
+// the EA computes for itself on any given day, same as the EA's own default
+// (EventStoreFileNameOverride == "") path. If the EA session was started with
+// a non-blank EventStoreFileNameOverride, I_EventStoreFileNameOverride above
+// must be set to that exact same value instead.
+string CanonicalCeremonyFile()
+{
+   if(I_EventStoreFileNameOverride != "")
+      return I_EventStoreFileNameOverride;
+
+   MqlDateTime tm;
+   TimeToStruct(TimeCurrent(), tm);
+   return StringFormat("MLQuantAI_events_%04d-%02d-%02d.jsonl", tm.year, tm.mon, tm.day);
+}
 
 // Local command_id generator - deliberately NOT added to MLQuantAI_Ids.mqh
 // (out of RA-31's authorized file scope), so this mirrors that file's own
