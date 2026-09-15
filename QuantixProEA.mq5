@@ -3206,8 +3206,8 @@ int DrawStatCardsRow(int y, int x0, int availW, double balance, double equity, d
    // โชว์แค่ DistancePoints (ค่า Fixed คงที่) เฉยๆ เพราะถ้าเปิด ATR/BB Distance อยู่ เลขที่โชว์เดิม
    // จะไม่ตรงกับระยะที่ระบบใช้จริงเลย ทำให้ตั้งค่า MinVolatilityPoints ได้ถูกต้องเพราะเห็นเลขจริง
    int liveDistNow  = GetDynamicGridDistance();
-   bool liveDistLow  = (UseMinVolatilityFilter && liveDistNow < MinVolatilityPoints);
-   bool liveDistHigh = (UseMaxVolatilityFilter && liveDistNow > MaxVolatilityPoints);
+   bool liveDistLow  = IsVolatilityTooLow();  // ตัวตัดสินจริงตัวเดียวกับที่ ExecuteGridLogic() ใช้เช็ค
+   bool liveDistHigh = IsVolatilityTooHigh(); // ไม่เขียนเงื่อนไข Use*VolatilityFilter/Points ซ้ำเองอีกชุด
    color liveDistClr = liveDistHigh ? C'239,68,68' : (liveDistLow ? C'251,146,60' : clrWhite);
    DrawKV(cx + S(12), ry, innerW, GetUIString("ระยะ Grid ปัจจุบัน", "Current Distance"), IntegerToString(liveDistNow) + " P", C'160,160,180', liveDistClr); ry += rowStep;
    DrawKV(cx + S(12), ry, innerW, "ATR", (UseATRDistance ? IntegerToString(GetCurrentATRPoints()) + " P" : "—"), C'160,160,180', clrWhite); ry += rowStep;
@@ -3462,9 +3462,8 @@ void DrawRiskControlCard(int x, int y, int w, int h)
           C'160,160,180', (UseTotalDDGuard || UseMaxDDStop) ? C'34,197,94' : C'100,100,120', 12);
    ry += S(20);
 
-   int liveDistNow2 = GetDynamicGridDistance();
-   bool volLow  = (UseMinVolatilityFilter && liveDistNow2 < MinVolatilityPoints);
-   bool volHigh = (UseMaxVolatilityFilter && liveDistNow2 > MaxVolatilityPoints);
+   bool volLow  = IsVolatilityTooLow();  // ตัวตัดสินจริงตัวเดียวกับที่ ExecuteGridLogic() ใช้เช็ค
+   bool volHigh = IsVolatilityTooHigh(); // ไม่เขียนเงื่อนไข Use*VolatilityFilter/Points ซ้ำเองอีกชุด
    string volTxt = volHigh ? GetUIString("สูงเกินไป", "HIGH") : (volLow ? GetUIString("ต่ำเกินไป", "LOW") : GetUIString("ปกติ", "NORMAL"));
    color  volClr = volHigh ? C'239,68,68' : (volLow ? C'251,146,60' : C'34,197,94');
    DrawKV(barX, ry, barW, GetUIString("ความผันผวน", "VOLATILITY"), volTxt, C'160,160,180', volClr, 12);
@@ -3512,7 +3511,10 @@ int DrawAdvancedMonitorRow(int y, int openPos, int sideX, int sideW)
    // EXECUTION MONITOR
    DrawCardBG(sideX, y, sideW, cardH, "⚡ " + GetUIString("คุณภาพการส่งคำสั่ง", "EXECUTION MONITOR"));
    ry = y + S(44);
-   bool latencyGuard = (LatencyGuardActiveUntil > TimeCurrent());
+   // ต้องเรียก IsLatencyGuardActive() ตัวจริง ไม่เทียบ timestamp ตรงๆ เอง เพราะแบบนั้นจะลืมเช็ค
+   // UseLatencyGuard ไปด้วย - ถ้าปิดฟีเจอร์นี้หลังจากเคยทริกเกอร์ไปแล้ว LatencyGuardActiveUntil
+   // ยังค้างเป็นเวลาในอนาคตอยู่ แดชบอร์ดจะโชว์ "ACTIVE" ผิดๆ ทั้งที่ระบบจริงเลิกสนใจค่านี้ไปแล้ว
+   bool latencyGuard = IsLatencyGuardActive();
    bool connected = (bool)TerminalInfoInteger(TERMINAL_CONNECTED);
    DrawKV(sideX + S(12), ry, innerW, GetUIString("การเชื่อมต่อ", "Connection"), connected ? "ONLINE" : "OFFLINE", C'160,160,180', connected ? C'34,197,94' : C'239,68,68', 12); ry += S(25);
    DrawKV(sideX + S(12), ry, innerW, GetUIString("Latency ล่าสุด", "Last Latency"), IntegerToString((int)LastFillLatencyMs) + " ms", C'160,160,180', latencyGuard ? C'239,68,68' : clrWhite, 12); ry += S(25);
