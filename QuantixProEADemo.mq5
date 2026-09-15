@@ -47,11 +47,35 @@ enum ENUM_SYSTEM_DECISION
    DECISION_NEWS_BLOCK,       // อยู่ในช่วงพักข่าว
    DECISION_DAILY_LOSS,       // ครบขาดทุนวันนี้
    DECISION_TIME_BLOCK,       // นอกเวลาเทรด (เฉพาะตอนพอร์ตว่าง)
+   DECISION_SESSION_BLOCK,    // Session ปัจจุบันตั้งเป็น Block (เฉพาะตอนพอร์ตว่าง)
    DECISION_DAILY_GOAL,       // ถึงเป้ากำไรวันนี้ (เฉพาะตอนพอร์ตว่าง)
    DECISION_VOLATILITY_LOW,   // ตลาดนิ่งเกินไป (เฉพาะตอนพอร์ตว่าง)
    DECISION_VOLATILITY_HIGH,  // ตลาดผันผวนสูงเกินไป (เฉพาะตอนพอร์ตว่าง)
    DECISION_MANAGING_BASKET,  // มีไม้เปิดอยู่ - กำลังบริหารบาสเก็ต
    DECISION_WAIT_GRID         // ว่าง รอราคาแตะจุดเปิดไม้แรก
+};
+
+// ตัวระบุ Session ตลาด (Asia/London/New York) + Overlap เป็น session พิเศษที่ตรวจจับอัตโนมัติ
+// ตอน London กับ New York เปิดพร้อมกัน - ใช้เวลาเดียวกับ IsTradingAllowedByTime (server/local ตาม
+// SessionUseLocalTime) ไม่มีฐานข้อมูล timezone/DST ในตัว ผู้ใช้ปรับชั่วโมงเองตอน DST เปลี่ยนเหมือน Time Filter
+enum ENUM_SESSION_ID
+{
+   SESSION_ASIA,
+   SESSION_LONDON,
+   SESSION_NEWYORK,
+   SESSION_OVERLAP,  // London + New York ทับกัน
+   SESSION_OFF       // ไม่อยู่ในช่วงเวลาของ session ไหนเลย
+};
+
+// NORMAL/CONSERVATIVE/AGGRESSIVE เป็นป้ายกำกับสำหรับแสดงผล/สื่อสารเจตนาเท่านั้น - ไม่มีผลคูณตัวเลข
+// ซ้อนกับ Session Lot/Grid Multiplier ของ session นั้น (ตั้งใจ ไม่ใช่บั๊ก) กันไม่ให้ค่าคูณถูกคูณซ้ำสองชั้น
+// (ทั้งจาก Risk Profile และจาก Multiplier ที่ผู้ใช้ตั้งเองอยู่แล้ว) มีแค่ BLOCK เท่านั้นที่มีผลจริง: ห้ามเปิดบาสเก็ตใหม่
+enum ENUM_SESSION_RISK_PROFILE
+{
+   SESSION_RISK_NORMAL,
+   SESSION_RISK_CONSERVATIVE,
+   SESSION_RISK_AGGRESSIVE,
+   SESSION_RISK_BLOCK        // ห้ามเปิดบาสเก็ตใหม่ช่วง session นี้ (บาสเก็ตที่เปิดค้างอยู่แล้วยังจัดการต่อปกติ)
 };
 
 //=========================== INPUT ================================//
@@ -196,6 +220,46 @@ input bool   UseRSIFilter             = false; // Use RSI Filter (กรอง�
 input int    RSI_Period               = 14;    // RSI Period
 input double RSI_Oversold             = 30.0;  // RSI Oversold Level (Buy ได้ก็ต่อเมื่อ RSI <= ค่านี้)
 input double RSI_Overbought           = 70.0;  // RSI Overbought Level (Sell ได้ก็ต่อเมื่อ RSI >= ค่านี้)
+
+// ช่วงเวลาแต่ละ session อ้างอิงเวลาเดียวกับ Time Filter (Server Time เป็นค่าเริ่มต้น, สลับได้ด้วย
+// SessionUseLocalTime) - ไม่มีฐานข้อมูล timezone/DST ในตัว EA ต้องปรับชั่วโมงเองปีละ 2 ครั้งถ้าต้องการ
+// ตามเวลาออมแสง เหมือนที่ผู้ใช้ต้องทำกับ StartHour/EndHour ของ Time Filter อยู่แล้ว
+input group "===== 13. Session Engine (V9) ====="
+input bool   UseSessionEngine       = false;  // Use Smart Session Engine (คุม Lot/Grid ตามช่วงเวลาตลาด)
+input bool   SessionUseLocalTime    = false;  // Use Local PC Time for Sessions (อิงตามเครื่อง, ไม่ใช่ Server - เหมือน Use Local PC Time ของ Time Filter)
+
+input int    AsiaStartHour          = 22;     // Asia Start Hour
+input int    AsiaStartMinute        = 0;      // Asia Start Minute
+input int    AsiaEndHour            = 8;      // Asia End Hour
+input int    AsiaEndMinute          = 0;      // Asia End Minute
+input double AsiaLotMultiplier      = 0.8;    // Asia Lot Multiplier
+input double AsiaGridMultiplier     = 1.2;    // Asia Grid Multiplier
+input ENUM_SESSION_RISK_PROFILE AsiaRiskProfile = SESSION_RISK_CONSERVATIVE; // Asia Risk Profile (ป้ายกำกับ, ดูหมายเหตุบน enum)
+
+input int    LondonStartHour        = 8;      // London Start Hour
+input int    LondonStartMinute      = 0;      // London Start Minute
+input int    LondonEndHour          = 17;     // London End Hour
+input int    LondonEndMinute        = 0;      // London End Minute
+input double LondonLotMultiplier    = 1.0;    // London Lot Multiplier
+input double LondonGridMultiplier   = 1.0;    // London Grid Multiplier
+input ENUM_SESSION_RISK_PROFILE LondonRiskProfile = SESSION_RISK_NORMAL; // London Risk Profile (ป้ายกำกับ, ดูหมายเหตุบน enum)
+
+input int    NewYorkStartHour       = 13;     // New York Start Hour
+input int    NewYorkStartMinute     = 0;      // New York Start Minute
+input int    NewYorkEndHour         = 22;     // New York End Hour
+input int    NewYorkEndMinute       = 0;      // New York End Minute
+input double NewYorkLotMultiplier   = 1.0;    // New York Lot Multiplier
+input double NewYorkGridMultiplier  = 1.0;    // New York Grid Multiplier
+input ENUM_SESSION_RISK_PROFILE NewYorkRiskProfile = SESSION_RISK_NORMAL; // New York Risk Profile (ป้ายกำกับ, ดูหมายเหตุบน enum)
+
+input bool   UseOverlapProfile      = true;   // Detect London+New York Overlap (ตรวจจับช่วงที่สอง session ทับกัน)
+input double OverlapLotMultiplier   = 0.8;    // Overlap Lot Multiplier
+input double OverlapGridMultiplier  = 1.25;   // Overlap Grid Multiplier
+input ENUM_SESSION_RISK_PROFILE OverlapRiskProfile = SESSION_RISK_CONSERVATIVE; // Overlap Risk Profile (ป้ายกำกับ, ดูหมายเหตุบน enum)
+
+input double OffSessionLotMultiplier  = 1.0;  // Off-Session Lot Multiplier (ช่วงที่ไม่อยู่ใน session ไหนเลย)
+input double OffSessionGridMultiplier = 1.0;  // Off-Session Grid Multiplier
+input ENUM_SESSION_RISK_PROFILE OffSessionRiskProfile = SESSION_RISK_NORMAL; // Off-Session Risk Profile (ป้ายกำกับ, ดูหมายเหตุบน enum)
 
 //=========================== GLOBAL ===============================//
 
@@ -352,7 +416,13 @@ void DeleteVisualTSLine();
 void UpdateDrawdownTracker(int openPositions);
 
 int GetDynamicGridDistance();
+int GetDynamicGridDistanceBase();
 bool IsPerSideDistanceActive();
+ENUM_SESSION_ID GetCurrentSession();
+double GetSessionLotMultiplier();
+double GetSessionGridMultiplier();
+ENUM_SESSION_RISK_PROFILE GetSessionRiskProfile();
+bool IsSessionBlocked();
 void RecalculateBasePrice();
 void ReconcileGridStateOnInit();
 ENUM_ORDER_TYPE_FILLING GetBestFillingMode();
@@ -558,6 +628,113 @@ bool IsTradingAllowedByTime()
    else
    {
       return (currentMinutes >= startMinutes || currentMinutes < endMinutes);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Smart Session Engine - session detection ใช้เวลาเดียวกับ Time Filter |
+//| (SessionUseLocalTime แยกจาก UseLocalTime ของ Time Filter ตั้งใจให้ปรับ|
+//| ได้อิสระ เผื่อผู้ใช้อยากอิงเวลาคนละแบบกัน) Overlap ถูกเช็คก่อนเสมอเมื่อ  |
+//| London/New York ทับกัน ตามด้วย London > New York > Asia > Off        |
+//+------------------------------------------------------------------+
+bool IsInSessionWindow(int startHour, int startMinute, int endHour, int endMinute)
+{
+   MqlDateTime dt;
+   TimeToStruct(SessionUseLocalTime ? TimeLocal() : TimeCurrent(), dt);
+
+   int currentMinutes = dt.hour * 60 + dt.min;
+   int startMinutes   = startHour * 60 + startMinute;
+   int endMinutes     = endHour * 60 + endMinute;
+
+   if(startMinutes <= endMinutes)
+      return (currentMinutes >= startMinutes && currentMinutes < endMinutes);
+   else
+      return (currentMinutes >= startMinutes || currentMinutes < endMinutes);
+}
+
+ENUM_SESSION_ID GetCurrentSession()
+{
+   if(!UseSessionEngine) return SESSION_OFF;
+
+   bool inAsia    = IsInSessionWindow(AsiaStartHour, AsiaStartMinute, AsiaEndHour, AsiaEndMinute);
+   bool inLondon  = IsInSessionWindow(LondonStartHour, LondonStartMinute, LondonEndHour, LondonEndMinute);
+   bool inNewYork = IsInSessionWindow(NewYorkStartHour, NewYorkStartMinute, NewYorkEndHour, NewYorkEndMinute);
+
+   if(UseOverlapProfile && inLondon && inNewYork) return SESSION_OVERLAP;
+   if(inLondon)  return SESSION_LONDON;
+   if(inNewYork) return SESSION_NEWYORK;
+   if(inAsia)    return SESSION_ASIA;
+   return SESSION_OFF;
+}
+
+double GetSessionLotMultiplier()
+{
+   if(!UseSessionEngine) return 1.0;
+   switch(GetCurrentSession())
+   {
+      case SESSION_ASIA:    return AsiaLotMultiplier;
+      case SESSION_LONDON:  return LondonLotMultiplier;
+      case SESSION_NEWYORK: return NewYorkLotMultiplier;
+      case SESSION_OVERLAP: return OverlapLotMultiplier;
+      default:              return OffSessionLotMultiplier;
+   }
+}
+
+double GetSessionGridMultiplier()
+{
+   if(!UseSessionEngine) return 1.0;
+   switch(GetCurrentSession())
+   {
+      case SESSION_ASIA:    return AsiaGridMultiplier;
+      case SESSION_LONDON:  return LondonGridMultiplier;
+      case SESSION_NEWYORK: return NewYorkGridMultiplier;
+      case SESSION_OVERLAP: return OverlapGridMultiplier;
+      default:              return OffSessionGridMultiplier;
+   }
+}
+
+ENUM_SESSION_RISK_PROFILE GetSessionRiskProfile()
+{
+   if(!UseSessionEngine) return SESSION_RISK_NORMAL;
+   switch(GetCurrentSession())
+   {
+      case SESSION_ASIA:    return AsiaRiskProfile;
+      case SESSION_LONDON:  return LondonRiskProfile;
+      case SESSION_NEWYORK: return NewYorkRiskProfile;
+      case SESSION_OVERLAP: return OverlapRiskProfile;
+      default:              return OffSessionRiskProfile;
+   }
+}
+
+// ตัวตัดสินใจจริงตัวเดียวที่ห้ามเปิดบาสเก็ตใหม่จาก Session Risk Profile - Dashboard/ComputeSystemDecision
+// ต้องเรียกอันนี้เท่านั้น ห้ามเทียบ GetSessionRiskProfile() == SESSION_RISK_BLOCK ซ้ำเอง (กัน pattern
+// diagnostic-duplication แบบเดียวกับที่เจอและแก้ไปแล้วกับ EMA/Latency Guard/Volatility Filter)
+bool IsSessionBlocked()
+{
+   return GetSessionRiskProfile() == SESSION_RISK_BLOCK;
+}
+
+// แปล ENUM_SESSION_ID / ENUM_SESSION_RISK_PROFILE เป็นข้อความสำหรับ Dashboard เท่านั้น ไม่มี logic ตัดสินใจ
+void GetSessionLabel(ENUM_SESSION_ID s, string &th, string &en)
+{
+   switch(s)
+   {
+      case SESSION_ASIA:    th = "เอเชีย";          en = "ASIA";           break;
+      case SESSION_LONDON:  th = "ลอนดอน";          en = "LONDON";         break;
+      case SESSION_NEWYORK: th = "นิวยอร์ก";         en = "NEW YORK";       break;
+      case SESSION_OVERLAP: th = "ลอนดอน+นิวยอร์ก";  en = "LONDON+NY OVERLAP"; break;
+      default:               th = "นอก Session";     en = "OFF-SESSION";    break;
+   }
+}
+
+string GetSessionRiskProfileLabel(ENUM_SESSION_RISK_PROFILE p)
+{
+   switch(p)
+   {
+      case SESSION_RISK_CONSERVATIVE: return GetUIString("ระมัดระวัง", "CONSERVATIVE");
+      case SESSION_RISK_AGGRESSIVE:   return GetUIString("เชิงรุก", "AGGRESSIVE");
+      case SESSION_RISK_BLOCK:        return GetUIString("บล็อก", "BLOCK");
+      default:                        return GetUIString("ปกติ", "NORMAL");
    }
 }
 
@@ -899,6 +1076,7 @@ ENUM_SYSTEM_DECISION ComputeSystemDecision(int openPos)
    if(IsNewsBlackout())                                return DECISION_NEWS_BLOCK;
    if(IsDailyLossLimitReached())                       return DECISION_DAILY_LOSS;
    if(!IsTradingAllowedByTime() && openPos == 0)       return DECISION_TIME_BLOCK;
+   if(IsSessionBlocked() && openPos == 0)              return DECISION_SESSION_BLOCK;
    if(IsDailyGoalReached() && openPos == 0)            return DECISION_DAILY_GOAL;
    if(IsVolatilityTooLow() && openPos == 0)            return DECISION_VOLATILITY_LOW;
    if(IsVolatilityTooHigh() && openPos == 0)           return DECISION_VOLATILITY_HIGH;
@@ -1012,6 +1190,12 @@ double GetCalculatedLotSize(int nextLevel)
    double smartFactor = GetSmartLotFactor(nextLevel);
    if(smartFactor < 1.0)
       lot = lot * smartFactor;
+
+   // Session Lot Multiplier: ต่อจาก Smart Lot ก่อนถึง Max Lot Cap/broker normalization ด้านล่าง
+   // (Base Lot -> Dynamic Equity -> Smart Lot -> Session Factor -> Max Lot Cap -> Final Lot)
+   double sessionLotFactor = GetSessionLotMultiplier();
+   if(sessionLotFactor != 1.0)
+      lot = lot * sessionLotFactor;
 
    lot = MathMax(0.01, lot);
 
@@ -1728,6 +1912,7 @@ void OnTick()
    bool dailyGoalReached = IsDailyGoalReached();
    bool lowVolatility    = IsVolatilityTooLow();
    bool highVolatility   = IsVolatilityTooHigh();
+   bool sessionBlocked   = IsSessionBlocked();
 
    // News Filter / Daily Loss Limit ห้ามเปิดไม้ใหม่เด็ดขาด ไม่ว่ามีบาสเก็ตเปิดค้างอยู่หรือไม่ (เป็นกลไก
    // ป้องกันความเสี่ยง ต่อไม้เพิ่มระหว่างที่ทริกเกอร์อยู่ขัดกับจุดประสงค์ของมันเอง) - แต่ Time Filter /
@@ -1742,7 +1927,8 @@ void OnTick()
    bool dailyGoalBlocksEntry = dailyGoalReached && (openPositions == 0);
    bool lowVolBlocksEntry    = lowVolatility    && (openPositions == 0);
    bool highVolBlocksEntry   = highVolatility   && (openPositions == 0);
-   if(!timeBlocksEntry && !newsBlocked && !dailyLossBlocked && !latencyBlocked && !dailyGoalBlocksEntry && !lowVolBlocksEntry && !highVolBlocksEntry)
+   bool sessionBlocksEntry   = sessionBlocked   && (openPositions == 0);
+   if(!timeBlocksEntry && !newsBlocked && !dailyLossBlocked && !latencyBlocked && !dailyGoalBlocksEntry && !lowVolBlocksEntry && !highVolBlocksEntry && !sessionBlocksEntry)
    {
       if(!IsClosingState && !equityLocked && !TradingHalted && (MaxBasketProfit < effTargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
       {
@@ -1886,7 +2072,7 @@ bool IsPerSideDistanceActive()
 //| ลำดับความสำคัญ: BB Distance (ถ้าเปิดและอ่านค่าได้) > ATR Distance   |
 //| (ถ้าเปิดและอ่านค่าได้) > Fixed Distance (fallback สุดท้ายเสมอ)      |
 //+------------------------------------------------------------------+
-int GetDynamicGridDistance()
+int GetDynamicGridDistanceBase()
 {
    // Virtual Limit mode can run on its own fixed distance, independent of the
    // Breakout mode's Fixed/ATR/BB settings above - lets the two modes be tuned
@@ -1930,6 +2116,16 @@ int GetDynamicGridDistance()
    int finalPoints = (int)MathMax(10 * m_multiplier, MathRound(calculatedPoints));
 
    return finalPoints;
+}
+
+// Session Grid Multiplier คูณทับ base distance ไม่ว่าโหมดไหน (Fixed/ATR/BB/Virtual Limit) กำหนดค่าอยู่ -
+// ทุก caller ของ GetDynamicGridDistance() เดิมได้ค่าปรับตาม session อัตโนมัติโดยไม่ต้องแก้จุดเรียกเลย
+int GetDynamicGridDistance()
+{
+   int base = GetDynamicGridDistanceBase();
+   double factor = GetSessionGridMultiplier();
+   if(factor == 1.0) return base;
+   return (int)MathMax(10 * m_multiplier, MathRound(base * factor));
 }
 
 //+------------------------------------------------------------------+
@@ -3131,6 +3327,7 @@ int DrawServerTimeRow(int y, int openPos, int pendingOrders)
    if(TradingHalted)                              { dotColor = C'239,68,68';  statusTxt = GetUIString("EA หยุดถาวร", "EA HALTED"); }
    else if(IsClosingState)                        { dotColor = C'251,146,60'; statusTxt = GetUIString("กำลังปิดไม้", "CLOSING"); }
    else if(!timeAllowed)                           { dotColor = C'239,68,68';  statusTxt = GetUIString("นอกเวลาเทรด", "OFF-TIME"); }
+   else if(IsSessionBlocked())                     { dotColor = C'239,68,68';  statusTxt = GetUIString("ปิดรับไม้ Session", "SESSION BLOCKED"); }
    else if(IsNewsBlackout())                       { dotColor = C'168,85,247'; statusTxt = GetUIString("พักช่วงข่าว", "NEWS PAUSE"); }
    else if(IsDailyLossLimitReached())              { dotColor = C'239,68,68';  statusTxt = GetUIString("ครบขาดทุนวันนี้", "DAILY LOSS HIT"); }
    else if(IsDailyGoalReached())                   { dotColor = C'34,197,94';  statusTxt = GetUIString("ถึงเป้าวันนี้แล้ว", "DAILY GOAL HIT"); }
@@ -3378,6 +3575,7 @@ void GetDecisionLabels(ENUM_SYSTEM_DECISION d, int openPos, string &headTH, stri
       case DECISION_NEWS_BLOCK:      headTH = "พักช่วงข่าว";         headEN = "NEWS BLACKOUT";         reasonTH = "อยู่ในช่วงเวลาพักข่าวสำคัญ";                     reasonEN = "Currently inside the news blackout window.";              clr = C'168,85,247'; break;
       case DECISION_DAILY_LOSS:      headTH = "ครบขาดทุนวันนี้";     headEN = "DAILY LOSS LIMIT HIT";  reasonTH = "ขาดทุนวันนี้ถึงลิมิตที่ตั้งไว้แล้ว";              reasonEN = "Today's loss has reached the configured limit.";          clr = C'239,68,68'; break;
       case DECISION_TIME_BLOCK:      headTH = "นอกเวลาเทรด";         headEN = "OUTSIDE TRADING HOURS"; reasonTH = "อยู่นอกช่วงเวลาที่อนุญาตให้เปิดไม้ใหม่";          reasonEN = "Outside the allowed trading-hours window.";                clr = C'239,68,68'; break;
+      case DECISION_SESSION_BLOCK:   headTH = "ปิดรับไม้ช่วง Session นี้"; headEN = "SESSION BLOCKED";  reasonTH = "Session ปัจจุบันตั้ง Risk Profile เป็น Block";     reasonEN = "Current session's risk profile is set to Block.";         clr = C'239,68,68'; break;
       case DECISION_DAILY_GOAL:      headTH = "ถึงเป้ากำไรวันนี้";    headEN = "DAILY GOAL REACHED";    reasonTH = "กำไรวันนี้ถึงเป้าหมายแล้ว - พักเปิดไม้ใหม่";      reasonEN = "Today's profit goal has been reached - pausing entries."; clr = C'34,197,94'; break;
       case DECISION_VOLATILITY_LOW:  headTH = "ตลาดนิ่งเกินไป";      headEN = "VOLATILITY TOO LOW";    reasonTH = "ความผันผวนต่ำกว่าเกณฑ์ขั้นต่ำที่ตั้งไว้";          reasonEN = "Volatility is below the configured minimum.";             clr = C'251,146,60'; break;
       case DECISION_VOLATILITY_HIGH: headTH = "ตลาดผันผวนสูงเกินไป"; headEN = "VOLATILITY TOO HIGH";   reasonTH = "ความผันผวนสูงกว่าเกณฑ์สูงสุดที่ตั้งไว้";           reasonEN = "Volatility is above the configured maximum.";             clr = C'239,68,68'; break;
@@ -3530,6 +3728,22 @@ int DrawAdvancedMonitorRow(int y, int openPos, int sideX, int sideW)
 
    y += cardH + gap;
 
+   // SESSION MONITOR (V9) - Session ปัจจุบัน + ตัวคูณที่กำลังใช้จริงกับ Lot/Grid pipeline
+   DrawCardBG(sideX, y, sideW, cardH, "🕐 " + GetUIString("Session Monitor", "SESSION MONITOR"));
+   ry = y + S(44);
+   ENUM_SESSION_ID curSession = GetCurrentSession();
+   string sessTH, sessEN;
+   GetSessionLabel(curSession, sessTH, sessEN);
+   bool sessBlocked = IsSessionBlocked();
+   color sessClr = sessBlocked ? C'239,68,68' : (curSession == SESSION_OFF ? C'100,100,120' : C'34,197,94');
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("สถานะ", "Status"), UseSessionEngine ? GetUIString("ทำงาน", "ACTIVE") : GetUIString("ปิด", "OFF"), C'160,160,180', UseSessionEngine ? C'34,197,94' : C'100,100,120', 12); ry += S(25);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("Session ปัจจุบัน", "Current Session"), GetUIString(sessTH, sessEN), C'160,160,180', sessClr, 12); ry += S(25);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("Risk Profile", "Risk Profile"), GetSessionRiskProfileLabel(GetSessionRiskProfile()), C'160,160,180', sessBlocked ? C'239,68,68' : clrWhite, 12); ry += S(25);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("ตัวคูณ Lot", "Lot Factor"), DoubleToString(GetSessionLotMultiplier() * 100.0, 0) + "%", C'160,160,180', clrWhite, 12); ry += S(25);
+   DrawKV(sideX + S(12), ry, innerW, GetUIString("ตัวคูณ Grid", "Grid Factor"), DoubleToString(GetSessionGridMultiplier() * 100.0, 0) + "%", C'160,160,180', clrWhite, 12);
+
+   y += cardH + gap;
+
    // EXECUTION MONITOR
    DrawCardBG(sideX, y, sideW, cardH, "⚡ " + GetUIString("คุณภาพการส่งคำสั่ง", "EXECUTION MONITOR"));
    ry = y + S(44);
@@ -3644,7 +3858,7 @@ int ComputeDashboardContentHeight()
    h += S(38);              // DrawServerTimeRow
    // Both columns begin at the top-card row. The sidebar continues from the
    // right edge of RISK, rather than beginning below the left dashboard.
-   int sideH = (S(204) + S(12)) * 3 + (S(178) + S(12)) * 3;
+   int sideH = (S(204) + S(12)) * 3 + (S(178) + S(12)) * 4;
    int leftH = (S(258) + S(12)) + (S(84) + S(12)) + (S(265) + S(12)) + (S(162) + S(14));
    h += MathMax(sideH, leftH);
    return h;
