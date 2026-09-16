@@ -84,7 +84,28 @@ enum ENUM_CEREMONY_COMMAND_TYPE
    // computed by this command itself - see MLQuantAI_RealizedOutcome
    // CommandHandler.mqh's own header). Never reaches BrokerSubmission_
    // Submit()/OrderSend() - no execution authority added.
-   CEREMONY_COMMAND_TYPE_RECORD_REALIZED_OUTCOME
+   CEREMONY_COMMAND_TYPE_RECORD_REALIZED_OUTCOME,
+
+   // C5.2 Commit 2 (QA-frozen Design Revision 2, Docs/PhaseC_C5_2_Commit2_
+   // RuntimeIntegrationDesignContract.md §A/§D): requests a rollout_stage
+   // transition. Deliberately carries NO from_stage field - the handler
+   // always derives the current stage from a fresh durable replay, never
+   // from this request (the Amendment's frozen mechanism). Never reaches
+   // BrokerSubmission_Submit()/OrderSend() - no execution authority added.
+   CEREMONY_COMMAND_TYPE_TRANSITION_ROLLOUT_STAGE,
+
+   // C5.2 Commit 2 (QA-frozen Design Revision 2, same contract §A/§D):
+   // manually engages the kill switch for the real, live-read
+   // environment_mode at the moment this command is processed - never an
+   // operator-supplied environment_mode. Never reaches BrokerSubmission_
+   // Submit()/OrderSend().
+   CEREMONY_COMMAND_TYPE_ENGAGE_KILL_SWITCH,
+
+   // C5.2 Commit 2 (QA-frozen Design Revision 2, same contract §A/§D/§7.2):
+   // the first of the two mandatory, independent steps to clear a kill
+   // switch (§7.2, unchanged) - restores no capability by itself. Never
+   // reaches BrokerSubmission_Submit()/OrderSend().
+   CEREMONY_COMMAND_TYPE_CLEAR_KILL_SWITCH
 };
 
 string CeremonyCommandType_ToString(ENUM_CEREMONY_COMMAND_TYPE t)
@@ -96,6 +117,9 @@ string CeremonyCommandType_ToString(ENUM_CEREMONY_COMMAND_TYPE t)
       case CEREMONY_COMMAND_TYPE_SUBMIT_ORDER:             return "SUBMIT_ORDER";
       case CEREMONY_COMMAND_TYPE_EVALUATE_ENTRY_COMPATIBILITY: return "EVALUATE_ENTRY_COMPATIBILITY";
       case CEREMONY_COMMAND_TYPE_RECORD_REALIZED_OUTCOME: return "RECORD_REALIZED_OUTCOME";
+      case CEREMONY_COMMAND_TYPE_TRANSITION_ROLLOUT_STAGE: return "TRANSITION_ROLLOUT_STAGE";
+      case CEREMONY_COMMAND_TYPE_ENGAGE_KILL_SWITCH:       return "ENGAGE_KILL_SWITCH";
+      case CEREMONY_COMMAND_TYPE_CLEAR_KILL_SWITCH:        return "CLEAR_KILL_SWITCH";
    }
    return "UNKNOWN";
 }
@@ -107,6 +131,9 @@ ENUM_CEREMONY_COMMAND_TYPE CeremonyCommandType_FromString(string s)
    if(s == "SUBMIT_ORDER")             return CEREMONY_COMMAND_TYPE_SUBMIT_ORDER;
    if(s == "EVALUATE_ENTRY_COMPATIBILITY") return CEREMONY_COMMAND_TYPE_EVALUATE_ENTRY_COMPATIBILITY;
    if(s == "RECORD_REALIZED_OUTCOME") return CEREMONY_COMMAND_TYPE_RECORD_REALIZED_OUTCOME;
+   if(s == "TRANSITION_ROLLOUT_STAGE") return CEREMONY_COMMAND_TYPE_TRANSITION_ROLLOUT_STAGE;
+   if(s == "ENGAGE_KILL_SWITCH")       return CEREMONY_COMMAND_TYPE_ENGAGE_KILL_SWITCH;
+   if(s == "CLEAR_KILL_SWITCH")        return CEREMONY_COMMAND_TYPE_CLEAR_KILL_SWITCH;
    return CEREMONY_COMMAND_TYPE_UNKNOWN;
 }
 
@@ -192,6 +219,22 @@ struct CeremonyCommand
    datetime                     outcome_time;
    string                       outcome_provenance_json;
 
+   // C5.2 Commit 2 (QA-frozen Design Revision 2 §A/§D - additive):
+   // TRANSITION_ROLLOUT_STAGE/ENGAGE_KILL_SWITCH/CLEAR_KILL_SWITCH only.
+   // Deliberately NO from_stage/environment_mode field exists anywhere on
+   // this struct - the handler always derives both from a fresh durable
+   // replay/live read, never from the request (the Amendment's frozen
+   // mechanism, §A). c52_operator_identity is shared by all three C5.2
+   // command types (the same "who authorized this action" concept
+   // GRANT_MANUAL_APPROVAL's own approver_identity already expresses for
+   // its own command type - kept as a separate field here rather than
+   // reused, matching this project's own precedent of one field per
+   // command-type concept, e.g. RA-62's target_candidate_id/outcome_label
+   // block above).
+   string                       c52_target_rollout_stage; // TRANSITION_ROLLOUT_STAGE only - ExecutionRolloutStageToString() form
+   string                       c52_evidence_reference;   // TRANSITION_ROLLOUT_STAGE only
+   string                       c52_operator_identity;    // all three C5.2 command types
+
    // --- response (EA) ---
    ENUM_CEREMONY_MAILBOX_STATUS mailbox_status;
    string                       result_reason_code;
@@ -222,6 +265,17 @@ struct CeremonyCommand
    // field) carries "recorded"/"already_recorded"/"candidate_not_found"/
    // "validation_failed"/"emit_durable_write_failed" for this command type.
    string                       result_realized_outcome_id;
+
+   // C5.2 Commit 2 (additive - QA-frozen Design Revision 2): result field
+   // for TRANSITION_ROLLOUT_STAGE only - the resulting rollout_stage after
+   // a successful transition (ExecutionRolloutStageToString() form; empty
+   // on any failure/rejection). result_reason_code (pre-existing field)
+   // carries "transitioned"/"kill_switch_active"/
+   // "current_state_environment_invalid"/"rejected_<evaluation>"/
+   // "emit_durable_write_failed" for TRANSITION_ROLLOUT_STAGE, and
+   // "engaged"/"cleared"/"emit_durable_write_failed" for ENGAGE_KILL_
+   // SWITCH/CLEAR_KILL_SWITCH.
+   string                       c52_result_rollout_stage_after;
 };
 
 void CeremonyCommand_Init(CeremonyCommand &c)
@@ -242,6 +296,9 @@ void CeremonyCommand_Init(CeremonyCommand &c)
    c.outcome_hash                   = "";
    c.outcome_time                   = 0;
    c.outcome_provenance_json        = "";
+   c.c52_target_rollout_stage       = "";
+   c.c52_evidence_reference         = "";
+   c.c52_operator_identity          = "";
    c.mailbox_status                 = CEREMONY_MAILBOX_STATUS_UNKNOWN;
    c.result_reason_code             = "";
    c.result_message                 = "";
@@ -262,6 +319,7 @@ void CeremonyCommand_Init(CeremonyCommand &c)
    c.result_directional_constraint_ok = 0;
    c.result_gate_decision             = "";
    c.result_realized_outcome_id       = "";
+   c.c52_result_rollout_stage_after   = "";
 }
 
 string CeremonyCommand_ToJson(const CeremonyCommand &c)
@@ -283,6 +341,9 @@ string CeremonyCommand_ToJson(const CeremonyCommand &c)
    s += "\"outcome_hash\":\""                   + EventSerializer_Escape(c.outcome_hash) + "\",";
    s += "\"outcome_time\":\""                   + TimeToString(c.outcome_time, TIME_DATE|TIME_SECONDS) + "\",";
    s += "\"outcome_provenance_json\":\""        + EventSerializer_Escape(c.outcome_provenance_json) + "\",";
+   s += "\"c52_target_rollout_stage\":\""       + EventSerializer_Escape(c.c52_target_rollout_stage) + "\",";
+   s += "\"c52_evidence_reference\":\""         + EventSerializer_Escape(c.c52_evidence_reference) + "\",";
+   s += "\"c52_operator_identity\":\""          + EventSerializer_Escape(c.c52_operator_identity) + "\",";
    s += "\"mailbox_status\":\""                 + EventSerializer_Escape(CeremonyMailboxStatus_ToString(c.mailbox_status)) + "\",";
    s += "\"result_reason_code\":\""             + EventSerializer_Escape(c.result_reason_code) + "\",";
    s += "\"result_message\":\""                 + EventSerializer_Escape(c.result_message) + "\",";
@@ -301,7 +362,8 @@ string CeremonyCommand_ToJson(const CeremonyCommand &c)
    s += "\"result_risk_divergence_pct\":"       + CanonicalDouble(c.result_risk_divergence_pct) + ",";
    s += "\"result_directional_constraint_ok\":" + IntegerToString(c.result_directional_constraint_ok) + ",";
    s += "\"result_gate_decision\":\""           + EventSerializer_Escape(c.result_gate_decision) + "\",";
-   s += "\"result_realized_outcome_id\":\""     + EventSerializer_Escape(c.result_realized_outcome_id) + "\"";
+   s += "\"result_realized_outcome_id\":\""     + EventSerializer_Escape(c.result_realized_outcome_id) + "\",";
+   s += "\"c52_result_rollout_stage_after\":\"" + EventSerializer_Escape(c.c52_result_rollout_stage_after) + "\"";
    s += "}";
    return s;
 }
@@ -325,6 +387,9 @@ void CeremonyCommand_FromJson(string json, CeremonyCommand &out)
    out.outcome_hash                   = EventSerializer_GetStr(json, "outcome_hash");
    out.outcome_time                   = StringToTime(EventSerializer_GetStr(json, "outcome_time"));
    out.outcome_provenance_json        = EventSerializer_GetStr(json, "outcome_provenance_json");
+   out.c52_target_rollout_stage       = EventSerializer_GetStr(json, "c52_target_rollout_stage");
+   out.c52_evidence_reference         = EventSerializer_GetStr(json, "c52_evidence_reference");
+   out.c52_operator_identity          = EventSerializer_GetStr(json, "c52_operator_identity");
    out.mailbox_status                 = CeremonyMailboxStatus_FromString(EventSerializer_GetStr(json, "mailbox_status"));
    out.result_reason_code             = EventSerializer_GetStr(json, "result_reason_code");
    out.result_message                 = EventSerializer_GetStr(json, "result_message");
@@ -344,6 +409,7 @@ void CeremonyCommand_FromJson(string json, CeremonyCommand &out)
    out.result_directional_constraint_ok = EventSerializer_GetInt(json, "result_directional_constraint_ok");
    out.result_gate_decision             = EventSerializer_GetStr(json, "result_gate_decision");
    out.result_realized_outcome_id       = EventSerializer_GetStr(json, "result_realized_outcome_id");
+   out.c52_result_rollout_stage_after   = EventSerializer_GetStr(json, "c52_result_rollout_stage_after");
 }
 
 //---------------------------------------------------------------------

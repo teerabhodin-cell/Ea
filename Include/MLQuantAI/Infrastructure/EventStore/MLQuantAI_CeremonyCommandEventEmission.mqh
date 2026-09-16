@@ -75,7 +75,25 @@ enum ENUM_CEREMONY_COMMAND_STATE
    // own reason field ("recorded" vs "already_recorded"), never encoded as
    // a separate command state - same convention CEREMONY_STATE_APPROVAL_
    // RECORDED/CEREMONY_STATE_ENTRY_COMPATIBILITY_EVALUATED already use.
-   CEREMONY_STATE_OUTCOME_RECORDED
+   CEREMONY_STATE_OUTCOME_RECORDED,
+
+   // C5.2 Commit 2 (QA-frozen Design Revision 2): terminal state for
+   // TRANSITION_ROLLOUT_STAGE only. Reached directly from COMMAND_RECEIVED
+   // via CEREMONY_IN_PROGRESS - covers every SUCCESSFUL transition
+   // (forward or rollback); which one happened is carried in the state-
+   // change line's own reason field ("allowed_forward"/"allowed_rollback"
+   // - RolloutTransitionResultToString(), Commit 1), never encoded as a
+   // separate command state - same convention every prior single-terminal-
+   // state command type above already uses.
+   CEREMONY_STATE_ROLLOUT_STAGE_TRANSITIONED,
+
+   // C5.2 Commit 2 (QA-frozen Design Revision 2): terminal state for
+   // ENGAGE_KILL_SWITCH only.
+   CEREMONY_STATE_KILL_SWITCH_ENGAGED,
+
+   // C5.2 Commit 2 (QA-frozen Design Revision 2): terminal state for
+   // CLEAR_KILL_SWITCH only.
+   CEREMONY_STATE_KILL_SWITCH_CLEARED
 };
 
 string CeremonyCommandState_ToString(ENUM_CEREMONY_COMMAND_STATE s)
@@ -93,6 +111,9 @@ string CeremonyCommandState_ToString(ENUM_CEREMONY_COMMAND_STATE s)
       case CEREMONY_STATE_COMMAND_FAILED:         return "COMMAND_FAILED";
       case CEREMONY_STATE_ENTRY_COMPATIBILITY_EVALUATED: return "ENTRY_COMPATIBILITY_EVALUATED";
       case CEREMONY_STATE_OUTCOME_RECORDED:       return "OUTCOME_RECORDED";
+      case CEREMONY_STATE_ROLLOUT_STAGE_TRANSITIONED: return "ROLLOUT_STAGE_TRANSITIONED";
+      case CEREMONY_STATE_KILL_SWITCH_ENGAGED:    return "KILL_SWITCH_ENGAGED";
+      case CEREMONY_STATE_KILL_SWITCH_CLEARED:    return "KILL_SWITCH_CLEARED";
    }
    return "UNKNOWN";
 }
@@ -110,6 +131,9 @@ ENUM_CEREMONY_COMMAND_STATE CeremonyCommandState_FromString(string s)
    if(s == "COMMAND_FAILED")         return CEREMONY_STATE_COMMAND_FAILED;
    if(s == "ENTRY_COMPATIBILITY_EVALUATED") return CEREMONY_STATE_ENTRY_COMPATIBILITY_EVALUATED;
    if(s == "OUTCOME_RECORDED")       return CEREMONY_STATE_OUTCOME_RECORDED;
+   if(s == "ROLLOUT_STAGE_TRANSITIONED") return CEREMONY_STATE_ROLLOUT_STAGE_TRANSITIONED;
+   if(s == "KILL_SWITCH_ENGAGED")    return CEREMONY_STATE_KILL_SWITCH_ENGAGED;
+   if(s == "KILL_SWITCH_CLEARED")    return CEREMONY_STATE_KILL_SWITCH_CLEARED;
    return CEREMONY_STATE_UNKNOWN;
 }
 
@@ -122,7 +146,10 @@ bool CeremonyCommandState_IsTerminal(ENUM_CEREMONY_COMMAND_STATE s)
    return s == CEREMONY_STATE_COMMAND_REJECTED || s == CEREMONY_STATE_APPROVAL_RECORDED
        || s == CEREMONY_STATE_OBSERVATION_COMPLETE || s == CEREMONY_STATE_COMMAND_FAILED
        || s == CEREMONY_STATE_ENTRY_COMPATIBILITY_EVALUATED
-       || s == CEREMONY_STATE_OUTCOME_RECORDED;
+       || s == CEREMONY_STATE_OUTCOME_RECORDED
+       || s == CEREMONY_STATE_ROLLOUT_STAGE_TRANSITIONED
+       || s == CEREMONY_STATE_KILL_SWITCH_ENGAGED
+       || s == CEREMONY_STATE_KILL_SWITCH_CLEARED;
 }
 
 //---------------------------------------------------------------------

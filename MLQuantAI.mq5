@@ -69,6 +69,17 @@
 // RECORD_REALIZED_OUTCOME orchestration logic - see the file's own header
 // for the exact sealed functions it calls and never modifies.
 #include <MLQuantAI/Execution/MLQuantAI_RealizedOutcomeCommandHandler.mqh>
+// C5.2 Commit 2 (QA-frozen Design Revision 2, Docs/PhaseC_C5_2_Commit2_
+// RuntimeIntegrationDesignContract.md): the rollout_stage/kill-switch
+// control-plane wiring. EnvironmentModeReader/RolloutStageCapability are
+// Commit 1 library headers this EA did not previously need; the two
+// CommandProcess headers are Commit 2's own pure processors (each pulls
+// in its own Commit 1 projection/emission dependencies transitively -
+// see their own headers).
+#include <MLQuantAI/Execution/MLQuantAI_EnvironmentModeReader.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_RolloutStageCapability.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_RolloutStageTransitionCommandProcess.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_KillSwitchCommandProcess.mqh>
 
 input group "=== System ==="
 input bool   DebugMode                   = false;
@@ -114,6 +125,15 @@ input string InpC6SymbolAllowlist  = ""; // comma-separated symbols; empty = unc
 string   g_EventStoreFileName = "";
 datetime g_LastContextBarTime = 0;
 double   g_RA31_EABindingNonce = 0.0; // RA-31 re-scope of RA-29.1: this EA instance's current, live nonce - CeremonyCommand_TryClaim() validates every command's expected_ea_binding_nonce against this
+
+// C5.2 Commit 2 (QA-frozen Design Revision 2, §B): OnInit's ONE-TIME,
+// informational session snapshot - established once in OnInit, logged for
+// operator diagnostic visibility. NEVER consulted by OnTick's own
+// capability gate (§C), which always re-derives rollout_stage/kill-switch/
+// environment_mode fresh, every tick, per §9/§3's "never a cached/
+// remembered value" discipline. RolloutStageSessionState is Commit 1's own
+// struct (MLQuantAI_RolloutStageProjection.mqh), unmodified.
+RolloutStageSessionState g_C52SessionState;
 
 string BuildDefaultEventStoreFileName()
 {
@@ -572,6 +592,26 @@ int OnInit()
            rr.lifecycle_events_applied, rr.lifecycle_events_failed, rr.system_events_applied));
    if(!rr.ok)
       EventStoreHealth_TripSafeMode(StringFormat("replay found an inconsistency: %s", rr.first_error));
+
+   // C5.2 Commit 2 (QA-frozen Design Revision 2 §B): the ONE-TIME,
+   // informational session-establishment snapshot. Cannot fail EA
+   // initialization - RolloutStageReplay_EstablishSessionState() is pure
+   // and total (Commit 1, unmodified); a "reject"/kill-switch-active
+   // outcome here is a normal, expected, logged state, never an error.
+   // This is diagnostic only - OnTick's own gate (§C, below) always
+   // re-derives everything fresh and never consults g_C52SessionState.
+   {
+      string c52Lines[];
+      EventStore_ReadAllLines(g_EventStoreFileName, c52Lines);
+      ENUM_EXECUTION_ENVIRONMENT_MODE c52EnvironmentMode = EnvironmentMode_ReadLive();
+      RolloutStageReplay_EstablishSessionState(c52Lines, c52EnvironmentMode, g_C52SessionState);
+      LogInfo(StringFormat("C5.2 session established: rollout_stage=%s environment_mode=%s "
+                            "environment_valid=%s kill_switch_active=%s",
+                            ExecutionRolloutStageToString(g_C52SessionState.replayed_stage),
+                            ExecutionEnvironmentModeToString(c52EnvironmentMode),
+                            g_C52SessionState.environment_valid ? "true" : "false",
+                            g_C52SessionState.kill_switch_active ? "true" : "false"));
+   }
 
    // C3.6 deferred-transaction-processor (per
    // Docs/PhaseC_C3_6_DeferredTransactionProcessorContract.md, FROZEN):
@@ -1057,6 +1097,99 @@ void RecordRealizedOutcomeCommand(CeremonyCommand &cmd)
                           cmd.command_id, cmd.target_candidate_id, RecordOutcomeResultToString(result.status), result.realized_outcome_id));
 }
 
+// C5.2 Commit 2 (QA-frozen Design Revision 2 §A/§D): thin wrapper over
+// RolloutStageTransitionCommand_Process() (Execution/MLQuantAI_RolloutStage
+// TransitionCommandProcess.mqh) - lines[]/environmentMode are read FRESH
+// here, every call, never cached (§A's frozen mechanism); cmd carries no
+// from_stage field at all (the request shape itself, MLQuantAI_
+// CeremonyCommandMailbox.mqh, makes an operator-supplied current stage
+// unrepresentable).
+void TransitionRolloutStageCommand(CeremonyCommand &cmd)
+{
+   EventStore_LogCeremonyCommandState(cmd.command_id, cmd.command_type,
+                                       CEREMONY_STATE_COMMAND_RECEIVED, CEREMONY_STATE_CEREMONY_IN_PROGRESS,
+                                       "processing", "");
+
+   ENUM_EXECUTION_ROLLOUT_STAGE targetStage = ExecutionRolloutStageFromString(cmd.c52_target_rollout_stage);
+
+   string lines[];
+   EventStore_ReadAllLines(g_EventStoreFileName, lines);
+   ENUM_EXECUTION_ENVIRONMENT_MODE environmentMode = EnvironmentMode_ReadLive();
+
+   RolloutStageTransitionCommandResult result;
+   RolloutStageTransitionCommand_Process(targetStage, cmd.c52_operator_identity, cmd.c52_evidence_reference,
+                                           lines, environmentMode, result);
+
+   if(result.status != ROLLOUT_STAGE_TRANSITION_CMD_TRANSITIONED)
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, result.reason_code, ""); return; }
+
+   cmd.c52_result_rollout_stage_after = cmd.c52_target_rollout_stage;
+   CeremonyCommand_Complete(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, CEREMONY_STATE_ROLLOUT_STAGE_TRANSITIONED,
+                             result.reason_code, "");
+
+   LogInfo(StringFormat("C5.2 TRANSITION_ROLLOUT_STAGE: command_id=%s current_stage=%s target_stage=%s status=%s",
+                          cmd.command_id, ExecutionRolloutStageToString(result.current_stage),
+                          cmd.c52_target_rollout_stage, result.reason_code));
+}
+
+// C5.2 Commit 2 (QA-frozen Design Revision 2 §A/§D): thin wrapper over
+// KillSwitchEngageCommand_Process() (Execution/MLQuantAI_KillSwitchCommand
+// Process.mqh). currentStage/environmentMode are read FRESH here, every
+// call. Never vetoed by an already-active kill switch (§A's corrected
+// wording) - re-engaging is idempotent-in-spirit.
+void EngageKillSwitchCommand(CeremonyCommand &cmd)
+{
+   EventStore_LogCeremonyCommandState(cmd.command_id, cmd.command_type,
+                                       CEREMONY_STATE_COMMAND_RECEIVED, CEREMONY_STATE_CEREMONY_IN_PROGRESS,
+                                       "processing", "");
+
+   string lines[];
+   EventStore_ReadAllLines(g_EventStoreFileName, lines);
+   ENUM_EXECUTION_ENVIRONMENT_MODE environmentMode = EnvironmentMode_ReadLive();
+   ENUM_EXECUTION_ROLLOUT_STAGE currentStage;
+   RolloutStageProjection_ReplayCurrent(lines, currentStage);
+
+   KillSwitchCommandResult result;
+   KillSwitchEngageCommand_Process(cmd.c52_operator_identity, currentStage, environmentMode, result);
+
+   if(result.status != KILL_SWITCH_CMD_ENGAGED)
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, result.reason_code, ""); return; }
+
+   CeremonyCommand_Complete(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, CEREMONY_STATE_KILL_SWITCH_ENGAGED,
+                             result.reason_code, "");
+
+   LogInfo(StringFormat("C5.2 ENGAGE_KILL_SWITCH: command_id=%s environment_mode=%s status=%s",
+                          cmd.command_id, ExecutionEnvironmentModeToString(environmentMode), result.reason_code));
+}
+
+// C5.2 Commit 2 (QA-frozen Design Revision 2 §A/§D/§7.2): thin wrapper
+// over KillSwitchClearCommand_Process(). Durably records KILL_SWITCH_
+// CLEARED only - never touches rollout_stage (§7.2, unchanged) - a fresh,
+// separate TRANSITION_ROLLOUT_STAGE command is always required afterward
+// to restore any capability. Never vetoed by kill-switch-active (§A's
+// corrected wording) - CLEAR must always be reachable, it IS the recovery
+// path.
+void ClearKillSwitchCommand(CeremonyCommand &cmd)
+{
+   EventStore_LogCeremonyCommandState(cmd.command_id, cmd.command_type,
+                                       CEREMONY_STATE_COMMAND_RECEIVED, CEREMONY_STATE_CEREMONY_IN_PROGRESS,
+                                       "processing", "");
+
+   ENUM_EXECUTION_ENVIRONMENT_MODE environmentMode = EnvironmentMode_ReadLive();
+
+   KillSwitchCommandResult result;
+   KillSwitchClearCommand_Process(cmd.c52_operator_identity, environmentMode, result);
+
+   if(result.status != KILL_SWITCH_CMD_CLEARED)
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, result.reason_code, ""); return; }
+
+   CeremonyCommand_Complete(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, CEREMONY_STATE_KILL_SWITCH_CLEARED,
+                             result.reason_code, "");
+
+   LogInfo(StringFormat("C5.2 CLEAR_KILL_SWITCH: command_id=%s environment_mode=%s status=%s",
+                          cmd.command_id, ExecutionEnvironmentModeToString(environmentMode), result.reason_code));
+}
+
 // SUBMIT_ORDER: the ONLY command type authorized to reach
 // BrokerSubmission_Submit()/OrderSend() - still requires QA's separate
 // EMP-01 authorization before an operator is allowed to issue it (a
@@ -1331,6 +1464,9 @@ void RA31_ProcessCeremonyCommand(string trigger)
       case CEREMONY_COMMAND_TYPE_SUBMIT_ORDER:             SubmitOrderCommand(cmd);           break;
       case CEREMONY_COMMAND_TYPE_EVALUATE_ENTRY_COMPATIBILITY: EvaluateEntryCompatibilityCommand(cmd); break;
       case CEREMONY_COMMAND_TYPE_RECORD_REALIZED_OUTCOME: RecordRealizedOutcomeCommand(cmd); break;
+      case CEREMONY_COMMAND_TYPE_TRANSITION_ROLLOUT_STAGE: TransitionRolloutStageCommand(cmd); break;
+      case CEREMONY_COMMAND_TYPE_ENGAGE_KILL_SWITCH:       EngageKillSwitchCommand(cmd);       break;
+      case CEREMONY_COMMAND_TYPE_CLEAR_KILL_SWITCH:        ClearKillSwitchCommand(cmd);         break;
       default:
          CeremonyCommand_Fail(cmd, CEREMONY_STATE_COMMAND_RECEIVED, "unhandled_command_type", "");
          break;
@@ -1437,7 +1573,30 @@ void OnTick()
    // BrokerSubmission_Submit()/OrderSend() anywhere - diagnostic dry-run
    // only, no execution/broker authority, per the C5.0 design freeze
    // (which bounded broker reachability, not durability).
-   if(!MQLInfoInteger(MQL_TESTER)) return;
+   //
+   // C5.2 Commit 2 (QA-frozen Design Revision 2 §C, corrected per QA's
+   // diff-review finding): the Tester short-circuit must happen at the
+   // CONTROL-FLOW level, not merely inside the final boolean expression -
+   // `&&`'s short-circuit only skips the RolloutStage_PermitsPipelineRun()
+   // call itself; it does NOT skip separate statements computed before the
+   // `if`, which would run every tick regardless of MQLInfoInteger(MQL_
+   // TESTER). Wrapping the entire fresh-read block inside `if(!MQLInfoInteger
+   // (MQL_TESTER)) { ... }` is what actually keeps C5.0/C5.1's own Tester
+   // fixture path bit-for-bit unchanged - zero EventStore reads, zero
+   // C5.2 calls of any kind, inside the Tester.
+   if(!MQLInfoInteger(MQL_TESTER))
+   {
+      ENUM_EXECUTION_ENVIRONMENT_MODE c52TickEnvironmentMode = EnvironmentMode_ReadLive();
+      string c52TickLines[];
+      EventStore_ReadAllLines(g_EventStoreFileName, c52TickLines);
+      ENUM_EXECUTION_ROLLOUT_STAGE c52TickStage;
+      RolloutStageProjection_ReplayCurrent(c52TickLines, c52TickStage);
+      bool c52TickKillSwitchActive;
+      KillSwitchProjection_ReplayActive(c52TickLines, c52TickEnvironmentMode, c52TickKillSwitchActive);
+
+      if(!RolloutStage_PermitsPipelineRun(c52TickStage, c52TickKillSwitchActive, c52TickEnvironmentMode))
+         return;
+   }
 
    CRTDetectionResult crtResult;
    CRT_DetectV1(ctx, crtResult);
