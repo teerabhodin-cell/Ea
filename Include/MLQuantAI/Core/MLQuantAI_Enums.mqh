@@ -376,7 +376,37 @@ enum ENUM_EVENT_TYPE
    // one training-dataset export (TRAINING-ELIGIBLE population only, per
    // §3.0). Never a candidate/broker/execution fact of any kind. Same
    // append-at-end rule as every entry above.
-   EVENT_TYPE_TRAINING_DATASET_CREATED
+   EVENT_TYPE_TRAINING_DATASET_CREATED,
+
+   // C5.2 Commit 1 (QA-frozen FINAL DESIGN FREEZE, Docs/PhaseC_C5_2_
+   // ControlledExecutionEnvironmentLadderContract.md §4): one durable
+   // rollout_stage transition (forward OR rollback - a rollback is the
+   // same event type, a different direction of the same fact, per §8).
+   // Carries from_stage/to_stage/environment_mode/authorized_by/
+   // evidence_reference/transition_server_time. Never a candidate/
+   // broker/execution fact, never itself an OrderSend authority - see
+   // this document's governing principle. Same append-at-end rule as
+   // every entry above.
+   EVENT_TYPE_EXECUTION_ROLLOUT_STAGE_CHANGED,
+
+   // C5.2 Commit 1 (QA-frozen FINAL DESIGN FREEZE, same contract, §7):
+   // a MANUALLY-ISSUED emergency-stop fact, deliberately distinct from
+   // EVENT_TYPE_SAFE_MODE_ENGAGED (which fires automatically on detected
+   // integrity faults - the kill switch never does) and from a plain
+   // rollback EXECUTION_ROLLOUT_STAGE_CHANGED-to-NONE (§7.1 - the two
+   // must stay distinguishable in the durable log). Scoped to one
+   // environment_mode, named explicitly in the event - never implicitly
+   // "all". Same append-at-end rule as every entry above.
+   EVENT_TYPE_KILL_SWITCH_ENGAGED,
+
+   // C5.2 Commit 1 (QA-frozen FINAL DESIGN FREEZE, same contract, §7.2):
+   // the first of the two mandatory, independent steps to clear a kill
+   // switch. Durably records that the emergency is over; per §7.2 this
+   // ALONE restores no automation capability - a fresh, separate forward
+   // EXECUTION_ROLLOUT_STAGE_CHANGED transition starting from
+   // ROLLOUT_STAGE_NONE is still required afterward. Same append-at-end
+   // rule as every entry above.
+   EVENT_TYPE_KILL_SWITCH_CLEARED
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -425,6 +455,9 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_ENTRY_COMPATIBILITY_EVALUATED:      return "ENTRY_COMPATIBILITY_EVALUATED";
       case EVENT_TYPE_RECOVERY_RECONCILIATION_ROW_OBSERVED: return "RECOVERY_RECONCILIATION_ROW_OBSERVED";
       case EVENT_TYPE_TRAINING_DATASET_CREATED:            return "TRAINING_DATASET_CREATED";
+      case EVENT_TYPE_EXECUTION_ROLLOUT_STAGE_CHANGED:     return "EXECUTION_ROLLOUT_STAGE_CHANGED";
+      case EVENT_TYPE_KILL_SWITCH_ENGAGED:                 return "KILL_SWITCH_ENGAGED";
+      case EVENT_TYPE_KILL_SWITCH_CLEARED:                 return "KILL_SWITCH_CLEARED";
    }
    return "UNKNOWN";
 }
@@ -473,6 +506,9 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "ENTRY_COMPATIBILITY_EVALUATED")             return EVENT_TYPE_ENTRY_COMPATIBILITY_EVALUATED;
    if(s == "RECOVERY_RECONCILIATION_ROW_OBSERVED")      return EVENT_TYPE_RECOVERY_RECONCILIATION_ROW_OBSERVED;
    if(s == "TRAINING_DATASET_CREATED")                  return EVENT_TYPE_TRAINING_DATASET_CREATED;
+   if(s == "EXECUTION_ROLLOUT_STAGE_CHANGED")           return EVENT_TYPE_EXECUTION_ROLLOUT_STAGE_CHANGED;
+   if(s == "KILL_SWITCH_ENGAGED")                       return EVENT_TYPE_KILL_SWITCH_ENGAGED;
+   if(s == "KILL_SWITCH_CLEARED")                       return EVENT_TYPE_KILL_SWITCH_CLEARED;
    return EVENT_TYPE_UNKNOWN;
 }
 
@@ -529,6 +565,79 @@ ENUM_EXECUTION_ENVIRONMENT_MODE ExecutionEnvironmentModeFromString(string s)
    if(s == "DEMO")   return EXECUTION_ENV_DEMO;
    if(s == "LIVE")   return EXECUTION_ENV_LIVE;
    return EXECUTION_ENV_NONE;
+}
+
+// C5.2 Commit 1 (QA-frozen FINAL DESIGN FREEZE, Docs/PhaseC_C5_2_
+// ControlledExecutionEnvironmentLadderContract.md §3): a SEPARATE,
+// NEW dimension from ENUM_EXECUTION_ENVIRONMENT_MODE above - never an
+// extension of it, never merged into it. environment_mode is a coarse,
+// factual reflection of the real broker account's ACCOUNT_TRADE_MODE;
+// rollout_stage is an orthogonal, operator/QA-authorized automation
+// POSTURE within that real account context. The frozen 8x4 cross-
+// validity table pairing every value here against every
+// ENUM_EXECUTION_ENVIRONMENT_MODE value lives in
+// MLQuantAI_RolloutStageCrossValidity.mqh (Execution/), not here - this
+// file only defines the enum's identity/serialization, matching every
+// other enum in this file.
+enum ENUM_EXECUTION_ROLLOUT_STAGE
+{
+   ROLLOUT_STAGE_NONE,                    // no rollout state established yet - fails closed, valid under every environment_mode
+   ROLLOUT_STAGE_TEST_FIXTURE,            // C5.0/C5.1 - unchanged, Strategy Tester only
+   ROLLOUT_STAGE_DEMO_DRY_RUN,            // real candidate pipeline runs on DEMO, stops at dry-run, never reaches SUBMIT_ORDER eligibility
+   ROLLOUT_STAGE_DEMO_REAL_SUBMIT,        // DEMO, manual approval required per-submission, SUBMIT_ORDER ceremony reachable
+   ROLLOUT_STAGE_DEMO_BOUNDED_AUTOMATION, // DEMO, bounded automatic submission within frozen caps, no per-submission manual approval
+   ROLLOUT_STAGE_LIVE_SHADOW,             // LIVE account, dry-run only, never reaches SUBMIT_ORDER
+   ROLLOUT_STAGE_LIVE_MANUAL_MICRO_SIZE,  // LIVE, manual approval required, frozen micro-size cap
+   ROLLOUT_STAGE_LIVE_BOUNDED_AUTOMATION  // LIVE, bounded automatic submission within frozen caps
+};
+
+string ExecutionRolloutStageToString(ENUM_EXECUTION_ROLLOUT_STAGE s)
+{
+   switch(s)
+   {
+      case ROLLOUT_STAGE_NONE:                    return "NONE";
+      case ROLLOUT_STAGE_TEST_FIXTURE:            return "TEST_FIXTURE";
+      case ROLLOUT_STAGE_DEMO_DRY_RUN:            return "DEMO_DRY_RUN";
+      case ROLLOUT_STAGE_DEMO_REAL_SUBMIT:        return "DEMO_REAL_SUBMIT";
+      case ROLLOUT_STAGE_DEMO_BOUNDED_AUTOMATION: return "DEMO_BOUNDED_AUTOMATION";
+      case ROLLOUT_STAGE_LIVE_SHADOW:             return "LIVE_SHADOW";
+      case ROLLOUT_STAGE_LIVE_MANUAL_MICRO_SIZE:  return "LIVE_MANUAL_MICRO_SIZE";
+      case ROLLOUT_STAGE_LIVE_BOUNDED_AUTOMATION: return "LIVE_BOUNDED_AUTOMATION";
+   }
+   return "NONE";
+}
+
+ENUM_EXECUTION_ROLLOUT_STAGE ExecutionRolloutStageFromString(string s)
+{
+   if(s == "TEST_FIXTURE")            return ROLLOUT_STAGE_TEST_FIXTURE;
+   if(s == "DEMO_DRY_RUN")            return ROLLOUT_STAGE_DEMO_DRY_RUN;
+   if(s == "DEMO_REAL_SUBMIT")        return ROLLOUT_STAGE_DEMO_REAL_SUBMIT;
+   if(s == "DEMO_BOUNDED_AUTOMATION") return ROLLOUT_STAGE_DEMO_BOUNDED_AUTOMATION;
+   if(s == "LIVE_SHADOW")             return ROLLOUT_STAGE_LIVE_SHADOW;
+   if(s == "LIVE_MANUAL_MICRO_SIZE")  return ROLLOUT_STAGE_LIVE_MANUAL_MICRO_SIZE;
+   if(s == "LIVE_BOUNDED_AUTOMATION") return ROLLOUT_STAGE_LIVE_BOUNDED_AUTOMATION;
+   return ROLLOUT_STAGE_NONE;
+}
+
+// C5.2 §2 (frozen ladder order) - the SOLE source of truth for "one
+// stage forward" (§4 rule 1) and "earlier in the ladder" (rollback, §4
+// rule 3/§8). Never re-derive ladder order from the enum's raw ordinal
+// at a call site - route every ordering question through this function
+// so the ladder's order is defined in exactly one place.
+int ExecutionRolloutStageLadderIndex(ENUM_EXECUTION_ROLLOUT_STAGE s)
+{
+   switch(s)
+   {
+      case ROLLOUT_STAGE_NONE:                    return 0;
+      case ROLLOUT_STAGE_TEST_FIXTURE:            return 1;
+      case ROLLOUT_STAGE_DEMO_DRY_RUN:            return 2;
+      case ROLLOUT_STAGE_DEMO_REAL_SUBMIT:        return 3;
+      case ROLLOUT_STAGE_DEMO_BOUNDED_AUTOMATION: return 4;
+      case ROLLOUT_STAGE_LIVE_SHADOW:             return 5;
+      case ROLLOUT_STAGE_LIVE_MANUAL_MICRO_SIZE:  return 6;
+      case ROLLOUT_STAGE_LIVE_BOUNDED_AUTOMATION: return 7;
+   }
+   return 0;
 }
 
 // Phase C1.2: SafetyGate_Evaluate's own verdict - deliberately not a
