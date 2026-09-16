@@ -64,6 +64,10 @@
 #include <MLQuantAI/Execution/MLQuantAI_CeremonyCommandMailbox.mqh>
 #include <MLQuantAI/Infrastructure/EventStore/MLQuantAI_CeremonyCommandEventEmission.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_EntryCompatibilityDiagnosticEmission.mqh>
+// RA-62 Slice 2 (QA-frozen Outcome Labeling Engine V1): the pure
+// RECORD_REALIZED_OUTCOME orchestration logic - see the file's own header
+// for the exact sealed functions it calls and never modifies.
+#include <MLQuantAI/Execution/MLQuantAI_RealizedOutcomeCommandHandler.mqh>
 
 input group "=== System ==="
 input bool   DebugMode                   = false;
@@ -1010,6 +1014,48 @@ void GrantManualApprovalCommand(CeremonyCommand &cmd)
                           cmd.command_id, rec.execution_request_id, cmd.approver_identity, TimeToString(grant.approval_expiry, TIME_DATE|TIME_SECONDS)));
 }
 
+// RECORD_REALIZED_OUTCOME (RA-62 Slice 2, QA-frozen Outcome Labeling
+// Engine V1): thin wrapper only - all real decision logic lives in
+// RecordRealizedOutcomeCommand_Process() (MLQuantAI_RealizedOutcome
+// CommandHandler.mqh), which is directly unit-testable in isolation with
+// fabricated CandidateProjection/RealizedOutcomeProjection state. This
+// function's only job is translating that pure result into the ceremony
+// command response protocol (CeremonyCommand_Fail/Complete) and logging
+// the externally-supplied provenance JSON verbatim (never re-serialized)
+// into this command's own durable CEREMONY_COMMAND_STATE_CHANGED line.
+// Never reaches BrokerSubmission_Submit()/OrderSend() - no execution
+// authority added. Never calls RealizedOutcome_Build()/RealizedOutcome_
+// EmitTradeOutcomeLabeled() itself - both stay sealed, called only from
+// inside the already-tested handler function.
+void RecordRealizedOutcomeCommand(CeremonyCommand &cmd)
+{
+   EventStore_LogCeremonyCommandState(cmd.command_id, cmd.command_type,
+                                       CEREMONY_STATE_COMMAND_RECEIVED, CEREMONY_STATE_CEREMONY_IN_PROGRESS,
+                                       "processing", "", cmd.outcome_provenance_json);
+
+   RecordOutcomeCommandResult result;
+   RecordRealizedOutcomeCommand_Process(cmd.target_candidate_id, cmd.outcome_label, cmd.outcome_reference,
+                                          cmd.outcome_hash, cmd.outcome_time, result);
+
+   if(result.status == RECORD_OUTCOME_RESULT_CANDIDATE_NOT_FOUND)
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "candidate_not_found", ""); return; }
+   if(result.status == RECORD_OUTCOME_RESULT_VALIDATION_FAILED)
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "validation_failed", result.reason_detail); return; }
+   if(result.status == RECORD_OUTCOME_RESULT_EMIT_FAILED)
+   { CeremonyCommand_Fail(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, "emit_durable_write_failed", ""); return; }
+
+   // RECORDED or ALREADY_RECORDED - both terminal, success-like, never
+   // FAILED. The reason string ("recorded" vs "already_recorded") is what
+   // lets a caller tell a fresh write apart from the sealed emitter's own
+   // idempotency guard firing (QA's frozen requirement 4).
+   cmd.result_realized_outcome_id = result.realized_outcome_id;
+   CeremonyCommand_Complete(cmd, CEREMONY_STATE_CEREMONY_IN_PROGRESS, CEREMONY_STATE_OUTCOME_RECORDED,
+                             RecordOutcomeResultToString(result.status), "");
+
+   LogInfo(StringFormat("RA-62 RECORD_REALIZED_OUTCOME: command_id=%s target_candidate_id=%s status=%s realized_outcome_id=%s",
+                          cmd.command_id, cmd.target_candidate_id, RecordOutcomeResultToString(result.status), result.realized_outcome_id));
+}
+
 // SUBMIT_ORDER: the ONLY command type authorized to reach
 // BrokerSubmission_Submit()/OrderSend() - still requires QA's separate
 // EMP-01 authorization before an operator is allowed to issue it (a
@@ -1283,6 +1329,7 @@ void RA31_ProcessCeremonyCommand(string trigger)
       case CEREMONY_COMMAND_TYPE_GRANT_MANUAL_APPROVAL:    GrantManualApprovalCommand(cmd);   break;
       case CEREMONY_COMMAND_TYPE_SUBMIT_ORDER:             SubmitOrderCommand(cmd);           break;
       case CEREMONY_COMMAND_TYPE_EVALUATE_ENTRY_COMPATIBILITY: EvaluateEntryCompatibilityCommand(cmd); break;
+      case CEREMONY_COMMAND_TYPE_RECORD_REALIZED_OUTCOME: RecordRealizedOutcomeCommand(cmd); break;
       default:
          CeremonyCommand_Fail(cmd, CEREMONY_STATE_COMMAND_RECEIVED, "unhandled_command_type", "");
          break;

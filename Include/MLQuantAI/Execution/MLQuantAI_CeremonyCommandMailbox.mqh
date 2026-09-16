@@ -76,7 +76,15 @@ enum ENUM_CEREMONY_COMMAND_TYPE
    // request field added for this command type. Never reaches
    // BrokerSubmission_Submit()/OrderSend() - see
    // MLQuantAI_EntryCompatibilityDiagnosticEmission.mqh.
-   CEREMONY_COMMAND_TYPE_EVALUATE_ENTRY_COMPATIBILITY
+   CEREMONY_COMMAND_TYPE_EVALUATE_ENTRY_COMPATIBILITY,
+
+   // RA-62 Slice 2 (QA-frozen Outcome Labeling Engine V1): records one
+   // RealizedOutcome for an existing candidate, sourced from an external,
+   // fixed historical-data labeling process (never live MT5 history, never
+   // computed by this command itself - see MLQuantAI_RealizedOutcome
+   // CommandHandler.mqh's own header). Never reaches BrokerSubmission_
+   // Submit()/OrderSend() - no execution authority added.
+   CEREMONY_COMMAND_TYPE_RECORD_REALIZED_OUTCOME
 };
 
 string CeremonyCommandType_ToString(ENUM_CEREMONY_COMMAND_TYPE t)
@@ -87,6 +95,7 @@ string CeremonyCommandType_ToString(ENUM_CEREMONY_COMMAND_TYPE t)
       case CEREMONY_COMMAND_TYPE_GRANT_MANUAL_APPROVAL:    return "GRANT_MANUAL_APPROVAL";
       case CEREMONY_COMMAND_TYPE_SUBMIT_ORDER:             return "SUBMIT_ORDER";
       case CEREMONY_COMMAND_TYPE_EVALUATE_ENTRY_COMPATIBILITY: return "EVALUATE_ENTRY_COMPATIBILITY";
+      case CEREMONY_COMMAND_TYPE_RECORD_REALIZED_OUTCOME: return "RECORD_REALIZED_OUTCOME";
    }
    return "UNKNOWN";
 }
@@ -97,6 +106,7 @@ ENUM_CEREMONY_COMMAND_TYPE CeremonyCommandType_FromString(string s)
    if(s == "GRANT_MANUAL_APPROVAL")    return CEREMONY_COMMAND_TYPE_GRANT_MANUAL_APPROVAL;
    if(s == "SUBMIT_ORDER")             return CEREMONY_COMMAND_TYPE_SUBMIT_ORDER;
    if(s == "EVALUATE_ENTRY_COMPATIBILITY") return CEREMONY_COMMAND_TYPE_EVALUATE_ENTRY_COMPATIBILITY;
+   if(s == "RECORD_REALIZED_OUTCOME") return CEREMONY_COMMAND_TYPE_RECORD_REALIZED_OUTCOME;
    return CEREMONY_COMMAND_TYPE_UNKNOWN;
 }
 
@@ -166,6 +176,22 @@ struct CeremonyCommand
    string                       approver_identity;                // GRANT_MANUAL_APPROVAL only
    int                          approval_validity_minutes;        // GRANT_MANUAL_APPROVAL only
 
+   // RA-62 Slice 2 (additive - QA-frozen): RECORD_REALIZED_OUTCOME only.
+   // outcome_label/outcome_reference/outcome_hash/outcome_time are passed
+   // through verbatim to RealizedOutcome_Build() - never recomputed by the
+   // EA. outcome_provenance_json is an opaque, pre-canonicalized string
+   // supplied by the external labeling process - echoed verbatim into this
+   // command's own CEREMONY_COMMAND_STATE_CHANGED extraJson for durable
+   // audit visibility, never re-serialized/reformatted here (reformatting
+   // would risk silently changing the canonical bytes the external
+   // outcome_hash was computed over).
+   string                       target_candidate_id;
+   string                       outcome_label;
+   string                       outcome_reference;
+   string                       outcome_hash;
+   datetime                     outcome_time;
+   string                       outcome_provenance_json;
+
    // --- response (EA) ---
    ENUM_CEREMONY_MAILBOX_STATUS mailbox_status;
    string                       result_reason_code;
@@ -189,6 +215,13 @@ struct CeremonyCommand
    double                       result_risk_divergence_pct;
    int                          result_directional_constraint_ok;  // 0/1
    string                       result_gate_decision;               // "ACCEPTED"/"REJECTED"
+
+   // RA-62 Slice 2 (additive - QA-frozen): result field for
+   // RECORD_REALIZED_OUTCOME only. Every pre-existing field above is
+   // unchanged in meaning/serialization. result_reason_code (pre-existing
+   // field) carries "recorded"/"already_recorded"/"candidate_not_found"/
+   // "validation_failed"/"emit_durable_write_failed" for this command type.
+   string                       result_realized_outcome_id;
 };
 
 void CeremonyCommand_Init(CeremonyCommand &c)
@@ -203,6 +236,12 @@ void CeremonyCommand_Init(CeremonyCommand &c)
    c.target_execution_request_id    = "";
    c.approver_identity              = "";
    c.approval_validity_minutes      = 0;
+   c.target_candidate_id            = "";
+   c.outcome_label                  = "";
+   c.outcome_reference              = "";
+   c.outcome_hash                   = "";
+   c.outcome_time                   = 0;
+   c.outcome_provenance_json        = "";
    c.mailbox_status                 = CEREMONY_MAILBOX_STATUS_UNKNOWN;
    c.result_reason_code             = "";
    c.result_message                 = "";
@@ -222,6 +261,7 @@ void CeremonyCommand_Init(CeremonyCommand &c)
    c.result_risk_divergence_pct       = 0.0;
    c.result_directional_constraint_ok = 0;
    c.result_gate_decision             = "";
+   c.result_realized_outcome_id       = "";
 }
 
 string CeremonyCommand_ToJson(const CeremonyCommand &c)
@@ -237,6 +277,12 @@ string CeremonyCommand_ToJson(const CeremonyCommand &c)
    s += "\"target_execution_request_id\":\""    + EventSerializer_Escape(c.target_execution_request_id) + "\",";
    s += "\"approver_identity\":\""              + EventSerializer_Escape(c.approver_identity) + "\",";
    s += "\"approval_validity_minutes\":"        + IntegerToString(c.approval_validity_minutes) + ",";
+   s += "\"target_candidate_id\":\""            + EventSerializer_Escape(c.target_candidate_id) + "\",";
+   s += "\"outcome_label\":\""                  + EventSerializer_Escape(c.outcome_label) + "\",";
+   s += "\"outcome_reference\":\""              + EventSerializer_Escape(c.outcome_reference) + "\",";
+   s += "\"outcome_hash\":\""                   + EventSerializer_Escape(c.outcome_hash) + "\",";
+   s += "\"outcome_time\":\""                   + TimeToString(c.outcome_time, TIME_DATE|TIME_SECONDS) + "\",";
+   s += "\"outcome_provenance_json\":\""        + EventSerializer_Escape(c.outcome_provenance_json) + "\",";
    s += "\"mailbox_status\":\""                 + EventSerializer_Escape(CeremonyMailboxStatus_ToString(c.mailbox_status)) + "\",";
    s += "\"result_reason_code\":\""             + EventSerializer_Escape(c.result_reason_code) + "\",";
    s += "\"result_message\":\""                 + EventSerializer_Escape(c.result_message) + "\",";
@@ -254,7 +300,8 @@ string CeremonyCommand_ToJson(const CeremonyCommand &c)
    s += "\"result_realized_risk_money\":"       + CanonicalDouble(c.result_realized_risk_money) + ",";
    s += "\"result_risk_divergence_pct\":"       + CanonicalDouble(c.result_risk_divergence_pct) + ",";
    s += "\"result_directional_constraint_ok\":" + IntegerToString(c.result_directional_constraint_ok) + ",";
-   s += "\"result_gate_decision\":\""           + EventSerializer_Escape(c.result_gate_decision) + "\"";
+   s += "\"result_gate_decision\":\""           + EventSerializer_Escape(c.result_gate_decision) + "\",";
+   s += "\"result_realized_outcome_id\":\""     + EventSerializer_Escape(c.result_realized_outcome_id) + "\"";
    s += "}";
    return s;
 }
@@ -272,6 +319,12 @@ void CeremonyCommand_FromJson(string json, CeremonyCommand &out)
    out.target_execution_request_id    = EventSerializer_GetStr(json, "target_execution_request_id");
    out.approver_identity              = EventSerializer_GetStr(json, "approver_identity");
    out.approval_validity_minutes      = EventSerializer_GetInt(json, "approval_validity_minutes");
+   out.target_candidate_id            = EventSerializer_GetStr(json, "target_candidate_id");
+   out.outcome_label                  = EventSerializer_GetStr(json, "outcome_label");
+   out.outcome_reference              = EventSerializer_GetStr(json, "outcome_reference");
+   out.outcome_hash                   = EventSerializer_GetStr(json, "outcome_hash");
+   out.outcome_time                   = StringToTime(EventSerializer_GetStr(json, "outcome_time"));
+   out.outcome_provenance_json        = EventSerializer_GetStr(json, "outcome_provenance_json");
    out.mailbox_status                 = CeremonyMailboxStatus_FromString(EventSerializer_GetStr(json, "mailbox_status"));
    out.result_reason_code             = EventSerializer_GetStr(json, "result_reason_code");
    out.result_message                 = EventSerializer_GetStr(json, "result_message");
@@ -290,6 +343,7 @@ void CeremonyCommand_FromJson(string json, CeremonyCommand &out)
    out.result_risk_divergence_pct       = EventSerializer_GetDouble(json, "result_risk_divergence_pct");
    out.result_directional_constraint_ok = EventSerializer_GetInt(json, "result_directional_constraint_ok");
    out.result_gate_decision             = EventSerializer_GetStr(json, "result_gate_decision");
+   out.result_realized_outcome_id       = EventSerializer_GetStr(json, "result_realized_outcome_id");
 }
 
 //---------------------------------------------------------------------

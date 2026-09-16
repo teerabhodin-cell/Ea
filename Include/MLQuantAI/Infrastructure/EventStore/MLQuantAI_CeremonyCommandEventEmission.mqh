@@ -65,7 +65,17 @@ enum ENUM_CEREMONY_COMMAND_STATE
    // ENTRY_COMPATIBILITY_EVALUATED event's own gate_result field, not
    // encoded as a separate command state - same convention as
    // APPROVAL_RECORDED.
-   CEREMONY_STATE_ENTRY_COMPATIBILITY_EVALUATED
+   CEREMONY_STATE_ENTRY_COMPATIBILITY_EVALUATED,
+
+   // RA-62 Slice 2 (QA-frozen): terminal state for RECORD_REALIZED_OUTCOME
+   // only. Reached directly from COMMAND_RECEIVED via CEREMONY_IN_PROGRESS,
+   // covering BOTH a fresh durable write and an idempotent "already
+   // recorded" no-op - which of the two happened is carried in the
+   // TRADE_OUTCOME_LABELED-adjacent CEREMONY_COMMAND_STATE_CHANGED line's
+   // own reason field ("recorded" vs "already_recorded"), never encoded as
+   // a separate command state - same convention CEREMONY_STATE_APPROVAL_
+   // RECORDED/CEREMONY_STATE_ENTRY_COMPATIBILITY_EVALUATED already use.
+   CEREMONY_STATE_OUTCOME_RECORDED
 };
 
 string CeremonyCommandState_ToString(ENUM_CEREMONY_COMMAND_STATE s)
@@ -82,6 +92,7 @@ string CeremonyCommandState_ToString(ENUM_CEREMONY_COMMAND_STATE s)
       case CEREMONY_STATE_OBSERVATION_COMPLETE:   return "OBSERVATION_COMPLETE";
       case CEREMONY_STATE_COMMAND_FAILED:         return "COMMAND_FAILED";
       case CEREMONY_STATE_ENTRY_COMPATIBILITY_EVALUATED: return "ENTRY_COMPATIBILITY_EVALUATED";
+      case CEREMONY_STATE_OUTCOME_RECORDED:       return "OUTCOME_RECORDED";
    }
    return "UNKNOWN";
 }
@@ -98,6 +109,7 @@ ENUM_CEREMONY_COMMAND_STATE CeremonyCommandState_FromString(string s)
    if(s == "OBSERVATION_COMPLETE")   return CEREMONY_STATE_OBSERVATION_COMPLETE;
    if(s == "COMMAND_FAILED")         return CEREMONY_STATE_COMMAND_FAILED;
    if(s == "ENTRY_COMPATIBILITY_EVALUATED") return CEREMONY_STATE_ENTRY_COMPATIBILITY_EVALUATED;
+   if(s == "OUTCOME_RECORDED")       return CEREMONY_STATE_OUTCOME_RECORDED;
    return CEREMONY_STATE_UNKNOWN;
 }
 
@@ -109,7 +121,8 @@ bool CeremonyCommandState_IsTerminal(ENUM_CEREMONY_COMMAND_STATE s)
 {
    return s == CEREMONY_STATE_COMMAND_REJECTED || s == CEREMONY_STATE_APPROVAL_RECORDED
        || s == CEREMONY_STATE_OBSERVATION_COMPLETE || s == CEREMONY_STATE_COMMAND_FAILED
-       || s == CEREMONY_STATE_ENTRY_COMPATIBILITY_EVALUATED;
+       || s == CEREMONY_STATE_ENTRY_COMPATIBILITY_EVALUATED
+       || s == CEREMONY_STATE_OUTCOME_RECORDED;
 }
 
 //---------------------------------------------------------------------
