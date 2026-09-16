@@ -24,6 +24,7 @@
 #include <MLQuantAI/Execution/MLQuantAI_BrokerSubmissionAuditReadiness.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_ManualApprovalReadiness.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_BrokerTransactionObservation.mqh>
+#include <MLQuantAI/Execution/MLQuantAI_PositionExitObservation.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_TransactionMatchingReadiness.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_DeferredTransactionProcessor.mqh>
 #include <MLQuantAI/Execution/MLQuantAI_AsyncTerminalOrderObservationMatcher.mqh>
@@ -1376,9 +1377,22 @@ void OnDeinit(const int reason)
 // failure instead of retrying. No history/position/order query, no
 // candidate-lifecycle transition, no broker mutation - anywhere in this
 // call chain.
+//
+// RA-65 Slice 2 (QA-frozen ordering, corrected per pre-push diff audit):
+// PositionExitObservation_Handle() (Execution/MLQuantAI_PositionExitObservation.mqh)
+// runs SECOND, and ONLY when the observation call above actually returned
+// true - this order is frozen and must never be reversed, and a failed
+// observation (Safe Mode already tripped by that call) must never be
+// followed by an attempt to resolve/emit a POSITION_CLOSED for the same
+// transaction. It resolves R3 provenance, classifies FULL/PARTIAL, and
+// emits POSITION_CLOSED only for a provenance-resolved, reducing deal;
+// every unresolved/ambiguous/non-reducing case is a silent no-op by
+// design, never a Safe Mode trip.
 void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest &request, const MqlTradeResult &result)
 {
-   BrokerTransactionObservation_RecordAndGuard(trans, request, result);
+   bool observed = BrokerTransactionObservation_RecordAndGuard(trans, request, result);
+   if(observed)
+      PositionExitObservation_Handle(trans);
 }
 
 void OnTick()
