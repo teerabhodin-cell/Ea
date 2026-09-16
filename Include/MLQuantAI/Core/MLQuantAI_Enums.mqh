@@ -368,7 +368,15 @@ enum ENUM_EVENT_TYPE
    // OBSERVED (no ticket/retcode top-level shape) so no parser/replay can
    // mistake this for L3 (QA condition AC-8). Same append-at-end rule as
    // every entry above.
-   EVENT_TYPE_RECOVERY_RECONCILIATION_ROW_OBSERVED
+   EVENT_TYPE_RECOVERY_RECONCILIATION_ROW_OBSERVED,
+
+   // B8.6 Commit 1 (QA-frozen, Docs/PhaseB_B8_6_
+   // ModelTrainingInferenceIntegrationContract.md §5): one durable
+   // TrainingDatasetManifestRecord - the identity/provenance evidence of
+   // one training-dataset export (TRAINING-ELIGIBLE population only, per
+   // §3.0). Never a candidate/broker/execution fact of any kind. Same
+   // append-at-end rule as every entry above.
+   EVENT_TYPE_TRAINING_DATASET_CREATED
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -416,6 +424,7 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_BROKER_TRANSACTION_RECOVERED_FROM_HISTORY: return "BROKER_TRANSACTION_RECOVERED_FROM_HISTORY";
       case EVENT_TYPE_ENTRY_COMPATIBILITY_EVALUATED:      return "ENTRY_COMPATIBILITY_EVALUATED";
       case EVENT_TYPE_RECOVERY_RECONCILIATION_ROW_OBSERVED: return "RECOVERY_RECONCILIATION_ROW_OBSERVED";
+      case EVENT_TYPE_TRAINING_DATASET_CREATED:            return "TRAINING_DATASET_CREATED";
    }
    return "UNKNOWN";
 }
@@ -463,6 +472,7 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "BROKER_TRANSACTION_RECOVERED_FROM_HISTORY") return EVENT_TYPE_BROKER_TRANSACTION_RECOVERED_FROM_HISTORY;
    if(s == "ENTRY_COMPATIBILITY_EVALUATED")             return EVENT_TYPE_ENTRY_COMPATIBILITY_EVALUATED;
    if(s == "RECOVERY_RECONCILIATION_ROW_OBSERVED")      return EVENT_TYPE_RECOVERY_RECONCILIATION_ROW_OBSERVED;
+   if(s == "TRAINING_DATASET_CREATED")                  return EVENT_TYPE_TRAINING_DATASET_CREATED;
    return EVENT_TYPE_UNKNOWN;
 }
 

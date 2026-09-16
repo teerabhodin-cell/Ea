@@ -99,6 +99,30 @@ bool RealizedOutcomeProjection_GetAt(int index, RealizedOutcomeProjectionRecord 
    return true;
 }
 
+// B8.6 Commit 1 (QA-frozen Class 2 additive amendment, Docs/PhaseB_B8_6_
+// ModelTrainingInferenceIntegrationContract.md §3.2): additive alongside
+// RealizedOutcomeProjection_TryGet() above (realized_outcome_id-keyed,
+// unchanged), never replacing it. Looks up by (candidate_id,
+// label_schema_version) - the same pair realized_outcome_id is itself
+// deterministically derived from (RA-62, sealed), so at most one match can
+// legitimately exist; this performs a plain linear scan and returns the
+// first (and, by that same sealed determinism, only) match, never an
+// ambiguity check of its own - RA-62's own idempotency/collision guard in
+// RealizedOutcomeProjection_ApplyLine already structurally prevents two
+// DIFFERENT records from ever sharing one (candidate_id,
+// label_schema_version) pair.
+bool RealizedOutcomeProjection_TryGetByCandidateId(string candidateId, string labelSchemaVersion, RealizedOutcomeProjectionRecord &out)
+{
+   for(int i = 0; i < g_RealizedOutcomeProj_Count; i++)
+   {
+      if(g_RealizedOutcomeProj_Records[i].candidate_id != candidateId) continue;
+      if(g_RealizedOutcomeProj_Records[i].label_schema_version != labelSchemaVersion) continue;
+      out = g_RealizedOutcomeProj_Records[i];
+      return true;
+   }
+   return false;
+}
+
 void RealizedOutcomeProjection_AppendRecord(const RealizedOutcomeProjectionRecord &rec)
 {
    int idx = g_RealizedOutcomeProj_Count;

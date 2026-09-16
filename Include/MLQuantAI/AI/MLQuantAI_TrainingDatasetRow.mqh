@@ -57,6 +57,15 @@ struct TrainingDatasetRow
    string outcome_reference;  // "" when label_available == false
    string outcome_hash;       // "" when label_available == false
 
+   // B8.6 Commit 1 (QA-frozen Class 2 additive amendment, Docs/
+   // PhaseB_B8_6_ModelTrainingInferenceIntegrationContract.md §3.3):
+   // pure provenance - the RealizedOutcome record this row's label was
+   // joined from. "" when label_available == false. Does not change
+   // row_hash's payload (TrainingDatasetRow_HashPayload, below,
+   // unmodified) - this field is audit trail only, not row content
+   // identity.
+   string label_source_realized_outcome_id;
+
    ENUM_DATASET_SPLIT split;
    string split_policy_version;
    string model_target;
@@ -87,6 +96,7 @@ void TrainingDatasetRow_Init(TrainingDatasetRow &r)
    r.label = "";
    r.outcome_reference = "";
    r.outcome_hash = "";
+   r.label_source_realized_outcome_id = "";
 
    r.split = DATASET_SPLIT_TRAIN;
    r.split_policy_version = "";
