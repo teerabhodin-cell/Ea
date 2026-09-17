@@ -51,13 +51,19 @@ void OnStart()
          "TEST_FIXTURE is reject under ENV_DEMO -> REJECTED_ENVIRONMENT_INVALID, even though the pair itself (§6.0) is implemented");
 
    //=====================================================================
-   // 4. §6.2 (DEMO_DRY_RUN -> DEMO_REAL_SUBMIT) has FROZEN CRITERIA, but
-   //    this commit does not implement the evidence-checking mechanism -
-   //    must be refused fail-closed, never silently allowed.
+   // 4. §6.2 (DEMO_DRY_RUN -> DEMO_REAL_SUBMIT): UPDATED per the §6.2
+   //    Evidence-Gate Design Contract Rev.8 implementation (QA
+   //    Implementation Authorization, 2026-09-17) - the evaluator
+   //    mechanism this test originally asserted as "deferred" now exists
+   //    (MLQuantAI_RolloutGateReadinessEvaluate.mqh), so this pure core
+   //    now returns ALLOWED_FORWARD for this pair, unconditionally, same
+   //    as §6.0. The actual evidence check happens one layer up, in
+   //    RolloutStageTransitionCommand_Process (§7 Authority Boundary) -
+   //    this pure function was never where that check could live.
    //=====================================================================
-   Print("--- §6.2 DEMO_DRY_RUN -> DEMO_REAL_SUBMIT, valid environment -> REJECTED_CRITERIA_NOT_FROZEN (mechanism deferred) ---");
-   Check(RolloutStageTransition_Evaluate(ROLLOUT_STAGE_DEMO_DRY_RUN, ROLLOUT_STAGE_DEMO_REAL_SUBMIT, EXECUTION_ENV_DEMO) == ROLLOUT_TRANSITION_REJECTED_CRITERIA_NOT_FROZEN,
-         "§6.2 criteria are frozen, but the evaluator mechanism itself is future work per the contract's own §6 text - refused fail-closed");
+   Print("--- §6.2 DEMO_DRY_RUN -> DEMO_REAL_SUBMIT, valid environment -> ALLOWED_FORWARD (evaluator mechanism now implemented) ---");
+   Check(RolloutStageTransition_Evaluate(ROLLOUT_STAGE_DEMO_DRY_RUN, ROLLOUT_STAGE_DEMO_REAL_SUBMIT, EXECUTION_ENV_DEMO) == ROLLOUT_TRANSITION_ALLOWED_FORWARD,
+         "§6.2 evaluator mechanism now implemented (RolloutGateReadiness_Evaluate, called one layer up) - this pure core returns ALLOWED_FORWARD for this pair");
 
    //=====================================================================
    // 5. Every other forward pair (§6.1/§6.3/§6.4/§6.5/§6.6) is refused too.
@@ -110,10 +116,10 @@ void OnStart()
    // 9. RolloutStageTransition_IsForwardPairImplemented - direct spot
    //    checks matching the evaluator's own behavior above.
    //=====================================================================
-   Print("--- IsForwardPairImplemented: only NONE -> TEST_FIXTURE (§6.0) is true ---");
+   Print("--- IsForwardPairImplemented: NONE -> TEST_FIXTURE (§6.0) and DEMO_DRY_RUN -> DEMO_REAL_SUBMIT (§6.2) are true ---");
    Check(RolloutStageTransition_IsForwardPairImplemented(ROLLOUT_STAGE_NONE, ROLLOUT_STAGE_TEST_FIXTURE) == true, "NONE -> TEST_FIXTURE -> true");
    Check(RolloutStageTransition_IsForwardPairImplemented(ROLLOUT_STAGE_TEST_FIXTURE, ROLLOUT_STAGE_DEMO_DRY_RUN) == false, "TEST_FIXTURE -> DEMO_DRY_RUN -> false (§6.1)");
-   Check(RolloutStageTransition_IsForwardPairImplemented(ROLLOUT_STAGE_DEMO_DRY_RUN, ROLLOUT_STAGE_DEMO_REAL_SUBMIT) == false, "DEMO_DRY_RUN -> DEMO_REAL_SUBMIT -> false (§6.2, mechanism deferred)");
+   Check(RolloutStageTransition_IsForwardPairImplemented(ROLLOUT_STAGE_DEMO_DRY_RUN, ROLLOUT_STAGE_DEMO_REAL_SUBMIT) == true, "DEMO_DRY_RUN -> DEMO_REAL_SUBMIT -> true (§6.2, evaluator mechanism now implemented)");
 
    //=====================================================================
    // 10. RolloutTransitionResult_IsAllowed - convenience predicate.

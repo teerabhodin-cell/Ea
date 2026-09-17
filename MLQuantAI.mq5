@@ -613,6 +613,19 @@ int OnInit()
                             g_C52SessionState.kill_switch_active ? "true" : "false"));
    }
 
+   // §6.2 Evidence-Gate Design Contract Rev.8 §7.2 (QA Implementation
+   // Authorization, 2026-09-17): the OnInit establishment contract -
+   // called strictly AFTER EventStore_Open()/replay above already
+   // succeeded, the filesystem is provably healthy right here. Any
+   // non-ESTABLISHED result only suspends §6.2 evaluation capability for
+   // the whole session (RolloutGateReadiness_Evaluate's own §7.2 gate,
+   // read via g_C62SessionEstablishmentResult) - it can never fail EA
+   // initialization or affect any other checkpoint's behavior.
+   {
+      ENUM_C62_SESSION_ESTABLISHMENT_RESULT c62Result = C62_EstablishSession();
+      LogInfo("§6.2/§7.2: session establishment result = " + C62SessionEstablishmentResultToString(c62Result));
+   }
+
    // C3.6 deferred-transaction-processor (per
    // Docs/PhaseC_C3_6_DeferredTransactionProcessorContract.md, FROZEN):
    // a read-only RECOMMENDATION read model. Turns the already-sealed
@@ -1498,6 +1511,12 @@ void OnDeinit(const int reason)
 {
    EventKillTimer(); // RA-32.1: stop the wall-clock command-poll timer - no orphan timer survives this EA instance
    EventStore_LogSystem(EventTypeToString(EVENT_TYPE_SYSTEM_STOPPED), "EA deinit, reason=" + IntegerToString(reason));
+   // §6.2 Evidence-Gate Design Contract Rev.8 §7.2: clears the proactive
+   // session marker ONLY on an ordinary shutdown (the function itself
+   // checks g_C62IntegrityFatalHalt==false, an internal no-op otherwise -
+   // deliberately NOT cleared on an incident, which is the signal the
+   // next OnInit's own C62_EstablishSession() call reads).
+   C62_ClearSessionActiveMarkerOnCleanShutdown();
    EventStore_Close();
    FeatureEngine_Deinit();
    Comment("");

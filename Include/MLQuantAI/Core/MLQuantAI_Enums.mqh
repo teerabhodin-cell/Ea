@@ -406,7 +406,20 @@ enum ENUM_EVENT_TYPE
    // EXECUTION_ROLLOUT_STAGE_CHANGED transition starting from
    // ROLLOUT_STAGE_NONE is still required afterward. Same append-at-end
    // rule as every entry above.
-   EVENT_TYPE_KILL_SWITCH_CLEARED
+   EVENT_TYPE_KILL_SWITCH_CLEARED,
+
+   // §6.2 Evidence-Gate Design Contract Rev.8 (QA-frozen DESIGN FREEZE,
+   // Docs/PhaseC_C5_2_Section6_2_EvidenceGateDesignContract.md §2/P4b,
+   // §7.2): the ONE durable restart-evidence marker P4b's evaluator
+   // reads, emitted from exactly one place - MLQuantAI.mq5's own
+   // OnInit(), after EventStore_Open()/replay succeeds. Deliberately a
+   // DIFFERENT event type from the pre-existing EVENT_TYPE_SYSTEM_STARTED
+   // (QA's explicit decision during Implementation Authorization,
+   // 2026-09-17: SYSTEM_STARTED is not repurposed as §6.2 evidence, to
+   // avoid silently amending the frozen Rev.8 contract) - carries only
+   // the base envelope's own runtime_session_id, no extra_json fields of
+   // its own. Same append-at-end rule as every entry above.
+   EVENT_TYPE_EA_SESSION_STARTED
 };
 
 string EventTypeToString(ENUM_EVENT_TYPE t)
@@ -458,6 +471,7 @@ string EventTypeToString(ENUM_EVENT_TYPE t)
       case EVENT_TYPE_EXECUTION_ROLLOUT_STAGE_CHANGED:     return "EXECUTION_ROLLOUT_STAGE_CHANGED";
       case EVENT_TYPE_KILL_SWITCH_ENGAGED:                 return "KILL_SWITCH_ENGAGED";
       case EVENT_TYPE_KILL_SWITCH_CLEARED:                 return "KILL_SWITCH_CLEARED";
+      case EVENT_TYPE_EA_SESSION_STARTED:                  return "EA_SESSION_STARTED";
    }
    return "UNKNOWN";
 }
@@ -509,6 +523,7 @@ ENUM_EVENT_TYPE EventTypeFromString(string s)
    if(s == "EXECUTION_ROLLOUT_STAGE_CHANGED")           return EVENT_TYPE_EXECUTION_ROLLOUT_STAGE_CHANGED;
    if(s == "KILL_SWITCH_ENGAGED")                       return EVENT_TYPE_KILL_SWITCH_ENGAGED;
    if(s == "KILL_SWITCH_CLEARED")                       return EVENT_TYPE_KILL_SWITCH_CLEARED;
+   if(s == "EA_SESSION_STARTED")                        return EVENT_TYPE_EA_SESSION_STARTED;
    return EVENT_TYPE_UNKNOWN;
 }
 

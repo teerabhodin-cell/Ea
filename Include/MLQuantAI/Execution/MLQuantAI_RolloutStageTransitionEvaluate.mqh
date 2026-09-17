@@ -19,14 +19,15 @@
 //|   3. A regression (§4 rule 3/§8, rollback) is always permitted immediately,             |
 //|      evidence-free, multi-step-at-once permitted.                                        |
 //|   4. Acceptance criteria are checked PER TRANSITION PAIR, never as one lump                |
-//|      bucket (§6). Only §6.0 (NONE->TEST_FIXTURE, trivial) is both frozen AND                |
-//|      has an implemented evaluator in this commit. §6.2 (DEMO_DRY_RUN->                        |
-//|      DEMO_REAL_SUBMIT) has FROZEN CRITERIA but the frozen contract's own §6                     |
-//|      text explicitly defers the evidence-checking MECHANISM itself to a                          |
-//|      future, separately authorized/reviewed commit - so it is refused                              |
-//|      fail-closed here too, exactly like §6.1/§6.3-§6.6 (not yet frozen at                            |
-//|      all). "Criteria not yet defined" is never treated as "criteria                                    |
-//|      satisfied" (§6's own frozen structural rule).                                                        |
+//|      bucket (§6). §6.0 (NONE->TEST_FIXTURE, trivial) and, as of the §6.2                     |
+//|      Evidence-Gate Design Contract Rev.8 implementation (QA Implementation                     |
+//|      Authorization, 2026-09-17), §6.2 (DEMO_DRY_RUN->DEMO_REAL_SUBMIT), both                      |
+//|      now have an implemented evaluator - see                                                        |
+//|      MLQuantAI_RolloutGateReadinessEvaluate.mqh for §6.2's own evidence-                                |
+//|      checking mechanism, called one layer above this pure decision core.                                  |
+//|      §6.1/§6.3-§6.6 remain refused fail-closed - not yet frozen at all.                                     |
+//|      "Criteria not yet defined" is never treated as "criteria satisfied"                                     |
+//|      (§6's own frozen structural rule).                                                                        |
 //|                                                                                                              |
 //| Pure: no EventStore write, no live MT5 API, no Safe Mode, no OrderSend, no                                    |
 //| candidate-lifecycle authority. This file only ever decides ALLOW/REJECT for                                    |
@@ -70,16 +71,28 @@ bool RolloutTransitionResult_IsAllowed(ENUM_ROLLOUT_TRANSITION_RESULT r)
 }
 
 // §6's frozen per-transition structure: only pairs with BOTH a frozen
-// criteria set AND an implemented evaluator return true here. See this
-// file's own header for why §6.2 is deliberately NOT yet enabled despite
-// having frozen criteria - its evidence-checking mechanism remains
-// future, separately authorized work.
+// criteria set AND an implemented evaluator return true here.
+//
+// §6.2 (DEMO_DRY_RUN -> DEMO_REAL_SUBMIT), Class 2 additive amendment,
+// QA Implementation Authorization (2026-09-17): the evidence-checking
+// mechanism this file's own header once called "future, separately
+// authorized work" now exists - MLQuantAI_RolloutGateReadinessEvaluate.mqh,
+// §6.2 Evidence-Gate Design Contract Rev.8 (QA-frozen DESIGN FREEZE). This
+// function's own signature/every other pair's behavior is completely
+// unchanged - only this one previously-false case flips to true. The
+// actual RolloutGateReadiness_Evaluate() call happens one layer up, in
+// MLQuantAI_RolloutStageTransitionCommandProcess.mqh (§7 Authority
+// Boundary - never inside this pure decision core, which takes no
+// lines[] parameter and performs no EventStore read by design).
 bool RolloutStageTransition_IsForwardPairImplemented(ENUM_EXECUTION_ROLLOUT_STAGE fromStage, ENUM_EXECUTION_ROLLOUT_STAGE toStage)
 {
    if(fromStage == ROLLOUT_STAGE_NONE && toStage == ROLLOUT_STAGE_TEST_FIXTURE)
       return true; // §6.0 - trivial, no acceptance evidence required
 
-   return false; // §6.1-§6.6 (including §6.2) - fail-closed until each has its own implemented evaluator
+   if(fromStage == ROLLOUT_STAGE_DEMO_DRY_RUN && toStage == ROLLOUT_STAGE_DEMO_REAL_SUBMIT)
+      return true; // §6.2 - evidence gate now implemented, see RolloutGateReadiness_Evaluate()
+
+   return false; // §6.1/§6.3-§6.6 - fail-closed until each has its own implemented evaluator
 }
 
 // CALLER CONTRACT (frozen intent, NOT self-enforced by this pure

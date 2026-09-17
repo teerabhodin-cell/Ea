@@ -17,6 +17,17 @@
 #include "MLQuantAI_ExecutionEvent.mqh"
 #include "MLQuantAI_SystemEvent.mqh"
 #include "../../Core/MLQuantAI_VersionRegistry.mqh"
+// StrategyIdToString() below is declared in Enums.mqh - this file previously
+// relied on whichever caller happened to include Enums.mqh first (the same
+// fragile transitive-include assumption MLQuantAI_CeremonyCommandMailbox.mqh
+// already flagged in its own comments), which broke for real the first time
+// a caller's own include chain was thin enough to skip it (QA compile
+// evidence, §6.2 Test Authorization round: MLQuantAI_Test_C5_2_Section6_2_
+// CandidateTerminalTransitionLocator.mq5 -> MLQuantAI_CandidateTerminalTransitionLocator.mqh
+// -> MLQuantAI_StateMachine.mqh + this file, neither of which pulled Enums.mqh
+// in first). Root-cause fix, QA-authorized: this file now declares its own
+// dependency directly.
+#include "../../Core/MLQuantAI_Enums.mqh"
 
 //---------------------------------------------------------------------
 // Escaping / parsing primitives

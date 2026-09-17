@@ -18,6 +18,13 @@
 //|   2. current-state cross-validity (QA's revision-2 blocker - refuses BEFORE                |
 //|      the target is even evaluated, so a stale/invalid current state can                      |
 //|      never be "laundered" through a transition that only checks its target)                    |
+//|   2.5. §6.2 Evidence-Gate (RolloutGateReadiness_Evaluate, QA Implementation              |
+//|      Authorization 2026-09-17) - inserted STRICTLY BEFORE step 3, gated to                    |
+//|      ONLY the (DEMO_DRY_RUN -> DEMO_REAL_SUBMIT) pair (§7 Authority Boundary:                    |
+//|      the evaluator is called from THIS processor, never from inside Commit-1-                     |
+//|      sealed RolloutStageTransition_IsForwardPairImplemented/_Evaluate, whose                          |
+//|      signatures stay completely unchanged). Every other pair skips this step                            |
+//|      entirely and proceeds straight to step 3, byte-for-byte unaffected.                                    |
 //|   3. RolloutStageTransition_Emit() (Commit 1, frozen, unmodified)                                  |
 //|                                                                                                        |
 //| Pure with respect to its OWN inputs: lines[]/environmentMode are supplied                               |
@@ -35,6 +42,7 @@
 #include "../Core/MLQuantAI_Enums.mqh"
 #include "../Infrastructure/EventStore/MLQuantAI_RolloutStageProjection.mqh"
 #include "../Infrastructure/EventStore/MLQuantAI_RolloutStageEventEmission.mqh"
+#include "MLQuantAI_RolloutGateReadinessEvaluate.mqh"
 
 enum ENUM_ROLLOUT_STAGE_TRANSITION_CMD_RESULT
 {
@@ -42,6 +50,7 @@ enum ENUM_ROLLOUT_STAGE_TRANSITION_CMD_RESULT
    ROLLOUT_STAGE_TRANSITION_CMD_TRANSITIONED,             // durable write succeeded (forward or rollback)
    ROLLOUT_STAGE_TRANSITION_CMD_KILL_SWITCH_ACTIVE,        // refused before evaluation - kill switch veto
    ROLLOUT_STAGE_TRANSITION_CMD_CURRENT_STATE_INVALID,     // refused before evaluation - QA's revision-2 blocker
+   ROLLOUT_STAGE_TRANSITION_CMD_EVIDENCE_GATE_REJECTED,    // §6.2 only: RolloutGateReadiness_Evaluate refused
    ROLLOUT_STAGE_TRANSITION_CMD_REJECTED,                  // RolloutStageTransition_Evaluate refused the target
    ROLLOUT_STAGE_TRANSITION_CMD_FAILED                     // the durable append itself failed - Safe Mode already tripped
 };
@@ -50,11 +59,12 @@ string RolloutStageTransitionCmdResultToString(ENUM_ROLLOUT_STAGE_TRANSITION_CMD
 {
    switch(r)
    {
-      case ROLLOUT_STAGE_TRANSITION_CMD_TRANSITIONED:         return "transitioned";
-      case ROLLOUT_STAGE_TRANSITION_CMD_KILL_SWITCH_ACTIVE:    return "kill_switch_active";
-      case ROLLOUT_STAGE_TRANSITION_CMD_CURRENT_STATE_INVALID: return "current_state_environment_invalid";
-      case ROLLOUT_STAGE_TRANSITION_CMD_REJECTED:              return "rejected";
-      case ROLLOUT_STAGE_TRANSITION_CMD_FAILED:                return "emit_durable_write_failed";
+      case ROLLOUT_STAGE_TRANSITION_CMD_TRANSITIONED:            return "transitioned";
+      case ROLLOUT_STAGE_TRANSITION_CMD_KILL_SWITCH_ACTIVE:       return "kill_switch_active";
+      case ROLLOUT_STAGE_TRANSITION_CMD_CURRENT_STATE_INVALID:    return "current_state_environment_invalid";
+      case ROLLOUT_STAGE_TRANSITION_CMD_EVIDENCE_GATE_REJECTED:   return "evidence_gate_rejected";
+      case ROLLOUT_STAGE_TRANSITION_CMD_REJECTED:                 return "rejected";
+      case ROLLOUT_STAGE_TRANSITION_CMD_FAILED:                   return "emit_durable_write_failed";
    }
    return "none";
 }
@@ -65,14 +75,20 @@ struct RolloutStageTransitionCommandResult
    ENUM_EXECUTION_ROLLOUT_STAGE              current_stage;  // always populated - the freshly-replayed current stage
    ENUM_ROLLOUT_TRANSITION_RESULT            evaluation;     // populated only once step 3 is reached
    string                                    reason_code;    // ceremony-log-ready reason string
+   // §6.2 only: populated when status == ROLLOUT_STAGE_TRANSITION_CMD_EVIDENCE_GATE_REJECTED,
+   // "" for every other status/pair - never consulted by any pre-existing pair's own logic.
+   ENUM_ROLLOUT_GATE_READINESS_REASON        evidence_gate_reason;
+   string                                    evidence_gate_diagnostic;
 };
 
 void RolloutStageTransitionCommandResult_Init(RolloutStageTransitionCommandResult &r)
 {
-   r.status         = ROLLOUT_STAGE_TRANSITION_CMD_NONE;
-   r.current_stage  = ROLLOUT_STAGE_NONE;
-   r.evaluation     = ROLLOUT_TRANSITION_NONE;
-   r.reason_code    = "";
+   r.status                   = ROLLOUT_STAGE_TRANSITION_CMD_NONE;
+   r.current_stage            = ROLLOUT_STAGE_NONE;
+   r.evaluation                = ROLLOUT_TRANSITION_NONE;
+   r.reason_code                = "";
+   r.evidence_gate_reason        = ROLLOUT_GATE_READINESS_NONE;
+   r.evidence_gate_diagnostic    = "";
 }
 
 void RolloutStageTransitionCommand_Process(ENUM_EXECUTION_ROLLOUT_STAGE targetStage, string authorizedBy, string evidenceReference,
@@ -104,6 +120,26 @@ void RolloutStageTransitionCommand_Process(ENUM_EXECUTION_ROLLOUT_STAGE targetSt
       outResult.status      = ROLLOUT_STAGE_TRANSITION_CMD_CURRENT_STATE_INVALID;
       outResult.reason_code = RolloutStageTransitionCmdResultToString(outResult.status);
       return;
+   }
+
+   // Step 2.5 (§6.2 only, QA Implementation Authorization 2026-09-17):
+   // RolloutGateReadiness_Evaluate, gated to ONLY the
+   // (DEMO_DRY_RUN -> DEMO_REAL_SUBMIT) pair. Every other pair (§6.0's
+   // NONE->TEST_FIXTURE, any rollback, any not-yet-frozen pair) skips
+   // this block entirely and falls straight through to step 3 exactly as
+   // Commit 2 originally froze it - byte-for-byte unaffected.
+   if(outResult.current_stage == ROLLOUT_STAGE_DEMO_DRY_RUN && targetStage == ROLLOUT_STAGE_DEMO_REAL_SUBMIT)
+   {
+      RolloutGateReadinessResult gate = RolloutGateReadiness_Evaluate(lines);
+      if(!gate.allow)
+      {
+         outResult.status                   = ROLLOUT_STAGE_TRANSITION_CMD_EVIDENCE_GATE_REJECTED;
+         outResult.evidence_gate_reason      = gate.reason;
+         outResult.evidence_gate_diagnostic  = gate.diagnostic;
+         outResult.reason_code               = RolloutStageTransitionCmdResultToString(outResult.status) + ":" +
+                                                RolloutGateReadinessReasonToString(gate.reason);
+         return;
+      }
    }
 
    // Step 3: Commit 1's own frozen evaluator/emitter, unmodified.
