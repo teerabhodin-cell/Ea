@@ -4230,6 +4230,14 @@ void DrawRiskControlCard(int x, int y, int w, int h)
    string owTxt = UseOneWayProtection ? owLabel : GetUIString("ปิด", "OFF");
    color  owTxtClr = UseOneWayProtection ? owClr : C'100,100,120';
    DrawKV(barX, ry, barW, GetUIString("ป้องกันทางเดียว", "ONE-WAY"), owTxt, C'160,160,180', owTxtClr, 12);
+   ry += S(26);
+
+   // Market Condition (V10) - เรียก GetMarketCondition() ตัวจริงตัวเดียวกับที่ปรับ Lot/Grid/บล็อกบาสเก็ตใหม่จริง
+   string mcLabelTH, mcLabelEN; color mcClr;
+   GetMarketConditionLabel(GetMarketCondition(), mcLabelTH, mcLabelEN, mcClr);
+   string mcTxt = UseMarketCondition ? GetUIString(mcLabelTH, mcLabelEN) : GetUIString("ปิด", "OFF");
+   color  mcTxtClr = UseMarketCondition ? mcClr : C'100,100,120';
+   DrawKV(barX, ry, barW, GetUIString("สภาวะตลาด", "MARKET"), mcTxt, C'160,160,180', mcTxtClr, 12);
 }
 
 // ตัด string ยาวๆ ให้พอดีคอลัมน์แคบ (Server name / ไฟล์ Journal / Basket ID) - ใช้ร่วมกันทุกการ์ด
@@ -4246,7 +4254,7 @@ string TruncateForNarrowCard(string s, int maxChars)
 // จะเหลือพื้นที่ว่างด้านล่างนิดหน่อย ซึ่งตั้งใจ ดีกว่าความสูงไม่เท่ากันแล้วแถวเยื้องกัน
 int DrawSidebarCards(int y, int openPos, int sideX, int sideW)
 {
-   int cardH = S(240); // สูงกว่าเดิม (204) ให้แต่ละการ์ดมีที่หายใจ ไม่อัดแถวชิดกันเกินไป
+   int cardH = S(266); // เพิ่มจาก 240 อีกครั้งให้การ์ด Risk Control มีที่พอสำหรับแถว Market Condition (V10)
    int gap   = S(12);
    int colW  = (sideW - gap) / 2;
    int innerW = colW - S(24);
@@ -4420,7 +4428,7 @@ int ComputeDashboardContentHeight()
    h += S(38);              // DrawServerTimeRow
    // Both columns begin at the top-card row. The sidebar continues from the
    // right edge of RISK, rather than beginning below the left dashboard.
-   int sideH = (S(240) + S(12)) * 4; // DrawSidebarCards: 2 คอลัมน์ x 4 แถว การ์ดสูงเท่ากันหมด
+   int sideH = (S(266) + S(12)) * 4; // DrawSidebarCards: 2 คอลัมน์ x 4 แถว การ์ดสูงเท่ากันหมด (ต้องตรงกับ cardH ใน DrawSidebarCards)
    int leftH = (S(258) * 2 + S(12) * 2) + (S(84) + S(12)) + (S(265) + S(12)) + (S(162) + S(14));
    h += MathMax(sideH, leftH);
    return h;
