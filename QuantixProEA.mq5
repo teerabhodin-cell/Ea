@@ -45,6 +45,7 @@ enum ENUM_SYSTEM_DECISION
    DECISION_DAILY_LOSS,       // ครบขาดทุนวันนี้
    DECISION_TIME_BLOCK,       // นอกเวลาเทรด (เฉพาะตอนพอร์ตว่าง)
    DECISION_SESSION_BLOCK,    // Session ปัจจุบันตั้งเป็น Block (เฉพาะตอนพอร์ตว่าง)
+   DECISION_MARKET_ABNORMAL,  // Market Condition ผิดปกติ (เฉพาะตอนพอร์ตว่าง)
    DECISION_DAILY_GOAL,       // ถึงเป้ากำไรวันนี้ (เฉพาะตอนพอร์ตว่าง)
    DECISION_VOLATILITY_LOW,   // ตลาดนิ่งเกินไป (เฉพาะตอนพอร์ตว่าง)
    DECISION_VOLATILITY_HIGH,  // ตลาดผันผวนสูงเกินไป (เฉพาะตอนพอร์ตว่าง)
@@ -101,6 +102,19 @@ enum ENUM_ONEWAY_STATE
    ONEWAY_ONE_WAY,     // ลด Lot เพิ่ม + ขยาย Grid เพิ่ม (เปิดไม้ถี่น้อยลง)
    ONEWAY_DEFENSIVE,   // บล็อกฝั่งที่หนักกว่า (กำลังแพ้) ไม่ให้เปิดไม้เพิ่ม - อีกฝั่งยังเปิดได้ปกติ
    ONEWAY_EMERGENCY    // = TradingHalted
+};
+
+// Smart Market Condition (V10) - จัดหมวดสภาพตลาดปัจจุบันจาก ATR Ratio (เทียบ ATR สดกับค่าเฉลี่ย ATR
+// ย้อนหลัง) + EMA Slope (ATR-normalized) แล้วส่งผลไปปรับ Lot/Grid หรือบล็อกบาสเก็ตใหม่ - ลำดับความสำคัญ
+// ตอนจัดหมวด: ABNORMAL > HIGH_VOLATILITY > TREND_UP/DOWN > LOW_VOLATILITY > RANGE (ค่าเริ่มต้น)
+enum ENUM_MARKET_CONDITION
+{
+   MARKET_RANGE,
+   MARKET_TREND_UP,
+   MARKET_TREND_DOWN,
+   MARKET_HIGH_VOLATILITY,
+   MARKET_LOW_VOLATILITY,
+   MARKET_ABNORMAL       // ATR Ratio หรือสเปรดสูงผิดปกติมาก - ห้ามเปิดบาสเก็ตใหม่ (บาสเก็ตที่เปิดอยู่จัดการต่อปกติ)
 };
 
 //=========================== INPUT ================================//
@@ -309,6 +323,21 @@ input double OneWayDefensiveLotFactor = 0.45;   // Lot Factor at DEFENSIVE (ฝ�
 input double OneWayWarnGridFactor     = 1.15;   // Grid Distance Factor at WARNING
 input double OneWayActiveGridFactor   = 1.35;   // Grid Distance Factor at ONE-WAY
 
+// ATR Ratio = ATR สด / ค่าเฉลี่ย ATR ย้อนหลัง MarketVolLookbackBars แท่ง (ไม่ใช่จุดคงที่ เหมือน One-Way)
+// EMA Slope = (EMA ตอนนี้ - EMA ย้อนหลัง) / ATR สด - วัดความแรงเทรนด์แบบ normalize ด้วยความผันผวน
+input group "===== 16. Smart Market Condition (V10) ====="
+input bool   UseMarketCondition        = false;  // Use Smart Market Condition
+input int    MarketVolLookbackBars     = 50;     // Volatility Reference Lookback, Bars
+input double MarketTrendSlopeThreshold = 0.5;    // EMA Slope Threshold (ATR units)
+input double MarketHighVolRatio        = 1.5;    // ATR Ratio Threshold: High Volatility
+input double MarketLowVolRatio         = 0.6;    // ATR Ratio Threshold: Low Volatility
+input double MarketAbnormalVolRatio    = 2.5;    // ATR Ratio Threshold: Abnormal
+input double MarketAbnormalSpreadMult  = 3.0;    // Spread Multiple of MaxSpreadAllowed: Abnormal
+input double MarketTrendLotFactor      = 0.85;   // Lot Factor: Trend (Up/Down)
+input double MarketTrendGridFactor     = 1.20;   // Grid Distance Factor: Trend (Up/Down)
+input double MarketHighVolLotFactor    = 0.75;   // Lot Factor: High Volatility
+input double MarketHighVolGridFactor   = 1.30;   // Grid Distance Factor: High Volatility
+
 //=========================== GLOBAL ===============================//
 
 bool     GridCreated     = false;
@@ -428,7 +457,9 @@ int      mtfEmaHandle    = INVALID_HANDLE;
 int      bbHandle        = INVALID_HANDLE;
 int      rsiHandle       = INVALID_HANDLE;
 int      oneWayAtrHandle = INVALID_HANDLE; // handleแยกของ One-Way Protection เอง - ทำงานได้แม้ปิด
-                                            // UseATRDistance (atrHandle หลักไม่ได้ถูกสร้างตอนนั้น)
+                                            // UseATRDistance (atrHandle หลักไม่ได้ถูกสร้างตอนนั้น) -
+                                            // ใช้ร่วมกับ Smart Market Condition ด้วย (วัด "ATR ปัจจุบัน" เหมือนกัน)
+int      marketEmaHandle = INVALID_HANDLE; // EMA แยกของ Smart Market Condition เอง สำหรับวัด Slope เทรนด์
 
 // --- [ UI OPTIMIZATION GLOBAL VARS ] ---
 uint     lastUIUpdateTime = 0;
@@ -493,6 +524,10 @@ double GetOneWayLotFactor();
 double GetOneWayGridFactor();
 bool IsOneWaySideBlocked(bool isBuy);
 void CountPositions(int &buyCount, int &sellCount, double &totalLots);
+ENUM_MARKET_CONDITION GetMarketCondition();
+double GetMarketConditionLotFactor();
+double GetMarketConditionGridFactor();
+bool IsMarketConditionBlocked();
 void RecalculateBasePrice();
 void ReconcileGridStateOnInit();
 ENUM_ORDER_TYPE_FILLING GetBestFillingMode();
@@ -1027,6 +1062,122 @@ void GetOneWayStateLabel(ENUM_ONEWAY_STATE s, string &label, color &clr)
 }
 
 //+------------------------------------------------------------------+
+//| Smart Market Condition (V10)                                      |
+//+------------------------------------------------------------------+
+
+// ATR สด / ค่าเฉลี่ย ATR ย้อนหลัง MarketVolLookbackBars แท่ง (ไม่รวมแท่งปัจจุบันในค่าเฉลี่ยอ้างอิง กัน
+// ATR ตัวเองมาถ่วงค่าเฉลี่ยของตัวเอง) > 1 แปลว่าผันผวนกว่าปกติ, < 1 แปลว่านิ่งกว่าปกติ
+double GetMarketVolatilityRatio()
+{
+   if(oneWayAtrHandle == INVALID_HANDLE) return 1.0;
+
+   int need = MarketVolLookbackBars + 1;
+   double atrArr[];
+   ArraySetAsSeries(atrArr, true);
+   if(CopyBuffer(oneWayAtrHandle, 0, 1, need, atrArr) < need) return 1.0;
+
+   double current = atrArr[0];
+   double sumRef = 0.0;
+   for(int i = 1; i < need; i++) sumRef += atrArr[i];
+   double avgRef = sumRef / (need - 1);
+   if(avgRef <= 0) return 1.0;
+
+   return current / avgRef;
+}
+
+// Slope ของ EMA เทียบ ATR สด (แทนหน่วยจุดตรงๆ) - บวกมาก = เทรนด์ขึ้นแรง, ลบมาก = เทรนด์ลงแรง
+double GetMarketTrendSlopeATR()
+{
+   if(marketEmaHandle == INVALID_HANDLE || oneWayAtrHandle == INVALID_HANDLE) return 0.0;
+
+   int lookback = MathMax(5, MarketVolLookbackBars / 5);
+   double emaArr[];
+   ArraySetAsSeries(emaArr, true);
+   if(CopyBuffer(marketEmaHandle, 0, 1, lookback + 1, emaArr) < lookback + 1) return 0.0;
+
+   double atrArr[];
+   ArraySetAsSeries(atrArr, true);
+   if(CopyBuffer(oneWayAtrHandle, 0, 1, 1, atrArr) <= 0 || atrArr[0] <= 0) return 0.0;
+
+   double slope = emaArr[0] - emaArr[lookback];
+   return slope / atrArr[0];
+}
+
+// ABNORMAL: ATR Ratio สูงผิดปกติมาก (เกิน HIGH_VOLATILITY ธรรมดาไปอีกขั้น) หรือสเปรดสดกว้างกว่า
+// MaxSpreadAllowed หลายเท่าตัว - ทั้งสองคือสัญญาณว่าตลาดกำลังผิดปกติจริง ไม่ใช่แค่ผันผวนสูงตามธรรมดา
+bool IsMarketAbnormal(double volRatio)
+{
+   if(volRatio >= MarketAbnormalVolRatio) return true;
+
+   if(MaxSpreadAllowed > 0)
+   {
+      long liveSpread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+      if(liveSpread >= MaxSpreadAllowed * m_multiplier * MarketAbnormalSpreadMult) return true;
+   }
+
+   return false;
+}
+
+ENUM_MARKET_CONDITION GetMarketCondition()
+{
+   if(!UseMarketCondition) return MARKET_RANGE;
+
+   double volRatio = GetMarketVolatilityRatio();
+   if(IsMarketAbnormal(volRatio)) return MARKET_ABNORMAL;
+   if(volRatio >= MarketHighVolRatio) return MARKET_HIGH_VOLATILITY;
+
+   double slope = GetMarketTrendSlopeATR();
+   if(slope >= MarketTrendSlopeThreshold)  return MARKET_TREND_UP;
+   if(slope <= -MarketTrendSlopeThreshold) return MARKET_TREND_DOWN;
+
+   if(volRatio <= MarketLowVolRatio) return MARKET_LOW_VOLATILITY;
+   return MARKET_RANGE;
+}
+
+double GetMarketConditionLotFactor()
+{
+   switch(GetMarketCondition())
+   {
+      case MARKET_TREND_UP:
+      case MARKET_TREND_DOWN:      return MarketTrendLotFactor;
+      case MARKET_HIGH_VOLATILITY: return MarketHighVolLotFactor;
+      default:                     return 1.0;
+   }
+}
+
+double GetMarketConditionGridFactor()
+{
+   switch(GetMarketCondition())
+   {
+      case MARKET_TREND_UP:
+      case MARKET_TREND_DOWN:      return MarketTrendGridFactor;
+      case MARKET_HIGH_VOLATILITY: return MarketHighVolGridFactor;
+      default:                     return 1.0;
+   }
+}
+
+// ตัวตัดสินใจจริงตัวเดียวที่ห้ามเปิดบาสเก็ตใหม่จาก Market Condition (เฉพาะ ABNORMAL) - บาสเก็ตที่เปิด
+// อยู่แล้วจัดการต่อปกติ เหมือน Time/Session Block ทุกอย่างเรื่องนโยบาย
+bool IsMarketConditionBlocked()
+{
+   return GetMarketCondition() == MARKET_ABNORMAL;
+}
+
+// แปล ENUM_MARKET_CONDITION เป็นข้อความ/สีสำหรับ Dashboard เท่านั้น ไม่มี logic ตัดสินใจ
+void GetMarketConditionLabel(ENUM_MARKET_CONDITION mc, string &labelTH, string &labelEN, color &clr)
+{
+   switch(mc)
+   {
+      case MARKET_TREND_UP:        labelTH = "เทรนด์ขึ้น";       labelEN = "TREND UP";         clr = C'34,197,94';  break;
+      case MARKET_TREND_DOWN:      labelTH = "เทรนด์ลง";        labelEN = "TREND DOWN";       clr = C'239,68,68';  break;
+      case MARKET_HIGH_VOLATILITY: labelTH = "ผันผวนสูง";       labelEN = "HIGH VOLATILITY";  clr = C'251,146,60'; break;
+      case MARKET_LOW_VOLATILITY:  labelTH = "ผันผวนต่ำ";       labelEN = "LOW VOLATILITY";   clr = C'96,165,250'; break;
+      case MARKET_ABNORMAL:        labelTH = "ผิดปกติ";         labelEN = "ABNORMAL";         clr = C'239,68,68';  break;
+      default:                      labelTH = "แกว่งตัว";        labelEN = "RANGE";            clr = C'160,160,180'; break;
+   }
+}
+
+//+------------------------------------------------------------------+
 //| News Filter - เหมือน Time Filter ทุกอย่างเรื่องนโยบาย: บาสเก็ตที่เปิดอยู่แล้ว |
 //| ยังจัดการ/ปิดตามปกติ (กำไรได้ ก็ปิดได้) แค่ "ห้ามเปิดไม้ใหม่" ช่วงใกล้ข่าวแรงเท่านั้น |
 //| เช็คจากปฏิทินเศรษฐกิจของ MT5 (currency = สกุลเงินกำไรของสัญลักษณ์ เช่น USD    |
@@ -1371,6 +1522,7 @@ ENUM_SYSTEM_DECISION ComputeSystemDecision(int openPos)
    if(IsDailyLossLimitReached())                       return DECISION_DAILY_LOSS;
    if(!IsTradingAllowedByTime() && openPos == 0)       return DECISION_TIME_BLOCK;
    if(IsSessionBlocked() && openPos == 0)              return DECISION_SESSION_BLOCK;
+   if(IsMarketConditionBlocked() && openPos == 0)      return DECISION_MARKET_ABNORMAL;
    if(IsDailyGoalReached() && openPos == 0)            return DECISION_DAILY_GOAL;
    if(IsVolatilityTooLow() && openPos == 0)            return DECISION_VOLATILITY_LOW;
    if(IsVolatilityTooHigh() && openPos == 0)           return DECISION_VOLATILITY_HIGH;
@@ -1496,6 +1648,12 @@ double GetCalculatedLotSize(int nextLevel)
    double oneWayLotFactor = GetOneWayLotFactor();
    if(oneWayLotFactor < 1.0)
       lot = lot * oneWayLotFactor;
+
+   // Market Condition Factor: ลด Lot เพิ่มตอนเทรนด์แรง/ผันผวนสูง (V10) - ทำงานหลัง One-Way ก่อนถึง
+   // Max Lot Cap เสมอ (Base -> DynamicEquity -> SmartLot -> Session -> OneWay -> MarketCondition -> MaxLotCap)
+   double marketLotFactor = GetMarketConditionLotFactor();
+   if(marketLotFactor < 1.0)
+      lot = lot * marketLotFactor;
 
    lot = MathMax(0.01, lot);
 
@@ -1952,13 +2110,24 @@ int OnInit()
    }
 
    // Smart One-Way Protection (V10) ใช้ ATR ของตัวเองแยกจาก atrHandle หลัก เพราะต้องทำงานได้แม้ปิด
-   // UseATRDistance ไว้ (เช่น ใช้ Fixed Distance หรือ BB Distance สำหรับ Grid แต่ยังอยากให้ One-Way ทำงาน)
-   if(UseOneWayProtection)
+   // UseATRDistance ไว้ (เช่น ใช้ Fixed Distance หรือ BB Distance สำหรับ Grid แต่ยังอยากให้ One-Way ทำงาน) -
+   // Smart Market Condition (V10) ใช้ ATR ตัวเดียวกันนี้ร่วมด้วย (วัด "ATR สด" เหมือนกัน ไม่ต้องสร้างซ้ำ)
+   if(UseOneWayProtection || UseMarketCondition)
    {
       oneWayAtrHandle = iATR(_Symbol, _Period, ATR_Period);
       if(oneWayAtrHandle == INVALID_HANDLE)
       {
-         Print("Failed to create One-Way Protection ATR indicator handle.");
+         Print("Failed to create One-Way Protection / Market Condition ATR indicator handle.");
+         return(INIT_FAILED);
+      }
+   }
+
+   if(UseMarketCondition)
+   {
+      marketEmaHandle = iMA(_Symbol, _Period, EMA_Period, 0, MODE_EMA, PRICE_CLOSE);
+      if(marketEmaHandle == INVALID_HANDLE)
+      {
+         Print("Failed to create Market Condition EMA indicator handle.");
          return(INIT_FAILED);
       }
    }
@@ -1998,6 +2167,7 @@ void OnDeinit(const int reason)
    if(bbHandle != INVALID_HANDLE) IndicatorRelease(bbHandle);
    if(rsiHandle != INVALID_HANDLE) IndicatorRelease(rsiHandle);
    if(oneWayAtrHandle != INVALID_HANDLE) IndicatorRelease(oneWayAtrHandle);
+   if(marketEmaHandle != INVALID_HANDLE) IndicatorRelease(marketEmaHandle);
    DeleteVisualTSLine();
    DeleteDashboard();
 }
@@ -2234,6 +2404,7 @@ void OnTick()
    bool lowVolatility    = IsVolatilityTooLow();
    bool highVolatility   = IsVolatilityTooHigh();
    bool sessionBlocked   = IsSessionBlocked();
+   bool marketAbnormal   = IsMarketConditionBlocked();
 
    // News Filter / Daily Loss Limit ห้ามเปิดไม้ใหม่เด็ดขาด ไม่ว่ามีบาสเก็ตเปิดค้างอยู่หรือไม่ (เป็นกลไก
    // ป้องกันความเสี่ยง ต่อไม้เพิ่มระหว่างที่ทริกเกอร์อยู่ขัดกับจุดประสงค์ของมันเอง) - แต่ Time Filter /
@@ -2249,7 +2420,8 @@ void OnTick()
    bool lowVolBlocksEntry    = lowVolatility    && (openPositions == 0);
    bool highVolBlocksEntry   = highVolatility   && (openPositions == 0);
    bool sessionBlocksEntry   = sessionBlocked   && (openPositions == 0);
-   if(!timeBlocksEntry && !newsBlocked && !dailyLossBlocked && !latencyBlocked && !dailyGoalBlocksEntry && !lowVolBlocksEntry && !highVolBlocksEntry && !sessionBlocksEntry)
+   bool marketBlocksEntry    = marketAbnormal   && (openPositions == 0);
+   if(!timeBlocksEntry && !newsBlocked && !dailyLossBlocked && !latencyBlocked && !dailyGoalBlocksEntry && !lowVolBlocksEntry && !highVolBlocksEntry && !sessionBlocksEntry && !marketBlocksEntry)
    {
       if(!IsClosingState && !equityLocked && !TradingHalted && !IsConnectionBlocked() && (MaxBasketProfit < effTargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
       {
@@ -2444,7 +2616,7 @@ int GetDynamicGridDistanceBase()
 int GetDynamicGridDistance()
 {
    int base = GetDynamicGridDistanceBase();
-   double factor = GetSessionGridMultiplier() * GetOneWayGridFactor();
+   double factor = GetSessionGridMultiplier() * GetOneWayGridFactor() * GetMarketConditionGridFactor();
    if(factor == 1.0) return base;
    return (int)MathMax(10 * m_multiplier, MathRound(base * factor));
 }
@@ -3920,6 +4092,7 @@ void GetDecisionLabels(ENUM_SYSTEM_DECISION d, int openPos, string &headTH, stri
       case DECISION_DAILY_LOSS:      headTH = "ครบขาดทุนวันนี้";     headEN = "DAILY LOSS LIMIT HIT";  reasonTH = "ขาดทุนวันนี้ถึงลิมิตที่ตั้งไว้แล้ว";              reasonEN = "Today's loss has reached the configured limit.";          clr = C'239,68,68'; break;
       case DECISION_TIME_BLOCK:      headTH = "นอกเวลาเทรด";         headEN = "OUTSIDE TRADING HOURS"; reasonTH = "อยู่นอกช่วงเวลาที่อนุญาตให้เปิดไม้ใหม่";          reasonEN = "Outside the allowed trading-hours window.";                clr = C'239,68,68'; break;
       case DECISION_SESSION_BLOCK:   headTH = "ปิดรับไม้ช่วง Session นี้"; headEN = "SESSION BLOCKED";  reasonTH = "Session ปัจจุบันตั้ง Risk Profile เป็น Block";     reasonEN = "Current session's risk profile is set to Block.";         clr = C'239,68,68'; break;
+      case DECISION_MARKET_ABNORMAL: headTH = "ตลาดผิดปกติ";        headEN = "MARKET ABNORMAL";  reasonTH = "ความผันผวน/สเปรดผิดปกติมาก - ห้ามเปิดบาสเก็ตใหม่"; reasonEN = "Volatility/spread abnormally extreme - new baskets blocked."; clr = C'239,68,68'; break;
       case DECISION_DAILY_GOAL:      headTH = "ถึงเป้ากำไรวันนี้";    headEN = "DAILY GOAL REACHED";    reasonTH = "กำไรวันนี้ถึงเป้าหมายแล้ว - พักเปิดไม้ใหม่";      reasonEN = "Today's profit goal has been reached - pausing entries."; clr = C'34,197,94'; break;
       case DECISION_VOLATILITY_LOW:  headTH = "ตลาดนิ่งเกินไป";      headEN = "VOLATILITY TOO LOW";    reasonTH = "ความผันผวนต่ำกว่าเกณฑ์ขั้นต่ำที่ตั้งไว้";          reasonEN = "Volatility is below the configured minimum.";             clr = C'251,146,60'; break;
       case DECISION_VOLATILITY_HIGH: headTH = "ตลาดผันผวนสูงเกินไป"; headEN = "VOLATILITY TOO HIGH";   reasonTH = "ความผันผวนสูงกว่าเกณฑ์สูงสุดที่ตั้งไว้";           reasonEN = "Volatility is above the configured maximum.";             clr = C'239,68,68'; break;
