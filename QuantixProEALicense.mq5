@@ -117,6 +117,17 @@ enum ENUM_MARKET_CONDITION
    MARKET_ABNORMAL       // ATR Ratio หรือสเปรดสูงผิดปกติมาก - ห้ามเปิดบาสเก็ตใหม่ (บาสเก็ตที่เปิดอยู่จัดการต่อปกติ)
 };
 
+// Smart Exposure Guard (V10) - เทียบ Gross Exposure จริง (Buy+Sell lot รวมของโพซิชันที่เปิดอยู่) กับ
+// Equity ปัจจุบันผ่าน ExposureLotsPer1000Equity (ไม่ใช้เลข Lot ตายตัว เพราะ Lot เท่ากันความเสี่ยงไม่เท่ากัน
+// ระหว่างบัญชีทุนต่างกัน) - บล็อกแค่ "การเปิดไม้ใหม่" เท่านั้น ไม่ปิด Position ที่เปิดอยู่แล้วเองเด็ดขาด
+enum ENUM_EXPOSURE_STATE
+{
+   EXPOSURE_NORMAL,
+   EXPOSURE_CAUTION,      // ลด Lot เล็กน้อย
+   EXPOSURE_RESTRICTED,   // ลด Lot เพิ่ม + บล็อกเฉพาะฝั่งที่หนักกว่าไม่ให้เปิดไม้เพิ่ม
+   EXPOSURE_BLOCK         // บล็อกไม้ใหม่ทั้งสองฝั่ง (Force Hedge มีเพดานผ่อนของตัวเอง ดู ExposureHedgeBlockRatio)
+};
+
 //=========================== HARD LICENSE LOCK ================================//
 // รายชื่อเลขบัญชี MT5 ที่อนุญาตให้รัน EA นี้ได้ (ทั้งเดโมและบัญชีจริง) - ไฟล์นี้คนละตัวกับ
 // QuantixProEA.mq5 (รันบนชาร์ตจริงได้ปกติ ไม่มีล็อคบัญชี) **ห้ามทำเป็น input เด็ดขาด**
@@ -347,6 +358,18 @@ input double MarketTrendGridFactor     = 1.20;   // Grid Distance Factor: Trend 
 input double MarketHighVolLotFactor    = 0.75;   // Lot Factor: High Volatility
 input double MarketHighVolGridFactor   = 1.30;   // Grid Distance Factor: High Volatility
 
+// Allowed Exposure = (Equity / 1000) * ExposureLotsPer1000Equity - Ratio = Gross Exposure จริง / Allowed
+// เกณฑ์ NORMAL/CAUTION/RESTRICTED/BLOCK เป็น Input ทั้งหมด ไม่ล็อกเลขที่ "พิสูจน์แล้ว" ตามที่ตั้งใจออกแบบ
+input group "===== 17. Smart Exposure Guard (V10) ====="
+input bool   UseExposureGuard            = false;  // Use Smart Exposure Guard
+input double ExposureLotsPer1000Equity   = 0.10;   // Allowed Gross Exposure, Lot per 1000 Equity
+input double ExposureCautionRatio        = 0.60;   // Ratio Threshold: NORMAL -> CAUTION
+input double ExposureRestrictedRatio     = 0.80;   // Ratio Threshold: CAUTION -> RESTRICTED
+input double ExposureBlockRatio          = 1.00;   // Ratio Threshold: RESTRICTED -> BLOCK
+input double ExposureCautionLotFactor    = 0.75;   // Lot Factor at CAUTION
+input double ExposureRestrictedLotFactor = 0.50;   // Lot Factor at RESTRICTED
+input double ExposureHedgeBlockRatio     = 1.50;   // Ratio Threshold: Force Hedge Block (ผ่อนกว่าไม้ปกติ)
+
 //=========================== GLOBAL ===============================//
 
 bool     GridCreated     = false;
@@ -537,6 +560,12 @@ ENUM_MARKET_CONDITION GetMarketCondition();
 double GetMarketConditionLotFactor();
 double GetMarketConditionGridFactor();
 bool IsMarketConditionBlocked();
+double GetAllowedExposureLots();
+void GetExposureLots(double &buyLots, double &sellLots);
+ENUM_EXPOSURE_STATE GetExposureState();
+double GetExposureLotFactor();
+bool IsExposureBlocked(bool isBuy, double candidateLot);
+bool IsExposureBlockedForHedge(double candidateLot);
 void RecalculateBasePrice();
 void ReconcileGridStateOnInit();
 ENUM_ORDER_TYPE_FILLING GetBestFillingMode();
@@ -1187,6 +1216,111 @@ void GetMarketConditionLabel(ENUM_MARKET_CONDITION mc, string &labelTH, string &
    }
 }
 
+// Allowed Exposure = (Equity / 1000) * ExposureLotsPer1000Equity - เทียบ Lot กับทุนปัจจุบันเสมอ ไม่ใช่
+// เลข Lot ตายตัว เพราะ 0.5 lot ของบัญชี 1,000 กับ 0.5 lot ของบัญชี 100,000 ความเสี่ยงไม่เท่ากัน
+double GetAllowedExposureLots()
+{
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   return MathMax(0.0, (equity / 1000.0) * ExposureLotsPer1000Equity);
+}
+
+// แยก Buy/Sell lot รวมจริงจากโพซิชันที่เปิดอยู่ (ไม่รวม Pending) - ใช้ทั้งหา Gross Exposure (buy+sell)
+// และ Net/Directional Exposure (buy-sell) โดยไม่ผูกกับ CountPositions() ซึ่งนับแค่ "จำนวนไม้" ไม่ใช่ Lot
+void GetExposureLots(double &buyLots, double &sellLots)
+{
+   buyLots = 0.0; sellLots = 0.0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+
+      double vol = PositionGetDouble(POSITION_VOLUME);
+      if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) buyLots += vol;
+      else sellLots += vol;
+   }
+}
+
+double GetExposureRatio()
+{
+   if(!UseExposureGuard) return 0.0;
+   double allowed = GetAllowedExposureLots();
+   if(allowed <= 0) return 0.0;
+   double buyLots, sellLots;
+   GetExposureLots(buyLots, sellLots);
+   return (buyLots + sellLots) / allowed;
+}
+
+ENUM_EXPOSURE_STATE GetExposureState()
+{
+   if(!UseExposureGuard) return EXPOSURE_NORMAL;
+   double ratio = GetExposureRatio();
+   if(ratio >= ExposureBlockRatio)      return EXPOSURE_BLOCK;
+   if(ratio >= ExposureRestrictedRatio) return EXPOSURE_RESTRICTED;
+   if(ratio >= ExposureCautionRatio)    return EXPOSURE_CAUTION;
+   return EXPOSURE_NORMAL;
+}
+
+double GetExposureLotFactor()
+{
+   switch(GetExposureState())
+   {
+      case EXPOSURE_CAUTION:    return ExposureCautionLotFactor;
+      case EXPOSURE_RESTRICTED: return ExposureRestrictedLotFactor;
+      default:                  return 1.0;
+   }
+}
+
+// หัวใจของสเปค: เช็ค "Projected Exposure" (ของเดิม + ไม้ที่กำลังจะส่งจริง) ก่อนส่ง Order เสมอ ไม่ใช่เปิด
+// ไปก่อนแล้วค่อยตรวจทีหลัง ทำงาน 2 ชั้น: (1) เกิน Block Ratio แล้ว -> บล็อกทั้งสองฝั่ง (2) ยังไม่เกิน
+// Block แต่ Ratio ปัจจุบันเข้า RESTRICTED แล้ว -> บล็อกเฉพาะฝั่งที่ "หนักกว่า" ไม่ให้ถ่วงทิศทางเดิมเพิ่ม
+// (เหมือน One-Way DEFENSIVE) ฝั่งที่เบากว่ายังเปิดได้ปกติแม้ Exposure รวมจะเข้า RESTRICTED แล้วก็ตาม
+bool IsExposureBlocked(bool isBuy, double candidateLot)
+{
+   if(!UseExposureGuard) return false;
+   double allowed = GetAllowedExposureLots();
+   if(allowed <= 0) return false;
+
+   double buyLots, sellLots;
+   GetExposureLots(buyLots, sellLots);
+
+   double projectedRatio = (buyLots + sellLots + candidateLot) / allowed;
+   if(projectedRatio >= ExposureBlockRatio) return true;
+
+   if(GetExposureState() == EXPOSURE_RESTRICTED)
+   {
+      bool isHeavierSide = isBuy ? (buyLots >= sellLots) : (sellLots >= buyLots);
+      if(isHeavierSide) return true;
+   }
+   return false;
+}
+
+// Force Hedge ต้องผ่าน Guard เสมอ ไม่มีข้อยกเว้นให้ bypass เด็ดขาด แต่มีเพดานผ่อนของตัวเอง
+// (ExposureHedgeBlockRatio สูงกว่า ExposureBlockRatio ปกติ) เพราะ Force Hedge เป็นกลไกลดความเสี่ยง
+// ทิศทาง (ถ่วงฝั่งที่ขาด) ไม่ใช่การเพิ่มความเสี่ยงแบบไม้กริดทั่วไป
+bool IsExposureBlockedForHedge(double candidateLot)
+{
+   if(!UseExposureGuard) return false;
+   double allowed = GetAllowedExposureLots();
+   if(allowed <= 0) return false;
+
+   double buyLots, sellLots;
+   GetExposureLots(buyLots, sellLots);
+   double projectedRatio = (buyLots + sellLots + candidateLot) / allowed;
+   return projectedRatio >= ExposureHedgeBlockRatio;
+}
+
+void GetExposureStateLabel(ENUM_EXPOSURE_STATE s, string &label, color &clr)
+{
+   switch(s)
+   {
+      case EXPOSURE_CAUTION:    label = "🟡 " + GetUIString("ระมัดระวัง", "CAUTION");   clr = C'251,193,7';  break;
+      case EXPOSURE_RESTRICTED: label = "🟠 " + GetUIString("จำกัด", "RESTRICTED");     clr = C'251,146,60'; break;
+      case EXPOSURE_BLOCK:      label = "🔴 " + GetUIString("บล็อกไม้ใหม่", "BLOCKED"); clr = C'239,68,68';  break;
+      default:                   label = "🟢 " + GetUIString("ปกติ", "NORMAL");         clr = C'34,197,94';  break;
+   }
+}
+
 //+------------------------------------------------------------------+
 //| News Filter - เหมือน Time Filter ทุกอย่างเรื่องนโยบาย: บาสเก็ตที่เปิดอยู่แล้ว |
 //| ยังจัดการ/ปิดตามปกติ (กำไรได้ ก็ปิดได้) แค่ "ห้ามเปิดไม้ใหม่" ช่วงใกล้ข่าวแรงเท่านั้น |
@@ -1660,10 +1794,16 @@ double GetCalculatedLotSize(int nextLevel)
       lot = lot * oneWayLotFactor;
 
    // Market Condition Factor: ลด Lot เพิ่มตอนเทรนด์แรง/ผันผวนสูง (V10) - ทำงานหลัง One-Way ก่อนถึง
-   // Max Lot Cap เสมอ (Base -> DynamicEquity -> SmartLot -> Session -> OneWay -> MarketCondition -> MaxLotCap)
+   // Max Lot Cap เสมอ (Base -> DynamicEquity -> SmartLot -> Session -> OneWay -> MarketCondition -> Exposure -> MaxLotCap)
    double marketLotFactor = GetMarketConditionLotFactor();
    if(marketLotFactor < 1.0)
       lot = lot * marketLotFactor;
+
+   // Exposure Factor: ลด Lot เพิ่มอีกชั้นตอน Gross Exposure เข้า CAUTION/RESTRICTED (V10) - ทำงานหลัง
+   // Market Condition เป็นตัวสุดท้ายก่อนถึง Max Lot Cap/broker normalization ด้านล่าง
+   double exposureLotFactor = GetExposureLotFactor();
+   if(exposureLotFactor < 1.0)
+      lot = lot * exposureLotFactor;
 
    lot = MathMax(0.01, lot);
 
@@ -1840,6 +1980,15 @@ bool TryOpenForceHedgeOrder(string reasonTag, string logDetail)
    if(minVol  > 0 && lot < minVol) lot = minVol;
    if(maxVol  > 0 && lot > maxVol) lot = maxVol;
    lot = NormalizeDouble(MathMax(0.01, lot), 2);
+
+   // Force Hedge ต้องผ่าน Exposure Guard เหมือนไม้กริดทั่วไป (V10 #9) - ไม่มีข้อยกเว้น bypass แต่มีเพดาน
+   // ผ่อนของตัวเอง (ExposureHedgeBlockRatio) เพราะ Force Hedge เป็นกลไกลดความเสี่ยงทิศทาง ไม่ใช่เพิ่ม
+   if(IsExposureBlockedForHedge(lot))
+   {
+      PrintFormat("🛡️ [%s] Force Hedge blocked by Exposure Guard (projected exposure ratio over %.0f%% ceiling).",
+                  reasonTag, ExposureHedgeBlockRatio * 100.0);
+      return false;
+   }
 
    ENUM_ORDER_TYPE_FILLING fillMode = GetBestFillingMode();
    MqlTradeRequest request;
@@ -2766,6 +2915,15 @@ void PlacePendingGridServer()
    MqlTradeRequest request;
    MqlTradeResult  result;
 
+   // Exposure Guard (V10 #8, Pending Order Exposure): openPositions==0 ตอนนี้เสมอ (เช็คไว้ด้านบนแล้ว) แต่
+   // Pending Stop ทั้ง TotalLevels ชั้นถูกวางล่วงหน้าทั้งหมดในลูปนี้ - ถ้าราคาวิ่งเร็วชนหลายชั้นพร้อมกัน
+   // Exposure จริงจะกระโดดเกินเพดานทันทีโดยไม่มี "before order" gate แบบ Virtual Grid เลย เพราะงั้นต้อง
+   // สะสม Planned Exposure เองในลูปนี้ (Effective Exposure = Open(=0) + Potential Pending) แล้วหยุดวาง
+   // ต่อฝั่งใดฝั่งหนึ่งทันทีที่ยอดสะสมจะเกิน ExposureBlockRatio แม้ Level ที่เหลือยังไม่ถึงคิวก็ตาม
+   double allowedExposure  = GetAllowedExposureLots();
+   double plannedBuyLots   = 0.0;
+   double plannedSellLots  = 0.0;
+
    for(int level = 1; level <= TotalLevels; level++)
    {
       double lot = GetCalculatedLotSize(level);
@@ -2775,6 +2933,12 @@ void PlacePendingGridServer()
 
       bool canBuyFilter  = CheckEMATrend(true)  && CheckMTFFilter(true);
       bool canSellFilter = CheckEMATrend(false) && CheckMTFFilter(false);
+
+      if(UseExposureGuard && allowedExposure > 0)
+      {
+         if(canBuyFilter  && (plannedBuyLots + plannedSellLots + lot) / allowedExposure >= ExposureBlockRatio) canBuyFilter  = false;
+         if(canSellFilter && (plannedBuyLots + plannedSellLots + lot) / allowedExposure >= ExposureBlockRatio) canSellFilter = false;
+      }
 
       // BUY STOP (Async)
       if(canBuyFilter)
@@ -2795,6 +2959,7 @@ void PlacePendingGridServer()
          {
             Print("OrderSendAsync (Buy Stop) failed with error: ", GetLastError());
          }
+         plannedBuyLots += lot;
       }
 
       // SELL STOP (Async)
@@ -2816,6 +2981,7 @@ void PlacePendingGridServer()
          {
             Print("OrderSendAsync (Sell Stop) failed with error: ", GetLastError());
          }
+         plannedSellLots += lot;
       }
    }
 
@@ -2861,8 +3027,10 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
 
    // IsOneWaySideBlocked() บล็อกแค่ฝั่งที่ "หนักกว่า" ตอน DEFENSIVE เท่านั้น (V10) - อีกฝั่งยังเปิดได้
    // ปกติเสมอ ต่างจาก Time/Session/Volatility Block ที่บล็อกทั้งบาสเก็ต
-   bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true)  && CheckRSIFilter(true)  && !IsOneWaySideBlocked(true);
-   bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false) && CheckRSIFilter(false) && !IsOneWaySideBlocked(false);
+   // IsExposureBlocked() เช็ค Projected Exposure จาก Lot ที่ระดับถัดไปจริงจะใช้ (V10) - ก่อนส่ง Order
+   // เสมอ ไม่ใช่เปิดไปก่อนแล้วค่อยตรวจ
+   bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true)  && CheckRSIFilter(true)  && !IsOneWaySideBlocked(true)  && !IsExposureBlocked(true,  GetCalculatedLotSize(buyCount + 1));
+   bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false) && CheckRSIFilter(false) && !IsOneWaySideBlocked(false) && !IsExposureBlocked(false, GetCalculatedLotSize(sellCount + 1));
 
    // Level Unlock: once BOTH sides have filled every configured TotalLevels
    // (neither side has any more room, and the basket still isn't profitable),
@@ -4289,6 +4457,15 @@ void DrawRiskControlCard(int x, int y, int w, int h)
    string mcTxt = UseMarketCondition ? GetUIString(mcLabelTH, mcLabelEN) : GetUIString("ปิด", "OFF");
    color  mcTxtClr = UseMarketCondition ? mcClr : C'100,100,120';
    DrawKV(barX, ry, barW, GetUIString("สภาวะตลาด", "MARKET"), mcTxt, C'160,160,180', mcTxtClr, 12);
+   ry += S(26);
+
+   // Exposure Guard (V10) - เรียก GetExposureState()/GetExposureRatio() ตัวจริงตัวเดียวกับที่ปรับ
+   // Lot/บล็อกไม้ใหม่จริง โชว์ % เทียบ Allowed Exposure ให้เห็นว่าใกล้เพดานแค่ไหน
+   string expLabel; color expClr;
+   GetExposureStateLabel(GetExposureState(), expLabel, expClr);
+   string expTxt = UseExposureGuard ? (expLabel + " " + DoubleToString(GetExposureRatio() * 100.0, 0) + "%") : GetUIString("ปิด", "OFF");
+   color  expTxtClr = UseExposureGuard ? expClr : C'100,100,120';
+   DrawKV(barX, ry, barW, GetUIString("เอ็กซ์โพสเชอร์", "EXPOSURE"), expTxt, C'160,160,180', expTxtClr, 12);
 }
 
 // ตัด string ยาวๆ ให้พอดีคอลัมน์แคบ (Server name / ไฟล์ Journal / Basket ID) - ใช้ร่วมกันทุกการ์ด
@@ -4305,7 +4482,7 @@ string TruncateForNarrowCard(string s, int maxChars)
 // จะเหลือพื้นที่ว่างด้านล่างนิดหน่อย ซึ่งตั้งใจ ดีกว่าความสูงไม่เท่ากันแล้วแถวเยื้องกัน
 int DrawSidebarCards(int y, int openPos, int sideX, int sideW)
 {
-   int cardH = S(266); // เพิ่มจาก 240 อีกครั้งให้การ์ด Risk Control มีที่พอสำหรับแถว Market Condition (V10)
+   int cardH = S(292); // เพิ่มจาก 266 อีกครั้งให้การ์ด Risk Control มีที่พอสำหรับแถว Exposure Guard (V10)
    int gap   = S(12);
    int colW  = (sideW - gap) / 2;
    int innerW = colW - S(24);
@@ -4479,7 +4656,7 @@ int ComputeDashboardContentHeight()
    h += S(38);              // DrawServerTimeRow
    // Both columns begin at the top-card row. The sidebar continues from the
    // right edge of RISK, rather than beginning below the left dashboard.
-   int sideH = (S(266) + S(12)) * 4; // DrawSidebarCards: 2 คอลัมน์ x 4 แถว การ์ดสูงเท่ากันหมด (ต้องตรงกับ cardH ใน DrawSidebarCards)
+   int sideH = (S(292) + S(12)) * 4; // DrawSidebarCards: 2 คอลัมน์ x 4 แถว การ์ดสูงเท่ากันหมด (ต้องตรงกับ cardH ใน DrawSidebarCards)
    int leftH = (S(258) * 2 + S(12) * 2) + (S(84) + S(12)) + (S(265) + S(12)) + (S(162) + S(14));
    h += MathMax(sideH, leftH);
    return h;
