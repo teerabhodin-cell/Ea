@@ -1513,9 +1513,10 @@ void OnDeinit(const int reason)
    EventStore_LogSystem(EventTypeToString(EVENT_TYPE_SYSTEM_STOPPED), "EA deinit, reason=" + IntegerToString(reason));
    // §6.2 Evidence-Gate Design Contract Rev.8 §7.2: clears the proactive
    // session marker ONLY on an ordinary shutdown (the function itself
-   // checks g_C62IntegrityFatalHalt==false, an internal no-op otherwise -
-   // deliberately NOT cleared on an incident, which is the signal the
-   // next OnInit's own C62_EstablishSession() call reads).
+   // checks g_RolloutIntegrityFatalHalt==false, renamed by §6.1/Rev.4 -
+   // an internal no-op otherwise - deliberately NOT cleared on an
+   // incident, which is the signal the next OnInit's own
+   // C62_EstablishSession() call reads).
    C62_ClearSessionActiveMarkerOnCleanShutdown();
    EventStore_Close();
    FeatureEngine_Deinit();

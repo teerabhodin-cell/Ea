@@ -77,15 +77,15 @@ bool WriteSessionActiveMarker()
 }
 
 // §7.2's OnDeinit half: clears the marker ONLY on an ordinary shutdown
-// (g_C62IntegrityFatalHalt == false). Called from MLQuantAI.mq5's
-// OnDeinit(). A failed delete is only logged - the marker being left
-// behind on a delete failure is itself indistinguishable from (and just
-// as safely handled as) an unclean shutdown by the NEXT OnInit's own
-// CheckSessionActiveMarker() call - fail-closed either way, never a
-// silent loss of the safety property.
+// (g_RolloutIntegrityFatalHalt == false - renamed by §6.1/Rev.4, semantic
+// rename only). Called from MLQuantAI.mq5's OnDeinit(). A failed delete is
+// only logged - the marker being left behind on a delete failure is itself
+// indistinguishable from (and just as safely handled as) an unclean
+// shutdown by the NEXT OnInit's own CheckSessionActiveMarker() call -
+// fail-closed either way, never a silent loss of the safety property.
 void C62_ClearSessionActiveMarkerOnCleanShutdown()
 {
-   if(g_C62IntegrityFatalHalt)
+   if(g_RolloutIntegrityFatalHalt)
       return; // §7.1/§7.2: deliberately NOT cleared - this is the signal the next OnInit reads.
 
    ResetLastError();

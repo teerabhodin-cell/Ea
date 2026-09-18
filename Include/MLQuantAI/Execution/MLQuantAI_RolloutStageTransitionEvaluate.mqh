@@ -19,15 +19,16 @@
 //|   3. A regression (§4 rule 3/§8, rollback) is always permitted immediately,             |
 //|      evidence-free, multi-step-at-once permitted.                                        |
 //|   4. Acceptance criteria are checked PER TRANSITION PAIR, never as one lump                |
-//|      bucket (§6). §6.0 (NONE->TEST_FIXTURE, trivial) and, as of the §6.2                     |
-//|      Evidence-Gate Design Contract Rev.8 implementation (QA Implementation                     |
-//|      Authorization, 2026-09-17), §6.2 (DEMO_DRY_RUN->DEMO_REAL_SUBMIT), both                      |
-//|      now have an implemented evaluator - see                                                        |
-//|      MLQuantAI_RolloutGateReadinessEvaluate.mqh for §6.2's own evidence-                                |
-//|      checking mechanism, called one layer above this pure decision core.                                  |
-//|      §6.1/§6.3-§6.6 remain refused fail-closed - not yet frozen at all.                                     |
-//|      "Criteria not yet defined" is never treated as "criteria satisfied"                                     |
-//|      (§6's own frozen structural rule).                                                                        |
+//|      bucket (§6). §6.0 (NONE->TEST_FIXTURE, trivial), §6.1 (TEST_FIXTURE->                    |
+//|      DEMO_DRY_RUN, §6.1 Rev.4 DESIGN FREEZE) and §6.2 (DEMO_DRY_RUN->                            |
+//|      DEMO_REAL_SUBMIT, §6.2 Evidence-Gate Rev.8 DESIGN FREEZE) - all under                          |
+//|      the same QA Implementation Authorization, 2026-09-17 - now have an                               |
+//|      implemented evaluator - see MLQuantAI_RolloutStage61CrossingEvaluate.mqh                            |
+//|      and MLQuantAI_RolloutGateReadinessEvaluate.mqh respectively, both called                              |
+//|      one layer above this pure decision core.                                                                |
+//|      §6.3-§6.6 remain refused fail-closed - not yet frozen at all.                                              |
+//|      "Criteria not yet defined" is never treated as "criteria satisfied"                                         |
+//|      (§6's own frozen structural rule).                                                                            |
 //|                                                                                                              |
 //| Pure: no EventStore write, no live MT5 API, no Safe Mode, no OrderSend, no                                    |
 //| candidate-lifecycle authority. This file only ever decides ALLOW/REJECT for                                    |
@@ -84,15 +85,32 @@ bool RolloutTransitionResult_IsAllowed(ENUM_ROLLOUT_TRANSITION_RESULT r)
 // MLQuantAI_RolloutStageTransitionCommandProcess.mqh (§7 Authority
 // Boundary - never inside this pure decision core, which takes no
 // lines[] parameter and performs no EventStore read by design).
+//
+// §6.1 (TEST_FIXTURE -> DEMO_DRY_RUN), Class 2 additive amendment, QA
+// Implementation Authorization (2026-09-17), §6.1 Rev.4 §1.5 (closing
+// Rev.3's remaining gap): a SECOND previously-false case flips to true,
+// same shape as §6.2's own precedent above - every other pair's behavior
+// (including DEMO_BOUNDED_AUTOMATION -> LIVE_SHADOW, which STAYS false -
+// §6.4 does not exist) is byte-for-byte unchanged. §1.2's whitelist
+// (isDeclaredEnvironmentCrossingPair(), MLQuantAI_RolloutStage61CrossingEvaluate.mqh)
+// and this one new `true` case are driven by the SAME single declared
+// pair - never two independently-maintained lists that could drift apart
+// (§1.5's own frozen invariant). The actual RolloutStage61Crossing_Evaluate()
+// call happens one layer up, in Step 2 of
+// MLQuantAI_RolloutStageTransitionCommandProcess.mqh - never inside this
+// pure decision core, exactly mirroring §6.2's own boundary.
 bool RolloutStageTransition_IsForwardPairImplemented(ENUM_EXECUTION_ROLLOUT_STAGE fromStage, ENUM_EXECUTION_ROLLOUT_STAGE toStage)
 {
    if(fromStage == ROLLOUT_STAGE_NONE && toStage == ROLLOUT_STAGE_TEST_FIXTURE)
       return true; // §6.0 - trivial, no acceptance evidence required
 
+   if(fromStage == ROLLOUT_STAGE_TEST_FIXTURE && toStage == ROLLOUT_STAGE_DEMO_DRY_RUN)
+      return true; // §6.1 - crossing/evidence predicate now implemented, see RolloutStage61Crossing_Evaluate()
+
    if(fromStage == ROLLOUT_STAGE_DEMO_DRY_RUN && toStage == ROLLOUT_STAGE_DEMO_REAL_SUBMIT)
       return true; // §6.2 - evidence gate now implemented, see RolloutGateReadiness_Evaluate()
 
-   return false; // §6.1/§6.3-§6.6 - fail-closed until each has its own implemented evaluator
+   return false; // §6.3-§6.6 - fail-closed until each has its own implemented evaluator
 }
 
 // CALLER CONTRACT (frozen intent, NOT self-enforced by this pure

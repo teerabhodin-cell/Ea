@@ -25,9 +25,17 @@
 //| behavior is byte-for-byte unaffected by whether the durable append below                                |
 //| succeeds. A durable-append failure on ENGAGE writes an out-of-band                                        |
 //| quarantine witness file; if THAT also fails, this calls ExpertRemove()                                     |
-//| after setting g_C62IntegrityFatalHalt=true - see §7.1/§7.2/§2.2 for the                                       |
+//| after setting g_RolloutIntegrityFatalHalt=true - see §7.1/§7.2/§2.2 for the                                   |
 //| full rationale (no further "write more evidence" layer can close a                                             |
 //| double I/O failure; halting the process is what actually closes it).                                             |
+//|                                                                                                                     |
+//| §6.1 Rev.4 (QA-authorized rename, Implementation Authorization checkpoint):                                          |
+//| g_C62IntegrityFatalHalt renamed to g_RolloutIntegrityFatalHalt - semantic                                              |
+//| rename only, zero behavior change. The flag's own meaning ("a double I/O                                                |
+//| failure already halted this session's durable-evidence integrity") is                                                    |
+//| process-wide, not scoped to one checkpoint, so its identifier no longer                                                    |
+//| carries a "C62"/"§6.2" label. Both §6.2's RolloutGateReadiness_Evaluate and                                                   |
+//| §6.1's own crossing evaluator read this same flag.                                                                              |
 //+------------------------------------------------------------------+
 #ifndef __MLQUANTAI_SAFEMODESTATE_MQH__
 #define __MLQUANTAI_SAFEMODESTATE_MQH__
@@ -39,13 +47,15 @@
 bool   g_SafeMode_Active = false;
 string g_SafeMode_Reason = "";
 
-// §6.2/§2.2 (Rev.8): set to true ONLY at the one double-failure call site
-// below, immediately before ExpertRemove() - never reset to false within
-// a running process (a fresh process starts with a fresh, false, global).
-// RolloutGateReadiness_Evaluate's own final gate reads this directly, as
-// an independent guarantee alongside ExpertRemove() itself (§2.2) - not
-// relying solely on ExpertRemove()'s own call-stack semantics.
-bool g_C62IntegrityFatalHalt = false;
+// §6.2/§2.2 (Rev.8), renamed by §6.1/Rev.4 (semantic rename only): set to
+// true ONLY at the one double-failure call site below, immediately before
+// ExpertRemove() - never reset to false within a running process (a fresh
+// process starts with a fresh, false, global). RolloutGateReadiness_Evaluate's
+// own final gate (§6.2) and the §6.1 crossing evaluator's own final gate
+// both read this directly, as an independent guarantee alongside
+// ExpertRemove() itself (§2.2) - not relying solely on ExpertRemove()'s own
+// call-stack semantics.
+bool g_RolloutIntegrityFatalHalt = false;
 
 // §6.2/§7.1 (Rev.8): best-effort, out-of-band (plain file I/O, outside the
 // EventStore JSONL entirely) witness that a Safe Mode ENGAGE's own durable
@@ -93,7 +103,7 @@ void SafeMode_Trip(string reason)
          LogError("SAFE MODE: quarantine witness write ALSO failed - durable-evidence integrity cannot be established for "
                   "this incident. Halting the EA now (ExpertRemove) rather than risk a future evaluation seeing "
                   "clean-looking evidence.");
-         g_C62IntegrityFatalHalt = true;
+         g_RolloutIntegrityFatalHalt = true;
          ExpertRemove();
       }
    }

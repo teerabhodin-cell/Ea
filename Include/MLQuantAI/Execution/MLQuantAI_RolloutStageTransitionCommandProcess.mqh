@@ -17,7 +17,14 @@
 //|   1. kill switch veto (unconditional, checked first)                                      |
 //|   2. current-state cross-validity (QA's revision-2 blocker - refuses BEFORE                |
 //|      the target is even evaluated, so a stale/invalid current state can                      |
-//|      never be "laundered" through a transition that only checks its target)                    |
+//|      never be "laundered" through a transition that only checks its target).                   |
+//|      §6.1 Rev.4 §1.2 amendment (QA Implementation Authorization 2026-09-17):                      |
+//|      branches on isDeclaredEnvironmentCrossingPair(currentStage, targetStage)                      |
+//|      FIRST - false (every pair except (TEST_FIXTURE, DEMO_DRY_RUN), including                        |
+//|      (DEMO_BOUNDED_AUTOMATION, LIVE_SHADOW)) runs the ORIGINAL blanket check,                           |
+//|      byte-for-byte unchanged (Commit-2's own frozen regression test #6); true                            |
+//|      (ONLY that one declared pair) runs RolloutStage61Crossing_Evaluate()                                  |
+//|      INSTEAD of the blanket check - never both, never neither.                                               |
 //|   2.5. §6.2 Evidence-Gate (RolloutGateReadiness_Evaluate, QA Implementation              |
 //|      Authorization 2026-09-17) - inserted STRICTLY BEFORE step 3, gated to                    |
 //|      ONLY the (DEMO_DRY_RUN -> DEMO_REAL_SUBMIT) pair (§7 Authority Boundary:                    |
@@ -25,7 +32,11 @@
 //|      sealed RolloutStageTransition_IsForwardPairImplemented/_Evaluate, whose                          |
 //|      signatures stay completely unchanged). Every other pair skips this step                            |
 //|      entirely and proceeds straight to step 3, byte-for-byte unaffected.                                    |
-//|   3. RolloutStageTransition_Emit() (Commit 1, frozen, unmodified)                                  |
+//|   3. RolloutStageTransition_Emit() (Commit 1, frozen, unmodified) - §6.1 Rev.4                     |
+//|      §1.5 amendment flips RolloutStageTransition_IsForwardPairImplemented(                            |
+//|      TEST_FIXTURE, DEMO_DRY_RUN) to true (MLQuantAI_RolloutStageTransitionEvaluate.                      |
+//|      mqh), the single point of truth §1.2's whitelist and this Step 3 gate both                            |
+//|      agree on.                                                                                                |
 //|                                                                                                        |
 //| Pure with respect to its OWN inputs: lines[]/environmentMode are supplied                               |
 //| by the caller (never re-read here) - the FRESH-read discipline (§A) lives at                              |
@@ -43,6 +54,7 @@
 #include "../Infrastructure/EventStore/MLQuantAI_RolloutStageProjection.mqh"
 #include "../Infrastructure/EventStore/MLQuantAI_RolloutStageEventEmission.mqh"
 #include "MLQuantAI_RolloutGateReadinessEvaluate.mqh"
+#include "MLQuantAI_RolloutStage61CrossingEvaluate.mqh"
 
 enum ENUM_ROLLOUT_STAGE_TRANSITION_CMD_RESULT
 {
@@ -79,6 +91,15 @@ struct RolloutStageTransitionCommandResult
    // "" for every other status/pair - never consulted by any pre-existing pair's own logic.
    ENUM_ROLLOUT_GATE_READINESS_REASON        evidence_gate_reason;
    string                                    evidence_gate_diagnostic;
+   // §6.1 Rev.4 §1.2 only: populated when status == ROLLOUT_STAGE_TRANSITION_CMD_CURRENT_STATE_INVALID
+   // AND the rejection came from RolloutStage61Crossing_Evaluate() (i.e. the
+   // pair was declared per isDeclaredEnvironmentCrossingPair()) - stays at its
+   // NONE/"" default for the ORIGINAL blanket-check rejection path and every
+   // other status/pair, so a caller can always tell the two CURRENT_STATE_INVALID
+   // causes apart without the status itself needing to change (§1.2's own
+   // explicit "same rejection status" instruction).
+   ENUM_ROLLOUT_STAGE_61_CROSSING_REASON     crossing_gate_reason;
+   string                                    crossing_gate_diagnostic;
 };
 
 void RolloutStageTransitionCommandResult_Init(RolloutStageTransitionCommandResult &r)
@@ -89,6 +110,8 @@ void RolloutStageTransitionCommandResult_Init(RolloutStageTransitionCommandResul
    r.reason_code                = "";
    r.evidence_gate_reason        = ROLLOUT_GATE_READINESS_NONE;
    r.evidence_gate_diagnostic    = "";
+   r.crossing_gate_reason        = ROLLOUT_STAGE_61_CROSSING_NONE;
+   r.crossing_gate_diagnostic    = "";
 }
 
 void RolloutStageTransitionCommand_Process(ENUM_EXECUTION_ROLLOUT_STAGE targetStage, string authorizedBy, string evidenceReference,
@@ -115,11 +138,42 @@ void RolloutStageTransitionCommand_Process(ENUM_EXECUTION_ROLLOUT_STAGE targetSt
    // target is evaluated at all - closes the "laundering" scenario (an
    // already-stale current state transitioning into a fresh-looking valid
    // target without ever being flagged).
-   if(!RolloutStage_IsValidForEnvironment(outResult.current_stage, environmentMode))
+   //
+   // §6.1 Rev.4 §1.2 amendment (QA Implementation Authorization
+   // 2026-09-17): isDeclaredEnvironmentCrossingPair() is checked FIRST.
+   // False (every pair not explicitly declared, including
+   // DEMO_BOUNDED_AUTOMATION -> LIVE_SHADOW) runs the ORIGINAL blanket
+   // check below, byte-for-byte unchanged - Commit-2's own frozen
+   // regression test #6 is untouched. True (ONLY the one declared pair,
+   // TEST_FIXTURE -> DEMO_DRY_RUN) runs that pair's own dedicated crossing
+   // predicate INSTEAD of the blanket check.
+   if(!isDeclaredEnvironmentCrossingPair(outResult.current_stage, targetStage))
    {
-      outResult.status      = ROLLOUT_STAGE_TRANSITION_CMD_CURRENT_STATE_INVALID;
-      outResult.reason_code = RolloutStageTransitionCmdResultToString(outResult.status);
-      return;
+      if(!RolloutStage_IsValidForEnvironment(outResult.current_stage, environmentMode))
+      {
+         outResult.status      = ROLLOUT_STAGE_TRANSITION_CMD_CURRENT_STATE_INVALID;
+         outResult.reason_code = RolloutStageTransitionCmdResultToString(outResult.status);
+         return;
+      }
+   }
+   else
+   {
+      RolloutStage61CrossingResult crossing = RolloutStage61Crossing_Evaluate(outResult.current_stage, targetStage, lines, environmentMode);
+      if(!crossing.allow)
+      {
+         // §1.2: same rejection status AND same reason_code string as the
+         // blanket check - QA's Diff Review ruling (this checkpoint): the
+         // crossing predicate's own reason code lives ONLY in the
+         // dedicated crossing_gate_reason/crossing_gate_diagnostic fields
+         // below, never appended into reason_code, so the command layer's
+         // existing observable reason_code format is not changed for
+         // ANY pair, declared or not.
+         outResult.status                  = ROLLOUT_STAGE_TRANSITION_CMD_CURRENT_STATE_INVALID;
+         outResult.crossing_gate_reason     = crossing.reason;
+         outResult.crossing_gate_diagnostic = crossing.diagnostic;
+         outResult.reason_code              = RolloutStageTransitionCmdResultToString(outResult.status);
+         return;
+      }
    }
 
    // Step 2.5 (§6.2 only, QA Implementation Authorization 2026-09-17):

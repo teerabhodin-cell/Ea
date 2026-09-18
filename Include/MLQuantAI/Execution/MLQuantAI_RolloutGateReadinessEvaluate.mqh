@@ -32,8 +32,9 @@
 //|   9. P4c - fresh POST-P4a re-read: no durable Safe Mode engagement ever                          |
 //|      in-window, and no out-of-band quarantine witness present (catches a                          |
 //|      Safe-Mode trip self-caused by P4a's own BrokerReconciliation_CheckAll)                          |
-//|  10. §2.2 - independent g_C62IntegrityFatalHalt check (belt-and-suspenders                              |
-//|      alongside ExpertRemove() itself, see MLQuantAI_SafeModeState.mqh)                                    |
+//|  10. §2.2 - independent g_RolloutIntegrityFatalHalt check (belt-and-suspenders                          |
+//|      alongside ExpertRemove() itself, see MLQuantAI_SafeModeState.mqh; renamed                             |
+//|      from g_C62IntegrityFatalHalt by §6.1/Rev.4, semantic rename only)                                        |
 //|  11. §2.1 - final fresh re-read, compared byte-for-byte against the ORIGINAL                                |
 //|      lines[] snapshot this function was called with (size-inequality checked                                 |
 //|      first, either direction) - any mismatch is an unconditional REJECT                                        |
@@ -42,7 +43,7 @@
 //| independently confirmed true (§6) - any sub-check error is itself a REJECT,                                          |
 //| never defaulted to ALLOW.                                                                                              |
 //|                                                                                                                            |
-//| Relies on g_C62SessionEstablishmentResult/g_C62IntegrityFatalHalt (both        |
+//| Relies on g_C62SessionEstablishmentResult/g_RolloutIntegrityFatalHalt (both    |
 //| module globals defined in files included below) and on g_EventStore_FileName    |
 //| (MLQuantAI_EventStore.mqh, included transitively) as the fresh-read target for    |
 //| every *_RebuildFromFile/ReplayEngine_Run/EventStore_ReadAllLines call in this       |
@@ -451,10 +452,10 @@ RolloutGateReadinessResult RolloutGateReadiness_Evaluate(const string &lines[])
    // §2.1's own final check, so the ALLOW return below can never be
    // reached regardless of ExpertRemove()'s own call-stack-unwind
    // behavior.
-   if(g_C62IntegrityFatalHalt)
+   if(g_RolloutIntegrityFatalHalt)
    {
       result.reason     = ROLLOUT_GATE_READINESS_INTEGRITY_FATAL_HALT;
-      result.diagnostic = "§2.2: g_C62IntegrityFatalHalt is true - a prior double I/O failure already halted evidence integrity for this session";
+      result.diagnostic = "§2.2: g_RolloutIntegrityFatalHalt is true - a prior double I/O failure already halted evidence integrity for this session";
       return result;
    }
 

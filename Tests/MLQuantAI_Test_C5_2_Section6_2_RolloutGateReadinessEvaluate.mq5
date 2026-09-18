@@ -377,7 +377,7 @@ void OnStart()
    FileDelete(MLQUANTAI_SESSION_ACTIVE_FILENAME, FILE_COMMON);
    FileDelete(MLQUANTAI_SAFEMODE_WITNESS_FILENAME, FILE_COMMON);
    SafeMode_Clear();
-   g_C62IntegrityFatalHalt = false;
+   g_RolloutIntegrityFatalHalt = false;
    g_C62SessionEstablishmentResult = C62_SESSION_NOT_YET_ESTABLISHED;
    ResetAllProjections();
    BrokerSubmissionGate_Reset();
@@ -439,14 +439,14 @@ void OnStart()
    }
 
    //=====================================================================
-   Print("--- §2.2: g_C62IntegrityFatalHalt independently rejects, before §2.1 is ever reached ---");
+   Print("--- §2.2: g_RolloutIntegrityFatalHalt independently rejects, before §2.1 is ever reached ---");
    EnterFreshDemoWindowWithRestart("fatal-halt-2.2");
    {
-      g_C62IntegrityFatalHalt = true;
+      g_RolloutIntegrityFatalHalt = true;
       RolloutGateReadinessResult res = EvaluateFresh();
       Check(!res.allow, "allow == false");
       Check(res.reason == ROLLOUT_GATE_READINESS_INTEGRITY_FATAL_HALT, "reason == INTEGRITY_FATAL_HALT");
-      g_C62IntegrityFatalHalt = false; // cleanup - do not let this leak into later groups
+      g_RolloutIntegrityFatalHalt = false; // cleanup - do not let this leak into later groups
    }
 
    //=====================================================================

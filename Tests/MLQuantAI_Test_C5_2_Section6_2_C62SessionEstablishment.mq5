@@ -41,7 +41,7 @@ void OnStart()
    FileDelete(MLQUANTAI_SESSION_ACTIVE_FILENAME, FILE_COMMON);
    FileDelete(MLQUANTAI_SAFEMODE_WITNESS_FILENAME, FILE_COMMON);
    SafeMode_Clear();
-   g_C62IntegrityFatalHalt = false;
+   g_RolloutIntegrityFatalHalt = false;
    g_C62SessionEstablishmentResult = C62_SESSION_NOT_YET_ESTABLISHED;
    Check(EventStore_Open(TEST_EVENT_STORE_FILE), "setup: event store opens");
 
@@ -89,16 +89,16 @@ void OnStart()
    }
 
    //=====================================================================
-   Print("--- C62_ClearSessionActiveMarkerOnCleanShutdown() with g_C62IntegrityFatalHalt == true is a deliberate NO-OP ---");
+   Print("--- C62_ClearSessionActiveMarkerOnCleanShutdown() with g_RolloutIntegrityFatalHalt == true is a deliberate NO-OP ---");
    {
-      g_C62IntegrityFatalHalt = true;
+      g_RolloutIntegrityFatalHalt = true;
       C62_ClearSessionActiveMarkerOnCleanShutdown();
       Check(CheckSessionActiveMarker() == MARKER_CONFIRMED_PRESENT, "marker is STILL present - an incident shutdown never clears it");
-      g_C62IntegrityFatalHalt = false; // cleanup
+      g_RolloutIntegrityFatalHalt = false; // cleanup
    }
 
    //=====================================================================
-   Print("--- C62_ClearSessionActiveMarkerOnCleanShutdown() with g_C62IntegrityFatalHalt == false clears it, restart can re-establish cleanly ---");
+   Print("--- C62_ClearSessionActiveMarkerOnCleanShutdown() with g_RolloutIntegrityFatalHalt == false clears it, restart can re-establish cleanly ---");
    {
       C62_ClearSessionActiveMarkerOnCleanShutdown();
       Check(CheckSessionActiveMarker() == MARKER_CONFIRMED_ABSENT, "marker is gone after an ordinary clean shutdown");
