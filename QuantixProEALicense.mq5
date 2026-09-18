@@ -1779,6 +1779,26 @@ int OnInit()
       }
    }
 
+   // FIXED: GetCalculatedLotSize()/TryOpenForceHedgeOrder() ทั้งคู่ apply MaxLotCap ก่อน
+   // broker normalization เสมอ แต่ normalization เองมีขั้น "if(lot < minVol) lot = minVol"
+   // ต่อจากนั้น - ถ้า SYMBOL_VOLUME_MIN ของโบรกเกอร์สูงกว่า MaxLotCap ที่ตั้งไว้ ขั้นนี้จะดัน Lot
+   // กลับขึ้นไปเกินเพดานอย่างเงียบๆ ทุกไม้ (ตรงกับที่ผู้ใช้รายงานว่าเห็น Lot ใหญ่กว่าค่าที่ตั้งไว้ใน Set)
+   // เพดานที่ผู้ใช้ตั้งเลยกลายเป็นค่าที่ไม่มีทางเป็นจริงได้เลยกับสัญลักษณ์นี้ - ต้องเช็คแล้วบล็อกตั้งแต่
+   // OnInit() ไม่ปล่อยให้ EA รันแล้วละเมิดเพดานทุกไม้แบบไม่มีใครรู้
+   if(UseMaxLotCap && MaxLotCap > 0)
+   {
+      double symbolMinVol = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+      if(symbolMinVol > 0 && MaxLotCap < symbolMinVol)
+      {
+         string capMsg = StringFormat(
+            "MaxLotCap (%.2f) is BELOW this symbol's minimum volume (%.2f) - every order would be forced back above your cap by broker rules. Raise MaxLotCap to at least %.2f.",
+            MaxLotCap, symbolMinVol, symbolMinVol);
+         Print("❌ [CONFIG ERROR] ", capMsg);
+         Alert(capMsg);
+         return(INIT_PARAMETERS_INCORRECT);
+      }
+   }
+
    // DIAGNOSTIC: บอกเหตุผลที่ OnInit() ถูกเรียกครั้งนี้ (REASON_REMOVE/CHARTCLOSE/RECOMPILE/
    // PARAMETERS/TEMPLATE/... ) กับค่า GridBasePrice ก่อนจะ reconcile - เอาไว้หาสาเหตุบั๊ก
    // "ฐานค้างค่าเก่า" ตอนเปิด EA กลับมาหลังปิดกราฟ/สลับ EA (ปัญหาฝั่งไลฟ์เท่านั้น) - ปิดตอน backtest
@@ -2776,6 +2796,7 @@ void ClearEverythingAsync()
       }
 
       // ส่งคำสั่งปิดออเดอร์
+      bool autoTradingDisabled = false;
       for(int i = 0; i < count; i++)
       {
          if(!PositionSelectByTicket(tickets[i])) continue;
@@ -2805,7 +2826,20 @@ void ClearEverythingAsync()
          if(!OrderSendAsync(request, result))
          {
             Print("Clear Position OrderSendAsync failed: ", GetLastError(), " retcode: ", result.retcode);
+            // FIXED: เดิม retry loop นี้ตีความความล้มเหลวทุกแบบเป็นปัญหาชั่วคราวแล้ววนซ้ำจนครบ 10 รอบ
+            // (20ms/รอบ) เสมอ - แต่ AutoTrading ถูกปิดโดยเซิร์ฟเวอร์/เทอร์มินัลเป็นสภาวะที่ retry ซ้ำๆ ใน
+            // เวลาไม่ถึงวินาทีไม่มีทางสำเร็จเลย มีแต่ยิง OrderSendAsync รัว 7-8 ครั้งไม่มีประโยชน์ ต้องเลิก
+            // retry loop นี้ทันทีแทน แล้วให้รอบ tick ปกติถัดไปจัดการต่อ (ซึ่งจะเจอเงื่อนไขเดิมและลอง
+            // ClearEverythingAsync() ใหม่เองอยู่แล้วถ้ายังต้องปิดบาสเก็ต)
+            if(result.retcode == TRADE_RETCODE_SERVER_DISABLES_AT || result.retcode == TRADE_RETCODE_CLIENT_DISABLES_AT)
+               autoTradingDisabled = true;
          }
+      }
+
+      if(autoTradingDisabled)
+      {
+         Print("⛔ [AUTOTRADING DISABLED] Broker/terminal disabled automated trading - stopping the close-retry loop early instead of hammering OrderSendAsync. Will retry once AutoTrading is back on.");
+         break;
       }
 
       retryCount++;
