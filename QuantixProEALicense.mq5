@@ -1769,7 +1769,14 @@ double GetCalculatedLotSize(int nextLevel)
    // "accelerate recovery when the account has accumulated losses". Now it only
    // boosts once MaxDrawdownPercent actually crosses RecoveryDD_TriggerPercent, by
    // the configurable RecoveryLotBoost multiplier.
-   if(UseRecoveryMode && MaxDrawdownPercent >= RecoveryDD_TriggerPercent)
+   // Smart Recovery 2.0 (V10, stage 1): Recovery มีสิทธิ์เพิ่ม Lot แต่ไม่มีสิทธิ์เพิ่มความเสี่ยงทะลุ
+   // เพดานของ Exposure Guard - ถ้า Exposure เข้า RESTRICTED/BLOCK อยู่แล้ว (บาสเก็ตแบกความเสี่ยงสูงอยู่ก่อน
+   // ที่จะ boost ด้วยซ้ำ) Boost จะถูกปิดทันทีตรงนี้เลย ไม่ใช่แค่รอให้ Exposure Factor/Gate ปลายทาง
+   // ลดทอนทีหลังเหมือน Lot ประเภทอื่น เพราะการ boost ตอนความเสี่ยงสูงอยู่แล้วคือสถานการณ์อันตรายที่สุด
+   // (Market Condition-based boost sizing และ multi-stage DD thresholds ยังไม่ทำในรอบนี้ - deferred)
+   ENUM_EXPOSURE_STATE recoveryExposureState = GetExposureState();
+   bool recoveryExposureSafe = (recoveryExposureState != EXPOSURE_RESTRICTED && recoveryExposureState != EXPOSURE_BLOCK);
+   if(UseRecoveryMode && MaxDrawdownPercent >= RecoveryDD_TriggerPercent && recoveryExposureSafe)
    {
       lot = lot * RecoveryLotBoost;
    }
