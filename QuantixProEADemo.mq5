@@ -96,6 +96,19 @@ enum ENUM_CONNECTION_STATE
    CONN_EMERGENCY      // = TradingHalted (Max Total DD Guard) - อ่านจากตัวแปรเดิม ไม่สร้างเงื่อนไขซ้ำ
 };
 
+// Smart One-Way Protection (V10) - state machine ตรวจจับ "ราคาวิ่งสวน Basket ทางเดียวต่อเนื่อง"
+// จาก 3 ปัจจัย normalize ด้วย ATR/สัดส่วน (ไม่ใช้ระยะจุดคงที่แบบ "500 จุด = One-Way" ตายตัว):
+// ระยะห่างจาก GridBasePrice เทียบ ATR, ความลึก Level ของฝั่งที่หนักกว่า, และ DD ที่เพิ่มต่อเนื่อง
+// EMERGENCY อ่านจาก TradingHalted ตัวเดียวกับ Connection Guard ไม่สร้างเงื่อนไข "เสี่ยงสูงสุด" ซ้ำอีกชุด
+enum ENUM_ONEWAY_STATE
+{
+   ONEWAY_NORMAL,
+   ONEWAY_WARNING,     // ลด Lot เล็กน้อย + ขยาย Grid เล็กน้อย
+   ONEWAY_ONE_WAY,     // ลด Lot เพิ่ม + ขยาย Grid เพิ่ม (เปิดไม้ถี่น้อยลง)
+   ONEWAY_DEFENSIVE,   // บล็อกฝั่งที่หนักกว่า (กำลังแพ้) ไม่ให้เปิดไม้เพิ่ม - อีกฝั่งยังเปิดได้ปกติ
+   ONEWAY_EMERGENCY    // = TradingHalted
+};
+
 //=========================== INPUT ================================//
 input group "===== 1. Time & Language ====="
 input ENUM_LANGUAGE Language = LNG_TH; // Select Language ( default: Thai )
@@ -286,6 +299,22 @@ input group "===== 14. Emergency Connection Protection (V9) ====="
 input bool UseConnectionGuard           = true;  // Use Emergency Connection & Power Protection
 input int  ConnectionResumeCooldownSec  = 30;    // Resume Cooldown After Reconnect, Sec (ช่วง RECOVERING)
 
+// One-Way Score รวม 3 ปัจจัย normalize แล้ว (0..1 ต่อตัว) ด้วยน้ำหนัก 40/35/25: ระยะห่างจาก GridBasePrice
+// เทียบ ATR (OneWayDistanceATRMultiples) / ความลึก Level ของฝั่งที่หนักกว่าเทียบ TotalLevels / DD ที่เพิ่ม
+// ต่อเนื่องในช่วง OneWayDDLookbackSec วินาที - ไม่ใช้ระยะจุดคงที่ตายตัวเลย ตามที่ตั้งใจออกแบบไว้
+input group "===== 15. Smart One-Way Protection (V10) ====="
+input bool   UseOneWayProtection       = false;  // Use Smart One-Way Protection
+input double OneWayWarnScore          = 0.25;   // Score Threshold: NORMAL -> WARNING
+input double OneWayActiveScore        = 0.50;   // Score Threshold: WARNING -> ONE-WAY
+input double OneWayDefensiveScore     = 0.75;   // Score Threshold: ONE-WAY -> DEFENSIVE
+input double OneWayDistanceATRMultiples = 3.0;  // ATR Multiples from Grid Base = Max Distance Factor
+input int    OneWayDDLookbackSec      = 30;     // DD Momentum Lookback, Sec
+input double OneWayWarnLotFactor      = 0.85;   // Lot Factor at WARNING
+input double OneWayActiveLotFactor    = 0.65;   // Lot Factor at ONE-WAY
+input double OneWayDefensiveLotFactor = 0.45;   // Lot Factor at DEFENSIVE (ฝั่งที่ยังเปิดได้)
+input double OneWayWarnGridFactor     = 1.15;   // Grid Distance Factor at WARNING
+input double OneWayActiveGridFactor   = 1.35;   // Grid Distance Factor at ONE-WAY
+
 //=========================== GLOBAL ===============================//
 
 bool     GridCreated     = false;
@@ -341,6 +370,12 @@ double   MaxDrawdownUSD     = 0.0;
 // ใช้คุม DD สะสมของทั้งพอร์ตตั้งแต่เริ่ม EA
 double   AccountPeakBalanceAllTime = 0.0;
 bool     TradingHalted              = false; // true = ทะลุ MaxTotalDD_Pct แล้ว หยุดเปิดไม้ใหม่ถาวรจนกว่าจะ restart EA
+
+// Smart One-Way Protection (V10): snapshot ค่า DD ล่าสุดที่เก็บไว้เทียบความ "เพิ่มต่อเนื่อง" -
+// รีเฟรช snapshot ใหม่ทุก OneWayDDLookbackSec วินาที ไม่ต้อง reset ตอนบาสเก็ตปิดเพราะ MaxDrawdownPercent
+// กลับไปที่ 0 เองแล้ว รอบถัดไปจะเทียบจาก 0 โดยอัตโนมัติ
+double   OneWayDDSnapshotValue = 0.0;
+datetime OneWayDDSnapshotTime  = 0;
 
 // Basket Management & Recovery
 bool     PartialCloseExecuted = false; // ป้องกันการสั่งปิดบางส่วนซ้ำรอบเดิม
@@ -398,6 +433,8 @@ int      emaHandle       = INVALID_HANDLE;
 int      mtfEmaHandle    = INVALID_HANDLE;
 int      bbHandle        = INVALID_HANDLE;
 int      rsiHandle       = INVALID_HANDLE;
+int      oneWayAtrHandle = INVALID_HANDLE; // handleแยกของ One-Way Protection เอง - ทำงานได้แม้ปิด
+                                            // UseATRDistance (atrHandle หลักไม่ได้ถูกสร้างตอนนั้น)
 
 // --- [ UI OPTIMIZATION GLOBAL VARS ] ---
 uint     lastUIUpdateTime = 0;
@@ -457,6 +494,11 @@ bool IsSessionBlocked();
 void UpdateConnectionGuard();
 ENUM_CONNECTION_STATE GetConnectionState();
 bool IsConnectionBlocked();
+ENUM_ONEWAY_STATE GetOneWayState();
+double GetOneWayLotFactor();
+double GetOneWayGridFactor();
+bool IsOneWaySideBlocked(bool isBuy);
+void CountPositions(int &buyCount, int &sellCount, double &totalLots);
 void RecalculateBasePrice();
 void ReconcileGridStateOnInit();
 ENUM_ORDER_TYPE_FILLING GetBestFillingMode();
@@ -846,6 +888,147 @@ void GetConnectionStateLabel(ENUM_CONNECTION_STATE s, string &label, color &clr)
       case CONN_PROTECTED:     label = "🟠 " + GetUIString("ป้องกันอยู่", "PROTECTED");              clr = C'251,146,60'; break;
       case CONN_EMERGENCY:     label = "🔴 " + GetUIString("ฉุกเฉิน", "EMERGENCY");                  clr = C'239,68,68'; break;
       default:                 label = "🟢 " + GetUIString("ปกติ", "NORMAL");                       clr = C'34,197,94'; break;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Smart One-Way Protection (V10)                                    |
+//| 3 ปัจจัย normalize เป็น 0..1 แล้วรวมด้วยน้ำหนัก 40/35/25 - ไม่ใช้      |
+//| "500 จุด = One-Way" แบบตายตัวเลย ตามที่ผู้ใช้ระบุไว้ตั้งแต่แรก           |
+//+------------------------------------------------------------------+
+
+// ระยะห่างจาก GridBasePrice (จุดอ้างอิงที่บาสเก็ตนี้เริ่ม) เทียบ ATR สด - ยิ่งราคาวิ่งสวนไปไกลกว่า
+// ATR ปัจจุบันหลายเท่า ยิ่งสะท้อนว่า "วิ่งทางเดียวต่อเนื่อง" มากกว่าแค่ผันผวนปกติ ใช้ ATR เป็นตัว
+// normalize แทนระยะจุดคงที่ เพราะระยะที่ "ผิดปกติ" มีความหมายต่างกันไปตามความผันผวนของตลาด ณ ขณะนั้น
+double GetOneWayDistanceFactor()
+{
+   if(oneWayAtrHandle == INVALID_HANDLE || GridBasePrice <= 0) return 0.0;
+
+   double atrValues[];
+   ArraySetAsSeries(atrValues, true);
+   if(CopyBuffer(oneWayAtrHandle, 0, 1, 1, atrValues) <= 0 || atrValues[0] <= 0) return 0.0;
+
+   double bidNow  = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double askNow  = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double midNow  = (bidNow > 0 && askNow > 0) ? (bidNow + askNow) / 2.0 : 0.0;
+   if(midNow <= 0) return 0.0;
+
+   double distancePrice = MathAbs(midNow - GridBasePrice);
+   double atrMultiples  = distancePrice / atrValues[0];
+   if(OneWayDistanceATRMultiples <= 0) return 0.0;
+
+   return MathMax(0.0, MathMin(1.0, atrMultiples / OneWayDistanceATRMultiples));
+}
+
+// ความลึก Level ของฝั่งที่มีไม้มากกว่า (ฝั่งที่ Grid กำลังไล่ถ่วงราคาสวนทาง) เทียบ TotalLevels
+double GetOneWayGridDepthFactor()
+{
+   int buyCount, sellCount; double totalLots;
+   CountPositions(buyCount, sellCount, totalLots);
+   int heavier = MathMax(buyCount, sellCount);
+   if(TotalLevels <= 0) return 0.0;
+   return MathMax(0.0, MathMin(1.0, (double)heavier / (double)TotalLevels));
+}
+
+// DD ที่ "เพิ่มต่อเนื่อง" เทียบกับ snapshot ที่เก็บไว้เมื่อ OneWayDDLookbackSec วินาทีก่อน (ไม่ใช่แค่ DD
+// สูงเฉยๆ - ต้องกำลังไต่ขึ้นด้วย) รีเฟรช snapshot ใหม่ทุกครั้งที่ครบรอบเวลา
+double GetOneWayDDMomentumFactor()
+{
+   if(OneWayDDSnapshotTime == 0)
+   {
+      OneWayDDSnapshotTime  = TimeCurrent();
+      OneWayDDSnapshotValue = MaxDrawdownPercent;
+      return 0.0;
+   }
+
+   double factor = 0.0;
+   if(MaxDrawdownPercent > OneWayDDSnapshotValue)
+   {
+      double deltaPct = MaxDrawdownPercent - OneWayDDSnapshotValue;
+      // 5 percentage point ของ DD ที่เพิ่มขึ้นภายในหนึ่งรอบ lookback ถือว่าถึง factor สูงสุดแล้ว
+      factor = MathMax(0.0, MathMin(1.0, deltaPct / 5.0));
+   }
+
+   if(TimeCurrent() - OneWayDDSnapshotTime >= OneWayDDLookbackSec)
+   {
+      OneWayDDSnapshotTime  = TimeCurrent();
+      OneWayDDSnapshotValue = MaxDrawdownPercent;
+   }
+
+   return factor;
+}
+
+double GetOneWayScore()
+{
+   if(!UseOneWayProtection) return 0.0;
+   double distF  = GetOneWayDistanceFactor();
+   double depthF = GetOneWayGridDepthFactor();
+   double ddF    = GetOneWayDDMomentumFactor();
+   return MathMax(0.0, MathMin(1.0, distF * 0.40 + depthF * 0.35 + ddF * 0.25));
+}
+
+// ตัวอ่านสถานะจริงตัวเดียว - EMERGENCY อ่านจาก TradingHalted จุดเดียว (เหมือน CONN_EMERGENCY) ไม่สร้าง
+// เงื่อนไข "เสี่ยงสูงสุด" แยกอีกชุด ป้องกัน pattern diagnostic-duplication แบบที่เจอมาแล้วหลายรอบในไฟล์นี้
+ENUM_ONEWAY_STATE GetOneWayState()
+{
+   if(!UseOneWayProtection) return ONEWAY_NORMAL;
+   if(TradingHalted) return ONEWAY_EMERGENCY;
+
+   double score = GetOneWayScore();
+   if(score >= OneWayDefensiveScore) return ONEWAY_DEFENSIVE;
+   if(score >= OneWayActiveScore)    return ONEWAY_ONE_WAY;
+   if(score >= OneWayWarnScore)      return ONEWAY_WARNING;
+   return ONEWAY_NORMAL;
+}
+
+double GetOneWayLotFactor()
+{
+   switch(GetOneWayState())
+   {
+      case ONEWAY_WARNING:   return OneWayWarnLotFactor;
+      case ONEWAY_ONE_WAY:   return OneWayActiveLotFactor;
+      case ONEWAY_DEFENSIVE: return OneWayDefensiveLotFactor;
+      default:               return 1.0;
+   }
+}
+
+// DEFENSIVE ไม่ขยาย Grid เพิ่มอีก (ใช้ "บล็อกฝั่งที่แพ้" แทนแล้ว) - มีผลแค่ WARNING/ONE-WAY เท่านั้น
+double GetOneWayGridFactor()
+{
+   switch(GetOneWayState())
+   {
+      case ONEWAY_WARNING: return OneWayWarnGridFactor;
+      case ONEWAY_ONE_WAY: return OneWayActiveGridFactor;
+      default:              return 1.0;
+   }
+}
+
+// ฝั่งที่ "หนักกว่า" ตอนนี้ (มีไม้มากกว่าอีกฝั่ง) = ฝั่งที่ราคากำลังวิ่งสวนอยู่ - เท่ากันถือว่าไม่มีฝั่งไหนหนัก
+bool IsOneWayHeavierSide(bool isBuy)
+{
+   int buyCount, sellCount; double totalLots;
+   CountPositions(buyCount, sellCount, totalLots);
+   return isBuy ? (buyCount > sellCount) : (sellCount > buyCount);
+}
+
+// ตัวตัดสินใจจริงตัวเดียวที่ห้ามเปิดไม้เพิ่มฝั่งที่แพ้ตอน DEFENSIVE - เรียกจากจุดเปิดไม้จริงเท่านั้น
+// อีกฝั่ง (ที่ไม่หนัก) ยังเปิดได้ตามปกติเสมอ ไม่บล็อกทั้งบาสเก็ตเหมือน Session Block/Time Block
+bool IsOneWaySideBlocked(bool isBuy)
+{
+   if(GetOneWayState() != ONEWAY_DEFENSIVE) return false;
+   return IsOneWayHeavierSide(isBuy);
+}
+
+// แปล ENUM_ONEWAY_STATE เป็นข้อความ/สีสำหรับ Dashboard เท่านั้น ไม่มี logic ตัดสินใจ
+void GetOneWayStateLabel(ENUM_ONEWAY_STATE s, string &label, color &clr)
+{
+   switch(s)
+   {
+      case ONEWAY_WARNING:   label = "🟡 " + GetUIString("เตือน", "WARNING");     clr = C'251,193,7';  break;
+      case ONEWAY_ONE_WAY:   label = "🟠 " + GetUIString("ทางเดียว", "ONE-WAY");   clr = C'251,146,60'; break;
+      case ONEWAY_DEFENSIVE: label = "🔴 " + GetUIString("ป้องกันตัว", "DEFENSIVE"); clr = C'239,68,68';  break;
+      case ONEWAY_EMERGENCY: label = "🔴 " + GetUIString("ฉุกเฉิน", "EMERGENCY");  clr = C'239,68,68';  break;
+      default:                label = "🟢 " + GetUIString("ปกติ", "NORMAL");      clr = C'34,197,94';  break;
    }
 }
 
@@ -1309,10 +1492,16 @@ double GetCalculatedLotSize(int nextLevel)
       lot = lot * smartFactor;
 
    // Session Lot Multiplier: ต่อจาก Smart Lot ก่อนถึง Max Lot Cap/broker normalization ด้านล่าง
-   // (Base Lot -> Dynamic Equity -> Smart Lot -> Session Factor -> Max Lot Cap -> Final Lot)
+   // (Base Lot -> Dynamic Equity -> Smart Lot -> Session Factor -> One-Way Factor -> Max Lot Cap -> Final Lot)
    double sessionLotFactor = GetSessionLotMultiplier();
    if(sessionLotFactor != 1.0)
       lot = lot * sessionLotFactor;
+
+   // One-Way Factor: ลด Lot เพิ่มอีกชั้นเมื่อราคาวิ่งสวน Basket ทางเดียวต่อเนื่อง (V10) - ทำงานหลัง
+   // Session Factor ก่อนถึง Max Lot Cap เสมอ ตามลำดับเดียวกับ Smart Lot/Session ด้านบน
+   double oneWayLotFactor = GetOneWayLotFactor();
+   if(oneWayLotFactor < 1.0)
+      lot = lot * oneWayLotFactor;
 
    lot = MathMax(0.01, lot);
 
@@ -1784,6 +1973,18 @@ int OnInit()
       }
    }
 
+   // Smart One-Way Protection (V10) ใช้ ATR ของตัวเองแยกจาก atrHandle หลัก เพราะต้องทำงานได้แม้ปิด
+   // UseATRDistance ไว้ (เช่น ใช้ Fixed Distance หรือ BB Distance สำหรับ Grid แต่ยังอยากให้ One-Way ทำงาน)
+   if(UseOneWayProtection)
+   {
+      oneWayAtrHandle = iATR(_Symbol, _Period, ATR_Period);
+      if(oneWayAtrHandle == INVALID_HANDLE)
+      {
+         Print("Failed to create One-Way Protection ATR indicator handle.");
+         return(INIT_FAILED);
+      }
+   }
+
    // DIAGNOSTIC: บอกเหตุผลที่ OnInit() ถูกเรียกครั้งนี้ (REASON_REMOVE/CHARTCLOSE/RECOMPILE/
    // PARAMETERS/TEMPLATE/... ) กับค่า GridBasePrice ก่อนจะ reconcile - เอาไว้หาสาเหตุบั๊ก
    // "ฐานค้างค่าเก่า" ตอนเปิด EA กลับมาหลังปิดกราฟ/สลับ EA (ปัญหาฝั่งไลฟ์เท่านั้น) - ปิดตอน backtest
@@ -1818,6 +2019,7 @@ void OnDeinit(const int reason)
    if(mtfEmaHandle != INVALID_HANDLE) IndicatorRelease(mtfEmaHandle);
    if(bbHandle != INVALID_HANDLE) IndicatorRelease(bbHandle);
    if(rsiHandle != INVALID_HANDLE) IndicatorRelease(rsiHandle);
+   if(oneWayAtrHandle != INVALID_HANDLE) IndicatorRelease(oneWayAtrHandle);
    DeleteVisualTSLine();
    DeleteDashboard();
 }
@@ -2264,7 +2466,7 @@ int GetDynamicGridDistanceBase()
 int GetDynamicGridDistance()
 {
    int base = GetDynamicGridDistanceBase();
-   double factor = GetSessionGridMultiplier();
+   double factor = GetSessionGridMultiplier() * GetOneWayGridFactor();
    if(factor == 1.0) return base;
    return (int)MathMax(10 * m_multiplier, MathRound(base * factor));
 }
@@ -2456,8 +2658,10 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
    int adjGapLimit = MaxAllowedGapPoints * m_multiplier;
    int adjSpread   = MaxSpreadAllowed * m_multiplier;
 
-   bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true)  && CheckRSIFilter(true);
-   bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false) && CheckRSIFilter(false);
+   // IsOneWaySideBlocked() บล็อกแค่ฝั่งที่ "หนักกว่า" ตอน DEFENSIVE เท่านั้น (V10) - อีกฝั่งยังเปิดได้
+   // ปกติเสมอ ต่างจาก Time/Session/Volatility Block ที่บล็อกทั้งบาสเก็ต
+   bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true)  && CheckRSIFilter(true)  && !IsOneWaySideBlocked(true);
+   bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false) && CheckRSIFilter(false) && !IsOneWaySideBlocked(false);
 
    // Level Unlock: once BOTH sides have filled every configured TotalLevels
    // (neither side has any more room, and the basket still isn't profitable),
@@ -3867,6 +4071,14 @@ void DrawRiskControlCard(int x, int y, int w, int h)
    string volTxt = volHigh ? GetUIString("สูงเกินไป", "HIGH") : (volLow ? GetUIString("ต่ำเกินไป", "LOW") : GetUIString("ปกติ", "NORMAL"));
    color  volClr = volHigh ? C'239,68,68' : (volLow ? C'251,146,60' : C'34,197,94');
    DrawKV(barX, ry, barW, GetUIString("ความผันผวน", "VOLATILITY"), volTxt, C'160,160,180', volClr, 12);
+   ry += S(26);
+
+   // One-Way Protection (V10) - เรียก GetOneWayState() ตัวจริงตัวเดียวกับที่ปรับ Lot/Grid/บล็อกฝั่งจริง
+   string owLabel; color owClr;
+   GetOneWayStateLabel(GetOneWayState(), owLabel, owClr);
+   string owTxt = UseOneWayProtection ? owLabel : GetUIString("ปิด", "OFF");
+   color  owTxtClr = UseOneWayProtection ? owClr : C'100,100,120';
+   DrawKV(barX, ry, barW, GetUIString("ป้องกันทางเดียว", "ONE-WAY"), owTxt, C'160,160,180', owTxtClr, 12);
 }
 
 // ตัด string ยาวๆ ให้พอดีคอลัมน์แคบ (Server name / ไฟล์ Journal / Basket ID) - ใช้ร่วมกันทุกการ์ด
