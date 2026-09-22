@@ -591,8 +591,10 @@ void UpdateConnectionGuard();
 ENUM_CONNECTION_STATE GetConnectionState();
 bool IsConnectionBlocked();
 ENUM_ONEWAY_STATE GetOneWayState();
+double GetOneWayLotFactorFor(ENUM_ONEWAY_STATE state);
 double GetOneWayLotFactor();
 double GetOneWayGridFactor();
+bool IsOneWaySideBlockedFor(ENUM_ONEWAY_STATE state, bool isBuy);
 bool IsOneWaySideBlocked(bool isBuy);
 void CountPositions(int &buyCount, int &sellCount, double &totalLots);
 ENUM_MARKET_CONDITION GetMarketCondition();
@@ -1093,15 +1095,23 @@ ENUM_ONEWAY_STATE GetOneWayState()
    return ONEWAY_NORMAL;
 }
 
-double GetOneWayLotFactor()
+// แยกจาก GetOneWayLotFactor() เพื่อให้ caller ที่คำนวณ GetOneWayState() ไว้แล้วเพื่อเหตุผลอื่น (เช่น
+// EvaluateRiskEngine) ส่งค่าที่มีอยู่แล้วมาใช้ต่อได้เลย แทนที่จะต้องเรียก GetOneWayState() ซ้ำอีกรอบ (อ่าน
+// ATR buffer ซ้ำผ่าน GetOneWayScore() โดยไม่จำเป็น) - single source of truth ของ switch นี้ยังมีจุดเดียว
+double GetOneWayLotFactorFor(ENUM_ONEWAY_STATE state)
 {
-   switch(GetOneWayState())
+   switch(state)
    {
       case ONEWAY_WARNING:   return OneWayWarnLotFactor;
       case ONEWAY_ONE_WAY:   return OneWayActiveLotFactor;
       case ONEWAY_DEFENSIVE: return OneWayDefensiveLotFactor;
       default:               return 1.0;
    }
+}
+
+double GetOneWayLotFactor()
+{
+   return GetOneWayLotFactorFor(GetOneWayState());
 }
 
 // DEFENSIVE ไม่ขยาย Grid เพิ่มอีก (ใช้ "บล็อกฝั่งที่แพ้" แทนแล้ว) - มีผลแค่ WARNING/ONE-WAY เท่านั้น
@@ -1123,12 +1133,19 @@ bool IsOneWayHeavierSide(bool isBuy)
    return isBuy ? (buyCount > sellCount) : (sellCount > buyCount);
 }
 
+// แยกจาก IsOneWaySideBlocked() เพื่อให้ caller ที่คำนวณ GetOneWayState() ไว้แล้วเพื่อเหตุผลอื่น (เช่น
+// EvaluateRiskEngine) ส่งค่าที่มีอยู่แล้วมาใช้ต่อได้เลย แทนที่จะต้องเรียก GetOneWayState() ซ้ำอีกรอบ
+bool IsOneWaySideBlockedFor(ENUM_ONEWAY_STATE state, bool isBuy)
+{
+   if(state != ONEWAY_DEFENSIVE) return false;
+   return IsOneWayHeavierSide(isBuy);
+}
+
 // ตัวตัดสินใจจริงตัวเดียวที่ห้ามเปิดไม้เพิ่มฝั่งที่แพ้ตอน DEFENSIVE - เรียกจากจุดเปิดไม้จริงเท่านั้น
 // อีกฝั่ง (ที่ไม่หนัก) ยังเปิดได้ตามปกติเสมอ ไม่บล็อกทั้งบาสเก็ตเหมือน Session Block/Time Block
 bool IsOneWaySideBlocked(bool isBuy)
 {
-   if(GetOneWayState() != ONEWAY_DEFENSIVE) return false;
-   return IsOneWayHeavierSide(isBuy);
+   return IsOneWaySideBlockedFor(GetOneWayState(), isBuy);
 }
 
 // แปล ENUM_ONEWAY_STATE เป็นข้อความ/สีสำหรับ Dashboard เท่านั้น ไม่มี logic ตัดสินใจ
@@ -1349,7 +1366,12 @@ bool IsExposureBlocked(bool isBuy, double candidateLot)
    double projectedRatio = (buyLots + sellLots + candidateLot) / allowed;
    if(projectedRatio >= ExposureBlockRatio) return true;
 
-   if(GetExposureState() == EXPOSURE_RESTRICTED)
+   // เดิมเรียก GetExposureState() ตรงนี้ (สแกน PositionsTotal() ซ้ำอีกรอบผ่าน GetExposureRatio() ข้างใน) -
+   // currentRatio คำนวณจาก buyLots/sellLots ที่ดึงมาแล้วด้านบนได้เลย ไม่ต้องดึงซ้ำ ผลลัพธ์เดียวกันเป๊ะ
+   // (currentRatio <= projectedRatio เสมอเพราะ candidateLot >= 0 เสมอ และเรารู้แล้วว่า projectedRatio <
+   // ExposureBlockRatio จากเช็คด้านบน เลยรู้แน่นอนว่า currentRatio < ExposureBlockRatio ด้วย ไม่ต้องเช็คซ้ำ)
+   double currentRatio = (buyLots + sellLots) / allowed;
+   if(currentRatio >= ExposureRestrictedRatio)
    {
       bool isHeavierSide = isBuy ? (buyLots >= sellLots) : (sellLots >= buyLots);
       if(isHeavierSide) return true;
@@ -1531,7 +1553,12 @@ SRiskDecision EvaluateRiskEngine(bool isBuy, double candidateLot)
       d.decision = RISK_BLOCK; d.blocked = true; d.reason = "News Blackout";
       return d;
    }
-   if(IsOneWaySideBlocked(isBuy))
+
+   // คำนวณ GetOneWayState() ครั้งเดียวใช้ต่อทั้ง Block check และ Reduce check ด้านล่าง แทนที่จะเรียก
+   // IsOneWaySideBlocked()/GetOneWayLotFactor() แยกกัน (แต่ละตัวเรียก GetOneWayState() ของตัวเองซ้ำ อ่าน
+   // ATR buffer ซ้ำโดยไม่จำเป็น)
+   ENUM_ONEWAY_STATE owState = GetOneWayState();
+   if(IsOneWaySideBlockedFor(owState, isBuy))
    {
       d.decision = RISK_BLOCK; d.blocked = true; d.reason = "One-Way Defensive";
       return d;
@@ -1547,7 +1574,7 @@ SRiskDecision EvaluateRiskEngine(bool isBuy, double candidateLot)
       return d;
    }
 
-   if(GetOneWayLotFactor() < 1.0 || GetExposureLotFactor() < 1.0 || GetMarginLotFactor() < 1.0)
+   if(GetOneWayLotFactorFor(owState) < 1.0 || GetExposureLotFactor() < 1.0 || GetMarginLotFactor() < 1.0)
    {
       d.decision = RISK_REDUCE;
       d.reason   = "Reduced Lot";
@@ -2805,6 +2832,11 @@ void OnTick()
    // ด้านล่าง ผ่าน !BasketStagnant) แล้วรอให้กำไรฟื้นกลับมาถึง StagnationRecoveryProfit ค่อยปิด ไม่ realize
    // loss แค่เพราะครบเวลา - Max DD Stop/Total DD Guard/Emergency SL ที่มีอยู่แล้วยังเป็นเบรกสุดท้ายเหมือนเดิม
    // ไม่ทับซ้อนกับกลไกนี้เลย
+   // ปิด UseBasketStagnation ระหว่างที่ latch ค้างอยู่ (เช่น เพิ่งปิดฟีเจอร์นี้แต่บาสเก็ตเดิมยังเปิดค้าง) ต้อง
+   // ปลดล็อก entry gate ที่ Section 3 ทันที ไม่งั้น Section 3 จะยังเห็น BasketStagnant ค้างเป็น true อยู่ต่อไป
+   // เพราะ if ด้านล่างทั้งก้อนถูกข้ามไปเลยตอน UseBasketStagnation == false (ไม่มีโอกาสได้ reset เอง)
+   if(!UseBasketStagnation && BasketStagnant) BasketStagnant = false;
+
    if(openPositions > 0 && !IsClosingState && UseBasketStagnation)
    {
       double basketAgeHours = (BasketStartTime > 0) ? (double)(TimeCurrent() - BasketStartTime) / 3600.0 : 0.0;
