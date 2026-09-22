@@ -1478,6 +1478,75 @@ bool IsNewsBlackout()
 }
 
 //+------------------------------------------------------------------+
+//| Risk Engine (V10) - จุดตัดสินใจกลางเดียวก่อนส่ง Order ทุกครั้ง         |
+//| แทนที่จะให้แต่ละจุดที่ "จะส่ง Order" ต้องเรียก Is*Blocked() ของแต่ละ Guard  |
+//| เองแยกกัน กระจายคนละที่ (จุดหนึ่งอาจลืมเช็คตัวใดตัวหนึ่งไปก็ได้) - รวม 4     |
+//| Guard ที่มีโครงสร้าง Block/Reduce เหมือนกัน (News/One-Way/Exposure/Margin) |
+//| เป็นคำตอบเดียว ALLOW/REDUCE/BLOCK ทุกฟังก์ชันที่เรียกในนี้คือตัวจริงตัว     |
+//| เดียวกับที่แต่ละ Guard ใช้ปรับ Lot/บล็อกไม้เองอยู่แล้ว ไม่มี logic ใหม่เลย   |
+//| Force Hedge ไม่ผ่านจุดนี้โดยเจตนา - มันมีเพดาน Exposure ที่ผ่อนกว่าของ     |
+//| ตัวเอง (ExposureHedgeBlockRatio) และ One-Way ไม่มีทางบล็อกฝั่งที่ Force    |
+//| Hedge เล็งอยู่แล้วโดยธรรมชาติ (Hedge เล็งฝั่งที่ "เบากว่า" เสมอ ส่วน       |
+//| One-Way DEFENSIVE บล็อกแค่ฝั่งที่ "หนักกว่า") - ยังเรียก IsExposureBlockedForHedge()/ |
+//| IsMarginBlocked() ของตัวเองแยกต่างหากเหมือนเดิม                          |
+//+------------------------------------------------------------------+
+enum ENUM_RISK_DECISION
+{
+   RISK_ALLOW,
+   RISK_REDUCE,
+   RISK_BLOCK
+};
+
+struct SRiskDecision
+{
+   ENUM_RISK_DECISION decision;
+   bool                blocked; // เท่ากับ (decision == RISK_BLOCK) ไว้เช็คสั้นๆ ที่ caller
+   string              reason;
+};
+
+// isBuy/candidateLot ต้องเป็นของจริงที่ "กำลังจะส่ง" เท่านั้น (Exposure Guard's Projected Exposure check
+// ต้องรู้ Lot จริงก่อนส่งเสมอ ไม่ใช่เปิดไปก่อนแล้วค่อยตรวจ) - ลำดับเช็ค News -> One-Way -> Exposure ->
+// Margin หยุดที่ตัวแรกที่ Block เจอ (ไม่ต้องเช็คต่อ) ถ้าไม่มีตัวไหน Block เลยค่อยดูว่ามีตัวไหนกำลัง Reduce
+// Lot อยู่ไหม (แค่รายงานสถานะ - ตัวเลข Reduce จริงถูกคูณเข้า Lot ไปแล้วตอน GetCalculatedLotSize() คำนวณ
+// candidateLot ตั้งแต่ต้น ไม่ใช่หน้าที่ตรงนี้ที่จะคูณซ้ำอีกรอบ)
+SRiskDecision EvaluateRiskEngine(bool isBuy, double candidateLot)
+{
+   SRiskDecision d;
+   d.decision = RISK_ALLOW;
+   d.blocked  = false;
+   d.reason   = "Allow";
+
+   if(IsNewsBlackout())
+   {
+      d.decision = RISK_BLOCK; d.blocked = true; d.reason = "News Blackout";
+      return d;
+   }
+   if(IsOneWaySideBlocked(isBuy))
+   {
+      d.decision = RISK_BLOCK; d.blocked = true; d.reason = "One-Way Defensive";
+      return d;
+   }
+   if(IsExposureBlocked(isBuy, candidateLot))
+   {
+      d.decision = RISK_BLOCK; d.blocked = true; d.reason = "Exposure Guard";
+      return d;
+   }
+   if(IsMarginBlocked())
+   {
+      d.decision = RISK_BLOCK; d.blocked = true; d.reason = "Margin Guard";
+      return d;
+   }
+
+   if(GetOneWayLotFactor() < 1.0 || GetExposureLotFactor() < 1.0 || GetMarginLotFactor() < 1.0)
+   {
+      d.decision = RISK_REDUCE;
+      d.reason   = "Reduced Lot";
+   }
+
+   return d;
+}
+
+//+------------------------------------------------------------------+
 //| Daily Loss Limit - นับจากกำไร/ขาดทุนที่ "ปิดรอบแล้วจริง" ของวันนี้เท่านั้น |
 //| (DailyRealizedProfit ตัวเดียวกับที่การ์ด "ผลงานวันนี้" ใช้แสดง) ไม่รวม    |
 //| floating loss ของบาสเก็ตที่ยังเปิดค้างอยู่ - เพราะ Max DD Stop / Total    |
@@ -2130,8 +2199,11 @@ bool TryOpenForceHedgeOrder(string reasonTag, string logDetail)
    if(maxVol  > 0 && lot > maxVol) lot = maxVol;
    lot = NormalizeDouble(MathMax(0.01, lot), 2);
 
-   // Force Hedge ต้องผ่าน Exposure Guard เหมือนไม้กริดทั่วไป (V10 #9) - ไม่มีข้อยกเว้น bypass แต่มีเพดาน
-   // ผ่อนของตัวเอง (ExposureHedgeBlockRatio) เพราะ Force Hedge เป็นกลไกลดความเสี่ยงทิศทาง ไม่ใช่เพิ่ม
+   // Force Hedge เจตนาไม่ผ่าน EvaluateRiskEngine() ตัวกลาง (V10 Risk Engine) - ใช้เช็คของตัวเองแทน 2 เหตุผล:
+   // (1) เพดาน Exposure ผ่อนกว่าไม้กริดทั่วไป (ExposureHedgeBlockRatio ไม่ใช่ ExposureBlockRatio ปกติ)
+   // (2) One-Way DEFENSIVE บล็อกแค่ฝั่งที่ "หนักกว่า" แต่ Force Hedge เล็งฝั่งที่ "เบากว่า" (needBuy/needSell
+   // มาจาก sellCount>buyCount หรือกลับกัน) เสมอโดยธรรมชาติ เลยไม่มีทางโดนบล็อกอยู่แล้ว ไม่ต้องเช็คซ้ำ
+   // ยังคงเป็น "ไม่มีข้อยกเว้น bypass Exposure/Margin Guard" ทั้งคู่เหมือนเดิม (V10 #9) แค่ใช้เพดานของตัวเอง
    if(IsExposureBlockedForHedge(lot))
    {
       PrintFormat("🛡️ [%s] Force Hedge blocked by Exposure Guard (projected exposure ratio over %.0f%% ceiling).",
@@ -3129,8 +3201,12 @@ void PlacePendingGridServer()
       double targetBuyPrice  = NormalizeDouble(GridBasePrice + (level * CachedGridDistance * point), _Digits);
       double targetSellPrice = NormalizeDouble(GridBasePrice - (level * CachedGridDistance * point), _Digits);
 
-      bool canBuyFilter  = CheckEMATrend(true)  && CheckMTFFilter(true);
-      bool canSellFilter = CheckEMATrend(false) && CheckMTFFilter(false);
+      // IsOneWaySideBlocked() ตัวจริงตัวเดียวกับที่ Risk Engine ใช้ใน Virtual/Limit Grid (ดู
+      // EvaluateRiskEngine) - ในทางปฏิบัติแทบเป็น no-op ตรงนี้เพราะ PlacePendingGridServer() ทำงานเฉพาะ
+      // ตอน openPositions==0 (เช็คไว้ด้านบนแล้ว) ยังไม่มี Exposure ทิศทางใดให้ One-Way ตัดสินว่า "หนักกว่า"
+      // แต่เก็บไว้เพื่อความสม่ำเสมอ (ไม่มีข้อยกเว้นให้ path ไหน bypass Guard ตัวใดตัวหนึ่งไปเฉยๆ)
+      bool canBuyFilter  = CheckEMATrend(true)  && CheckMTFFilter(true)  && !IsOneWaySideBlocked(true);
+      bool canSellFilter = CheckEMATrend(false) && CheckMTFFilter(false) && !IsOneWaySideBlocked(false);
 
       if(UseExposureGuard && allowedExposure > 0)
       {
@@ -3231,13 +3307,12 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
    int adjGapLimit = MaxAllowedGapPoints * m_multiplier;
    int adjSpread   = MaxSpreadAllowed * m_multiplier;
 
-   // IsOneWaySideBlocked() บล็อกแค่ฝั่งที่ "หนักกว่า" ตอน DEFENSIVE เท่านั้น (V10) - อีกฝั่งยังเปิดได้
-   // ปกติเสมอ ต่างจาก Time/Session/Volatility Block ที่บล็อกทั้งบาสเก็ต
-   // IsExposureBlocked() เช็ค Projected Exposure จาก Lot ที่ระดับถัดไปจริงจะใช้ (V10) - ก่อนส่ง Order
-   // เสมอ ไม่ใช่เปิดไปก่อนแล้วค่อยตรวจ
-   // IsMarginBlocked() (V10, Secondary Guard) - เช็ค ACCOUNT_MARGIN_LEVEL แยกจาก Exposure Ratio อีกชั้น
-   bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true)  && CheckRSIFilter(true)  && !IsOneWaySideBlocked(true)  && !IsExposureBlocked(true,  GetCalculatedLotSize(buyCount + 1))  && !IsMarginBlocked();
-   bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false) && CheckRSIFilter(false) && !IsOneWaySideBlocked(false) && !IsExposureBlocked(false, GetCalculatedLotSize(sellCount + 1)) && !IsMarginBlocked();
+   // Risk Engine (V10) - จุดตัดสินใจกลางเดียวรวม News/One-Way/Exposure/Margin แทนที่จะเรียก Is*Blocked()
+   // ของแต่ละ Guard เองแยกกันแบบเดิม (ดู EvaluateRiskEngine ด้านบนสำหรับรายละเอียดลำดับเช็ค/เหตุผล)
+   SRiskDecision buyRisk  = EvaluateRiskEngine(true,  GetCalculatedLotSize(buyCount + 1));
+   SRiskDecision sellRisk = EvaluateRiskEngine(false, GetCalculatedLotSize(sellCount + 1));
+   bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true)  && CheckRSIFilter(true)  && !buyRisk.blocked;
+   bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false) && CheckRSIFilter(false) && !sellRisk.blocked;
 
    // Level Unlock: once BOTH sides have filled every configured TotalLevels
    // (neither side has any more room, and the basket still isn't profitable),
