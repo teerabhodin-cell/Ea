@@ -397,6 +397,16 @@ input bool   UseBasketStagnation      = false;  // Use Basket Stagnation Protect
 input double BasketMaxHours           = 24.0;   // Basket Age Threshold, Hours (ก่อนเริ่มพิจารณาว่า Stagnant)
 input double StagnationRecoveryProfit = 0.0;    // Close Basket Once Profit Reaches This, $ (ระหว่าง Stagnation Mode)
 
+// Smart Recovery 2.0 (V10, stage 3) - Stage 1 (RecoveryDD_TriggerPercent/RecoveryLotBoost) ยังเป็นขั้นแรก
+// เหมือนเดิม เปิดเพิ่มได้อีก 2 ขั้นตาม DD ที่ลึกขึ้น (เช่น 10%->20%->30% Boost เพิ่มขึ้นเรื่อยๆ) แทนที่จะ
+// Boost คงที่ตัวเดียวไม่ว่า DD จะลึกแค่ไหน - Exposure/Market Gate ของ stage 1-2 ยังคุมทุกขั้นเหมือนเดิม
+input group "===== 21. Recovery 2.0 Multi-Stage DD (V10) ====="
+input bool   UseMultiStageRecovery = false; // Use Multi-Stage DD Recovery Boost (เปิดแล้ว Tier 2/3 แทนที่ RecoveryLotBoost เมื่อ DD ลึกพอ)
+input double RecoveryTier2DD       = 20.0;  // DD %% Threshold: Stage 2
+input double RecoveryTier2Boost    = 2.5;   // Lot Boost Factor at Stage 2
+input double RecoveryTier3DD       = 30.0;  // DD %% Threshold: Stage 3
+input double RecoveryTier3Boost    = 3.0;   // Lot Boost Factor at Stage 3
+
 //=========================== GLOBAL ===============================//
 
 bool     GridCreated     = false;
@@ -1881,10 +1891,20 @@ double GetCalculatedLotSize(int nextLevel)
    ENUM_MARKET_CONDITION recoveryMarketCond = GetMarketCondition();
    bool recoveryMarketSafe = (recoveryMarketCond == MARKET_RANGE || recoveryMarketCond == MARKET_LOW_VOLATILITY);
 
-   // Multi-stage DD thresholds ยังไม่ทำในรอบนี้ - deferred
+   // Smart Recovery 2.0 (V10, stage 3): Multi-Stage DD - Stage 1 (RecoveryDD_TriggerPercent/RecoveryLotBoost)
+   // คือขั้นแรกเหมือนเดิมเป๊ะ ถ้าเปิด UseMultiStageRecovery ด้วยแล้ว DD ลึกกว่านั้นอีก ใช้ Boost ที่แรงขึ้น
+   // ของ Tier 3 > Tier 2 > Stage 1 ตามลำดับ (เช็คจากลึกสุดก่อน) แทนที่ Boost คงที่ตัวเดียวไม่ว่า DD จะลึก
+   // แค่ไหน - ปิดฟีเจอร์นี้ไว้ พฤติกรรมเดิม (Stage 1 อย่างเดียว) ไม่เปลี่ยนเลย
+   double effectiveRecoveryBoost = RecoveryLotBoost;
+   if(UseMultiStageRecovery)
+   {
+      if(MaxDrawdownPercent >= RecoveryTier3DD)      effectiveRecoveryBoost = RecoveryTier3Boost;
+      else if(MaxDrawdownPercent >= RecoveryTier2DD) effectiveRecoveryBoost = RecoveryTier2Boost;
+   }
+
    if(UseRecoveryMode && MaxDrawdownPercent >= RecoveryDD_TriggerPercent && recoveryExposureSafe && recoveryMarketSafe)
    {
-      lot = lot * RecoveryLotBoost;
+      lot = lot * effectiveRecoveryBoost;
    }
 
    // Smart Lot is applied LAST before broker normalization/caps.
