@@ -397,6 +397,15 @@ input double MarginGuardCautionLevel    = 300.0;  // Margin Level %% Threshold: 
 input double MarginGuardBlockLevel      = 150.0;  // Margin Level %% Threshold: บล็อกไม้ใหม่ทั้งสองฝั่ง
 input double MarginGuardCautionLotFactor = 0.75;  // Lot Factor ตอน Margin Level เข้า CAUTION
 
+// Basket Stagnation Protection (V10) - บาสเก็ตอยู่นานเกิน BasketMaxHours + ไม่เคยแตะ Target เลย (MaxBasketProfit
+// ตัวจริงตัวเดียวกับที่ Basket TS ใช้) + ตลาด Sideway (GetMarketCondition() RANGE/LOW_VOLATILITY) + ยังไม่โดน
+// DD Stop/Halt ไปเอง = เข้า STAGNATION MODE (หยุดเปิดไม้เพิ่ม ไม่ realize loss แค่เพราะครบเวลา) แล้วรอจนกำไร
+// กลับมาถึง StagnationRecoveryProfit ค่อยปิด - ไม่ใช่ Hard Timeout ที่ปิดทิ้งทันทีแบบไม่ดูบริบท
+input group "===== 20. Basket Stagnation Protection (V10) ====="
+input bool   UseBasketStagnation      = false;  // Use Basket Stagnation Protection
+input double BasketMaxHours           = 24.0;   // Basket Age Threshold, Hours (ก่อนเริ่มพิจารณาว่า Stagnant)
+input double StagnationRecoveryProfit = 0.0;    // Close Basket Once Profit Reaches This, $ (ระหว่าง Stagnation Mode)
+
 //=========================== GLOBAL ===============================//
 
 bool     GridCreated     = false;
@@ -462,6 +471,7 @@ datetime OneWayDDSnapshotTime  = 0;
 // Basket Management & Recovery
 bool     PartialCloseExecuted = false; // ป้องกันการสั่งปิดบางส่วนซ้ำรอบเดิม
 bool     BreakevenActivated   = false; // latch เมื่อกำไรแตะ BreakevenTriggerUSD แล้ว (ต้อง latch ไว้ก่อน ไม่งั้นเงื่อนไข Trigger/Lock จะไม่มีวันเป็นจริงพร้อมกัน)
+bool     BasketStagnant       = false; // latch เมื่อบาสเก็ตเข้า Stagnation Mode แล้ว (V10) - reset ทุกจุดเดียวกับ BreakevenActivated
 bool     ForceHedgeArmed      = false; // latch กัน Force Hedge ยิงรัวๆ ทุกทิคตอน DD ค้างสูง ต้องรอ DD ลดต่ำกว่า ForceHedgeResetPercent ก่อนถึงจะยิงซ้ำได้
 datetime BasketNegativeSinceTime = 0;   // เวลาที่บาสเก็ตเริ่มติดลบต่อเนื่อง (0 = ไม่ได้ติดลบอยู่ตอนนี้) ใช้กับ Force Hedge on Time
 datetime LastForceHedgeTimeFire  = 0;   // เวลาที่ Force Hedge on Time ยิงไม้ล่าสุด (0 = ยังไม่เคยยิงในรอบติดลบปัจจุบัน) - ยิงซ้ำได้ทุกๆ ForceHedgeTimeMinutes ถ้ายังติดลบไม่หยุด ไม่ต้องรอพลิกบวกก่อน
@@ -2323,6 +2333,7 @@ int OnInit()
    IsClosingState     = false;
    PartialCloseExecuted = false;
    BreakevenActivated   = false;
+   BasketStagnant       = false;
    ForceHedgeArmed      = false;
    BasketNegativeSinceTime = 0;
    LastForceHedgeTimeFire  = 0;
@@ -2624,6 +2635,7 @@ void OnTick()
       }
       if(PartialCloseExecuted) PartialCloseExecuted = false;
       if(BreakevenActivated) BreakevenActivated = false;
+      if(BasketStagnant) BasketStagnant = false;
 
       // FIXED: previously the base price only got (re)calculated once, the very
       // first time GridCreated flipped true. If price then drifted far away while
@@ -2722,6 +2734,45 @@ void OnTick()
       DeleteVisualTSLine();
    }
 
+   // 2B. Basket Stagnation Protection (V10) - ตลาด Sideway นาน + บาสเก็ตไม่เคยมี Progress เข้าใกล้ Target
+   // เลย ปล่อยให้เปิดไม้เพิ่มความเสี่ยงต่อไปเรื่อยๆ อันตราย (ยิ่งอยู่นาน ยิ่งเสี่ยง) แต่ก็ไม่ควรปิดทิ้งทันที
+   // ที่ครบเวลา เพราะราคาอาจกำลังจะ Breakout พอดี - เข้า STAGNATION MODE แทน (หยุดเปิดไม้เพิ่มที่ Section 3
+   // ด้านล่าง ผ่าน !BasketStagnant) แล้วรอให้กำไรฟื้นกลับมาถึง StagnationRecoveryProfit ค่อยปิด ไม่ realize
+   // loss แค่เพราะครบเวลา - Max DD Stop/Total DD Guard/Emergency SL ที่มีอยู่แล้วยังเป็นเบรกสุดท้ายเหมือนเดิม
+   // ไม่ทับซ้อนกับกลไกนี้เลย
+   if(openPositions > 0 && !IsClosingState && UseBasketStagnation)
+   {
+      double basketAgeHours = (BasketStartTime > 0) ? (double)(TimeCurrent() - BasketStartTime) / 3600.0 : 0.0;
+      // MaxBasketProfit ตัวจริงตัวเดียวกับที่ Basket TS ใช้ข้างบน - ถ้าเคยแตะ/เกิน Target แล้วสักครั้งในอายุ
+      // บาสเก็ตนี้ ไม่ถือว่า Stagnant (มี Progress จริง แค่ยังไม่ได้ปิด) ปล่อยให้ Basket TS ด้านบนดูแลต่อ
+      bool neverNearTarget = MaxBasketProfit < effTargetProfit;
+      // GetMarketCondition() ตัวจริงตัวเดียวกับที่ปรับ Lot/Grid/บล็อกบาสเก็ตใหม่ที่อื่น - ถ้าไม่เปิด
+      // UseMarketCondition ไว้ คืน MARKET_RANGE เสมอ (ไม่บล็อกเงื่อนไขนี้ กลายเป็น pass-through)
+      bool marketSideways = (GetMarketCondition() == MARKET_RANGE || GetMarketCondition() == MARKET_LOW_VOLATILITY);
+      bool ddSafe          = !TradingHalted; // Total DD Guard ยังไม่ทริกเกอร์ halt ไปเอง (Max DD Stop สั่ง IsClosingState เองอยู่แล้ว ดักไว้ด้านบน)
+
+      if(!BasketStagnant && basketAgeHours >= BasketMaxHours && neverNearTarget && marketSideways && ddSafe)
+      {
+         BasketStagnant = true;
+         PrintFormat("🐌 [STAGNATION MODE] Basket age %.1fh >= %.1fh, market sideways, never reached target - entering stagnation mode (new entries paused).",
+                     basketAgeHours, BasketMaxHours);
+         LogEvent(StringFormat(GetUIString("บาสเก็ตเข้าโหมด Stagnation (อายุ %.1f ชม.)", "Basket entered Stagnation Mode (age %.1fh)"), basketAgeHours));
+      }
+
+      if(BasketStagnant && currentProfit >= StagnationRecoveryProfit)
+      {
+         IsClosingState = true;
+         PrintFormat("🐌 [STAGNATION RECOVERY] Closing stagnant basket at $%.2f (recovery target $%.2f).",
+                     currentProfit, StagnationRecoveryProfit);
+         LogEvent(StringFormat(GetUIString("ปิดบาสเก็ต Stagnation - ฟื้นตัวถึง $%.2f", "Stagnation basket closed - recovered to $%.2f"), currentProfit));
+         ClearEverythingAsync();
+         DeleteVisualTSLine();
+         RecalculateBasePrice();
+         IsClosingState = false;
+         return;
+      }
+   }
+
    // 3. Grid Logic Execution & Auto-Close on Time Filter
    bool timeAllowed      = IsTradingAllowedByTime();
    bool newsBlocked      = IsNewsBlackout();
@@ -2750,7 +2801,7 @@ void OnTick()
    bool marketBlocksEntry    = marketAbnormal   && (openPositions == 0);
    if(!timeBlocksEntry && !newsBlocked && !dailyLossBlocked && !latencyBlocked && !dailyGoalBlocksEntry && !lowVolBlocksEntry && !highVolBlocksEntry && !sessionBlocksEntry && !marketBlocksEntry)
    {
-      if(!IsClosingState && !equityLocked && !TradingHalted && !IsConnectionBlocked() && (MaxBasketProfit < effTargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
+      if(!IsClosingState && !equityLocked && !TradingHalted && !IsConnectionBlocked() && !BasketStagnant && (MaxBasketProfit < effTargetProfit) && (TimeCurrent() - LastCloseAllTime >= 3))
       {
          ExecuteGridLogic(buyCount, sellCount, lastBuyPrice, lastSellPrice);
       }
@@ -3601,6 +3652,7 @@ void ClearEverythingAsync()
    LastOrderSentTime     = 0;
    PartialCloseExecuted  = false;
    BreakevenActivated    = false;
+   BasketStagnant        = false;
    ForceHedgeArmed       = false;
    BasketNegativeSinceTime = 0;
    LastForceHedgeTimeFire  = 0;
@@ -4627,7 +4679,7 @@ void DrawRiskEngineV10Card(int x, int y, int w, int h)
    int gridW = w - S(24);
    int gridH = h - S(60);
    int colW  = gridW / 2;
-   int rowH  = gridH / 2;
+   int rowH  = gridH / 3; // 3 แถว (2x2 + Stagnation เต็มความกว้างแถวสุดท้าย) แทน 2x2 เดิม - ไม่ต้องดัน cardH ขึ้นอีก
 
    string owLabel; color owClr;
    GetOneWayStateLabel(GetOneWayState(), owLabel, owClr);
@@ -4654,6 +4706,14 @@ void DrawRiskEngineV10Card(int x, int y, int w, int h)
    string marginTxt = UseMarginGuard ? (marginLabel + " " + marginLevelTxt) : GetUIString("ปิด", "OFF");
    color  marginTxtClr = UseMarginGuard ? marginClr : C'100,100,120';
    DrawRiskEngineCell(gridX + colW, gridY + rowH, colW, rowH, GetUIString("มาร์จิ้น", "MARGIN"), marginTxt, marginTxtClr);
+
+   // Basket Stagnation Protection (V10) - เรียก BasketStagnant ตัวจริงตัวเดียวกับที่หยุดเปิดไม้เพิ่ม/
+   // รอปิดตอนฟื้นตัวจริง เต็มความกว้างแถวสุดท้าย เพราะมีตัวเดียวไม่ต้องแบ่งครึ่งเหมือน 4 ช่องบน
+   string stagTxt; color stagClr;
+   if(!UseBasketStagnation)  { stagTxt = GetUIString("ปิด", "OFF");                                  stagClr = C'100,100,120'; }
+   else if(BasketStagnant)   { stagTxt = "🐌 " + GetUIString("รอฟื้นตัว", "RECOVERING");              stagClr = C'251,146,60'; }
+   else                        { stagTxt = "🟢 " + GetUIString("ปกติ", "NORMAL");                       stagClr = C'34,197,94';  }
+   DrawRiskEngineCell(gridX, gridY + rowH * 2, gridW, rowH, GetUIString("บาสเก็ตนิ่ง", "STAGNATION"), stagTxt, stagClr);
 }
 
 // ตัด string ยาวๆ ให้พอดีคอลัมน์แคบ (Server name / ไฟล์ Journal / Basket ID) - ใช้ร่วมกันทุกการ์ด
