@@ -596,12 +596,14 @@ double GetOneWayGridFactor();
 bool IsOneWaySideBlocked(bool isBuy);
 void CountPositions(int &buyCount, int &sellCount, double &totalLots);
 ENUM_MARKET_CONDITION GetMarketCondition();
+double GetMarketConditionLotFactorFor(ENUM_MARKET_CONDITION cond);
 double GetMarketConditionLotFactor();
 double GetMarketConditionGridFactor();
 bool IsMarketConditionBlocked();
 double GetAllowedExposureLots();
 void GetExposureLots(double &buyLots, double &sellLots);
 ENUM_EXPOSURE_STATE GetExposureState();
+double GetExposureLotFactorFor(ENUM_EXPOSURE_STATE state);
 double GetExposureLotFactor();
 bool IsExposureBlocked(bool isBuy, double candidateLot);
 bool IsExposureBlockedForHedge(double candidateLot);
@@ -1215,15 +1217,24 @@ ENUM_MARKET_CONDITION GetMarketCondition()
    return MARKET_RANGE;
 }
 
-double GetMarketConditionLotFactor()
+// แยกจาก GetMarketConditionLotFactor() เพื่อให้ caller ที่คำนวณ GetMarketCondition() ไว้แล้วเพื่อเหตุผล
+// อื่น (เช่น Recovery 2.0 stage 2 ใน GetCalculatedLotSize()) ส่งค่าที่มีอยู่แล้วมาใช้ต่อได้เลย แทนที่จะ
+// ต้องเรียก GetMarketCondition() ซ้ำอีกรอบ (อ่าน ATR/EMA buffer ซ้ำโดยไม่จำเป็น) - single source of truth
+// ของ switch นี้ยังมีจุดเดียว ไม่ได้ copy logic ไปสองที่
+double GetMarketConditionLotFactorFor(ENUM_MARKET_CONDITION cond)
 {
-   switch(GetMarketCondition())
+   switch(cond)
    {
       case MARKET_TREND_UP:
       case MARKET_TREND_DOWN:      return MarketTrendLotFactor;
       case MARKET_HIGH_VOLATILITY: return MarketHighVolLotFactor;
       default:                     return 1.0;
    }
+}
+
+double GetMarketConditionLotFactor()
+{
+   return GetMarketConditionLotFactorFor(GetMarketCondition());
 }
 
 double GetMarketConditionGridFactor()
@@ -1303,14 +1314,23 @@ ENUM_EXPOSURE_STATE GetExposureState()
    return EXPOSURE_NORMAL;
 }
 
-double GetExposureLotFactor()
+// แยกจาก GetExposureLotFactor() เพื่อให้ caller ที่คำนวณ GetExposureState() ไว้แล้วเพื่อเหตุผลอื่น (เช่น
+// Recovery 2.0 stage 1 ใน GetCalculatedLotSize()) ส่งค่าที่มีอยู่แล้วมาใช้ต่อได้เลย แทนที่จะต้องเรียก
+// GetExposureState() ซ้ำอีกรอบ (สแกน PositionsTotal() ซ้ำโดยไม่จำเป็น) - single source of truth ของ
+// switch นี้ยังมีจุดเดียว ไม่ได้ copy logic ไปสองที่
+double GetExposureLotFactorFor(ENUM_EXPOSURE_STATE state)
 {
-   switch(GetExposureState())
+   switch(state)
    {
       case EXPOSURE_CAUTION:    return ExposureCautionLotFactor;
       case EXPOSURE_RESTRICTED: return ExposureRestrictedLotFactor;
       default:                  return 1.0;
    }
+}
+
+double GetExposureLotFactor()
+{
+   return GetExposureLotFactorFor(GetExposureState());
 }
 
 // หัวใจของสเปค: เช็ค "Projected Exposure" (ของเดิม + ไม้ที่กำลังจะส่งจริง) ก่อนส่ง Order เสมอ ไม่ใช่เปิด
@@ -1997,13 +2017,17 @@ double GetCalculatedLotSize(int nextLevel)
 
    // Market Condition Factor: ลด Lot เพิ่มตอนเทรนด์แรง/ผันผวนสูง (V10) - ทำงานหลัง One-Way ก่อนถึง
    // Max Lot Cap เสมอ (Base -> DynamicEquity -> SmartLot -> Session -> OneWay -> MarketCondition -> Exposure -> Margin -> MaxLotCap)
-   double marketLotFactor = GetMarketConditionLotFactor();
+   // ใช้ recoveryMarketCond ที่คำนวณไว้แล้วด้านบน (Recovery 2.0 stage 2) แทนการเรียก GetMarketCondition()
+   // ซ้ำอีกรอบ (อ่าน ATR/EMA buffer ซ้ำโดยไม่จำเป็น)
+   double marketLotFactor = GetMarketConditionLotFactorFor(recoveryMarketCond);
    if(marketLotFactor < 1.0)
       lot = lot * marketLotFactor;
 
    // Exposure Factor: ลด Lot เพิ่มอีกชั้นตอน Gross Exposure เข้า CAUTION/RESTRICTED (V10) - ทำงานหลัง
    // Market Condition ก่อนถึง Margin Guard/Max Lot Cap/broker normalization ด้านล่าง
-   double exposureLotFactor = GetExposureLotFactor();
+   // ใช้ recoveryExposureState ที่คำนวณไว้แล้วด้านบน (Recovery 2.0 stage 1) แทนการเรียก GetExposureState()
+   // ซ้ำอีกรอบ (สแกน PositionsTotal() ซ้ำโดยไม่จำเป็น)
+   double exposureLotFactor = GetExposureLotFactorFor(recoveryExposureState);
    if(exposureLotFactor < 1.0)
       lot = lot * exposureLotFactor;
 
