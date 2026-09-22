@@ -128,6 +128,15 @@ enum ENUM_EXPOSURE_STATE
    EXPOSURE_BLOCK         // บล็อกไม้ใหม่ทั้งสองฝั่ง (Force Hedge มีเพดานผ่อนของตัวเอง ดู ExposureHedgeBlockRatio)
 };
 
+// Margin Guard (V10, Secondary) - เช็ค ACCOUNT_MARGIN_LEVEL ตรงๆ แยกจาก Exposure Guard เพราะ Symbol ต่าง
+// กัน contract spec ต่างกัน Lot เท่ากันอาจกินความเสี่ยง Margin ไม่เท่ากัน
+enum ENUM_MARGIN_STATE
+{
+   MARGIN_NORMAL,
+   MARGIN_CAUTION,   // ลด Lot
+   MARGIN_BLOCK       // บล็อกไม้ใหม่ทั้งสองฝั่ง (รวม Force Hedge ด้วย)
+};
+
 //=========================== INPUT ================================//
 input group "===== 1. Time & Language ====="
 input ENUM_LANGUAGE Language = LNG_TH; // Select Language ( default: Thai )
@@ -369,6 +378,16 @@ input group "===== 18. Smart News Reaction (V10) ====="
 input bool UseSmartNewsReaction     = false;  // Use Smart News Reaction (ต้องเปิด UseNewsFilter + UseMarketCondition ด้วย)
 input int  NewsMaxExtensionMinutes  = 30;     // Max Extension After News Window, Min (เพดานขยายสูงสุด)
 
+// Margin Guard (V10, Secondary) - Exposure Guard ข้างบนคุมความเสี่ยงจาก "จำนวน Lot" เทียบ Equity แต่
+// Symbol ต่างกัน contract spec ต่างกัน Lot เท่ากันอาจใช้ Margin ไม่เท่ากัน ตัวนี้เช็ค ACCOUNT_MARGIN_LEVEL
+// (Equity/Margin*100) ตรงๆ แยกต่างหาก - ถ้า Margin เริ่มตึงแม้ Exposure Ratio จะยังปกติอยู่ก็ยัง
+// REDUCE/BLOCK ได้ (ตามสเปค "Exposure = OK, Margin Risk = HIGH -> REDUCE/BLOCK")
+input group "===== 19. Margin Guard (V10, Secondary) ====="
+input bool   UseMarginGuard             = false;  // Use Margin Guard
+input double MarginGuardCautionLevel    = 300.0;  // Margin Level %% Threshold: NORMAL -> CAUTION (ลด Lot)
+input double MarginGuardBlockLevel      = 150.0;  // Margin Level %% Threshold: บล็อกไม้ใหม่ทั้งสองฝั่ง
+input double MarginGuardCautionLotFactor = 0.75;  // Lot Factor ตอน Margin Level เข้า CAUTION
+
 //=========================== GLOBAL ===============================//
 
 bool     GridCreated     = false;
@@ -566,6 +585,10 @@ ENUM_EXPOSURE_STATE GetExposureState();
 double GetExposureLotFactor();
 bool IsExposureBlocked(bool isBuy, double candidateLot);
 bool IsExposureBlockedForHedge(double candidateLot);
+double GetMarginLevel();
+ENUM_MARGIN_STATE GetMarginState();
+double GetMarginLotFactor();
+bool IsMarginBlocked();
 void RecalculateBasePrice();
 void ReconcileGridStateOnInit();
 ENUM_ORDER_TYPE_FILLING GetBestFillingMode();
@@ -1320,6 +1343,51 @@ void GetExposureStateLabel(ENUM_EXPOSURE_STATE s, string &label, color &clr)
    }
 }
 
+// MT5 คืน ACCOUNT_MARGIN = 0 ตอนไม่มี Position/Pending ใช้ Margin เลย ซึ่ง ACCOUNT_MARGIN_LEVEL ก็จะเป็น
+// 0 ไปด้วย (หารด้วย 0 ข้างในเทอร์มินัล) - ค่านี้ไม่ใช่ "Margin Level 0% อันตราย" แต่คือ "ไม่มี Margin ใช้
+// เลย ปลอดภัยที่สุด" เลยคืน -1 แทนเพื่อให้ผู้เรียกแยกออกจาก Margin Level ต่ำจริงได้
+double GetMarginLevel()
+{
+   double margin = AccountInfoDouble(ACCOUNT_MARGIN);
+   if(margin <= 0) return -1.0;
+   return AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
+}
+
+ENUM_MARGIN_STATE GetMarginState()
+{
+   if(!UseMarginGuard) return MARGIN_NORMAL;
+   double level = GetMarginLevel();
+   if(level < 0) return MARGIN_NORMAL;
+   if(level <= MarginGuardBlockLevel)   return MARGIN_BLOCK;
+   if(level <= MarginGuardCautionLevel) return MARGIN_CAUTION;
+   return MARGIN_NORMAL;
+}
+
+double GetMarginLotFactor()
+{
+   switch(GetMarginState())
+   {
+      case MARGIN_CAUTION: return MarginGuardCautionLotFactor;
+      case MARGIN_BLOCK:   return 0.0; // จะโดน IsMarginBlocked() บล็อกไม่ให้ส่ง Order อยู่แล้ว กันไว้เผื่อ path อื่น
+      default:              return 1.0;
+   }
+}
+
+bool IsMarginBlocked()
+{
+   return GetMarginState() == MARGIN_BLOCK;
+}
+
+void GetMarginStateLabel(ENUM_MARGIN_STATE s, string &label, color &clr)
+{
+   switch(s)
+   {
+      case MARGIN_CAUTION: label = "🟡 " + GetUIString("ระมัดระวัง", "CAUTION");   clr = C'251,193,7'; break;
+      case MARGIN_BLOCK:   label = "🔴 " + GetUIString("บล็อกไม้ใหม่", "BLOCKED"); clr = C'239,68,68'; break;
+      default:              label = "🟢 " + GetUIString("ปกติ", "NORMAL");         clr = C'34,197,94'; break;
+   }
+}
+
 //+------------------------------------------------------------------+
 //| News Filter - เหมือน Time Filter ทุกอย่างเรื่องนโยบาย: บาสเก็ตที่เปิดอยู่แล้ว |
 //| ยังจัดการ/ปิดตามปกติ (กำไรได้ ก็ปิดได้) แค่ "ห้ามเปิดไม้ใหม่" ช่วงใกล้ข่าวแรงเท่านั้น |
@@ -1792,10 +1860,19 @@ double GetCalculatedLotSize(int nextLevel)
    // เพดานของ Exposure Guard - ถ้า Exposure เข้า RESTRICTED/BLOCK อยู่แล้ว (บาสเก็ตแบกความเสี่ยงสูงอยู่ก่อน
    // ที่จะ boost ด้วยซ้ำ) Boost จะถูกปิดทันทีตรงนี้เลย ไม่ใช่แค่รอให้ Exposure Factor/Gate ปลายทาง
    // ลดทอนทีหลังเหมือน Lot ประเภทอื่น เพราะการ boost ตอนความเสี่ยงสูงอยู่แล้วคือสถานการณ์อันตรายที่สุด
-   // (Market Condition-based boost sizing และ multi-stage DD thresholds ยังไม่ทำในรอบนี้ - deferred)
    ENUM_EXPOSURE_STATE recoveryExposureState = GetExposureState();
    bool recoveryExposureSafe = (recoveryExposureState != EXPOSURE_RESTRICTED && recoveryExposureState != EXPOSURE_BLOCK);
-   if(UseRecoveryMode && MaxDrawdownPercent >= RecoveryDD_TriggerPercent && recoveryExposureSafe)
+
+   // Smart Recovery 2.0 (V10, stage 2): "Market Condition -> กำหนดว่า Recovery ควร Boost แค่ไหน" ตาม
+   // Architecture ที่ยืนยันไว้ - Boost เต็มเฉพาะช่วงตลาดแกว่งตัว/ผันผวนต่ำ (RANGE/LOW_VOLATILITY) ที่แนวคิด
+   // Grid/Recovery ยังใช้ได้ดี ส่วน TREND แรง/HIGH_VOLATILITY/ABNORMAL ปิด Boost ไปเลย (ไม่ boost บางส่วน
+   // เพราะจะซ้ำซ้อนกับ Market Condition Lot Factor ที่ลดทอนทีหลังอยู่แล้ว) - ถ้าไม่เปิด UseMarketCondition
+   // ไว้ GetMarketCondition() คืน MARKET_RANGE เสมอ พฤติกรรมเดิมจึงไม่เปลี่ยนถ้าไม่ได้เปิดฟีเจอร์นี้ด้วย
+   ENUM_MARKET_CONDITION recoveryMarketCond = GetMarketCondition();
+   bool recoveryMarketSafe = (recoveryMarketCond == MARKET_RANGE || recoveryMarketCond == MARKET_LOW_VOLATILITY);
+
+   // Multi-stage DD thresholds ยังไม่ทำในรอบนี้ - deferred
+   if(UseRecoveryMode && MaxDrawdownPercent >= RecoveryDD_TriggerPercent && recoveryExposureSafe && recoveryMarketSafe)
    {
       lot = lot * RecoveryLotBoost;
    }
@@ -1820,16 +1897,22 @@ double GetCalculatedLotSize(int nextLevel)
       lot = lot * oneWayLotFactor;
 
    // Market Condition Factor: ลด Lot เพิ่มตอนเทรนด์แรง/ผันผวนสูง (V10) - ทำงานหลัง One-Way ก่อนถึง
-   // Max Lot Cap เสมอ (Base -> DynamicEquity -> SmartLot -> Session -> OneWay -> MarketCondition -> Exposure -> MaxLotCap)
+   // Max Lot Cap เสมอ (Base -> DynamicEquity -> SmartLot -> Session -> OneWay -> MarketCondition -> Exposure -> Margin -> MaxLotCap)
    double marketLotFactor = GetMarketConditionLotFactor();
    if(marketLotFactor < 1.0)
       lot = lot * marketLotFactor;
 
    // Exposure Factor: ลด Lot เพิ่มอีกชั้นตอน Gross Exposure เข้า CAUTION/RESTRICTED (V10) - ทำงานหลัง
-   // Market Condition เป็นตัวสุดท้ายก่อนถึง Max Lot Cap/broker normalization ด้านล่าง
+   // Market Condition ก่อนถึง Margin Guard/Max Lot Cap/broker normalization ด้านล่าง
    double exposureLotFactor = GetExposureLotFactor();
    if(exposureLotFactor < 1.0)
       lot = lot * exposureLotFactor;
+
+   // Margin Factor (V10, Secondary Guard): เช็ค ACCOUNT_MARGIN_LEVEL แยกจาก Exposure Ratio เป็นตัวสุดท้าย
+   // ก่อนถึง Max Lot Cap - Symbol ต่างกัน Lot เท่ากันอาจกิน Margin ไม่เท่ากัน
+   double marginLotFactor = GetMarginLotFactor();
+   if(marginLotFactor < 1.0)
+      lot = lot * marginLotFactor;
 
    lot = MathMax(0.01, lot);
 
@@ -2013,6 +2096,14 @@ bool TryOpenForceHedgeOrder(string reasonTag, string logDetail)
    {
       PrintFormat("🛡️ [%s] Force Hedge blocked by Exposure Guard (projected exposure ratio over %.0f%% ceiling).",
                   reasonTag, ExposureHedgeBlockRatio * 100.0);
+      return false;
+   }
+
+   // Margin Guard (V10, Secondary): Force Hedge ยังเปิด Position ใหม่ กิน Margin เพิ่มจริง เลยต้องผ่านเช็ค
+   // นี้เหมือนไม้กริดทั่วไป ไม่มีเพดานผ่อนแยกแบบ Exposure เพราะความเสี่ยง Margin Call เป็นเรื่องเดียวกันหมด
+   if(IsMarginBlocked())
+   {
+      PrintFormat("🛡️ [%s] Force Hedge blocked by Margin Guard (margin level too low).", reasonTag);
       return false;
    }
 
@@ -2925,6 +3016,14 @@ void PlacePendingGridServer()
          if(canSellFilter && (plannedBuyLots + plannedSellLots + lot) / allowedExposure >= ExposureBlockRatio) canSellFilter = false;
       }
 
+      // Margin Guard (V10, Secondary): เช็คแยกจาก Exposure Ratio - ถ้า Margin ตึงอยู่ก่อนแล้ว (จาก EA/
+      // Position อื่นบนบัญชีเดียวกัน) ไม่วาง Pending ใหม่เพิ่มเลย
+      if(IsMarginBlocked())
+      {
+         canBuyFilter  = false;
+         canSellFilter = false;
+      }
+
       // BUY STOP (Async)
       if(canBuyFilter)
       {
@@ -3014,8 +3113,9 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
    // ปกติเสมอ ต่างจาก Time/Session/Volatility Block ที่บล็อกทั้งบาสเก็ต
    // IsExposureBlocked() เช็ค Projected Exposure จาก Lot ที่ระดับถัดไปจริงจะใช้ (V10) - ก่อนส่ง Order
    // เสมอ ไม่ใช่เปิดไปก่อนแล้วค่อยตรวจ
-   bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true)  && CheckRSIFilter(true)  && !IsOneWaySideBlocked(true)  && !IsExposureBlocked(true,  GetCalculatedLotSize(buyCount + 1));
-   bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false) && CheckRSIFilter(false) && !IsOneWaySideBlocked(false) && !IsExposureBlocked(false, GetCalculatedLotSize(sellCount + 1));
+   // IsMarginBlocked() (V10, Secondary Guard) - เช็ค ACCOUNT_MARGIN_LEVEL แยกจาก Exposure Ratio อีกชั้น
+   bool canBuyFilters  = CheckEMATrend(true)  && CheckMTFFilter(true)  && CheckRSIFilter(true)  && !IsOneWaySideBlocked(true)  && !IsExposureBlocked(true,  GetCalculatedLotSize(buyCount + 1))  && !IsMarginBlocked();
+   bool canSellFilters = CheckEMATrend(false) && CheckMTFFilter(false) && CheckRSIFilter(false) && !IsOneWaySideBlocked(false) && !IsExposureBlocked(false, GetCalculatedLotSize(sellCount + 1)) && !IsMarginBlocked();
 
    // Level Unlock: once BOTH sides have filled every configured TotalLevels
    // (neither side has any more room, and the basket still isn't profitable),
@@ -4451,6 +4551,17 @@ void DrawRiskControlCard(int x, int y, int w, int h)
    string expTxt = UseExposureGuard ? (expLabel + " " + DoubleToString(GetExposureRatio() * 100.0, 0) + "%") : GetUIString("ปิด", "OFF");
    color  expTxtClr = UseExposureGuard ? expClr : C'100,100,120';
    DrawKV(barX, ry, barW, GetUIString("เอ็กซ์โพสเชอร์", "EXPOSURE"), expTxt, C'160,160,180', expTxtClr, 12);
+   ry += S(26);
+
+   // Margin Guard (V10, Secondary) - เรียก GetMarginState()/GetMarginLevel() ตัวจริงตัวเดียวกับที่ปรับ
+   // Lot/บล็อกไม้ใหม่จริง โชว์ Margin Level % ให้เห็นว่าใกล้เพดานแค่ไหน (- = ไม่มี Margin ใช้อยู่เลย)
+   string marginLabel; color marginClr;
+   GetMarginStateLabel(GetMarginState(), marginLabel, marginClr);
+   double marginLevel = GetMarginLevel();
+   string marginLevelTxt = (marginLevel < 0) ? "-" : (DoubleToString(marginLevel, 0) + "%");
+   string marginTxt = UseMarginGuard ? (marginLabel + " " + marginLevelTxt) : GetUIString("ปิด", "OFF");
+   color  marginTxtClr = UseMarginGuard ? marginClr : C'100,100,120';
+   DrawKV(barX, ry, barW, GetUIString("มาร์จิ้น", "MARGIN"), marginTxt, C'160,160,180', marginTxtClr, 12);
 }
 
 // ตัด string ยาวๆ ให้พอดีคอลัมน์แคบ (Server name / ไฟล์ Journal / Basket ID) - ใช้ร่วมกันทุกการ์ด
@@ -4467,7 +4578,7 @@ string TruncateForNarrowCard(string s, int maxChars)
 // จะเหลือพื้นที่ว่างด้านล่างนิดหน่อย ซึ่งตั้งใจ ดีกว่าความสูงไม่เท่ากันแล้วแถวเยื้องกัน
 int DrawSidebarCards(int y, int openPos, int sideX, int sideW)
 {
-   int cardH = S(292); // เพิ่มจาก 266 อีกครั้งให้การ์ด Risk Control มีที่พอสำหรับแถว Exposure Guard (V10)
+   int cardH = S(318); // เพิ่มจาก 292 อีกครั้งให้การ์ด Risk Control มีที่พอสำหรับแถว Margin Guard (V10)
    int gap   = S(12);
    int colW  = (sideW - gap) / 2;
    int innerW = colW - S(24);
@@ -4641,7 +4752,7 @@ int ComputeDashboardContentHeight()
    h += S(38);              // DrawServerTimeRow
    // Both columns begin at the top-card row. The sidebar continues from the
    // right edge of RISK, rather than beginning below the left dashboard.
-   int sideH = (S(292) + S(12)) * 4; // DrawSidebarCards: 2 คอลัมน์ x 4 แถว การ์ดสูงเท่ากันหมด (ต้องตรงกับ cardH ใน DrawSidebarCards)
+   int sideH = (S(318) + S(12)) * 4; // DrawSidebarCards: 2 คอลัมน์ x 4 แถว การ์ดสูงเท่ากันหมด (ต้องตรงกับ cardH ใน DrawSidebarCards)
    int leftH = (S(258) * 2 + S(12) * 2) + (S(84) + S(12)) + (S(265) + S(12)) + (S(162) + S(14));
    h += MathMax(sideH, leftH);
    return h;
