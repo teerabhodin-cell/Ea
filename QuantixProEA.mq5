@@ -262,6 +262,7 @@ input bool   UseNewsFilter          = false;                       // Use News F
 input ENUM_CALENDAR_EVENT_IMPORTANCE NewsMinImportance = CALENDAR_IMPORTANCE_HIGH; // Min News Importance (ระดับข่าวขั้นต่ำ)
 input int    NewsMinutesBefore      = 15;                          // Minutes Before News (นาทีก่อนข่าว)
 input int    NewsMinutesAfter       = 15;                          // Minutes After News (นาทีหลังข่าว)
+input int    NewsCheckIntervalSec   = 15;                          // News Check Cache, Sec (V10-10) (ยิ่งน้อยยิ่งตรวจจับข่าวไวขึ้น แลกกับเรียก CalendarValueHistory() ถี่ขึ้น)
 
 // News Filter เดิมบล็อกด้วยหน้าต่างเวลาคงที่ (ก่อน/หลังข่าว NewsMinutesBefore/After นาที) เท่านั้น - Smart
 // News Reaction ผูกกับ Market Condition classifier ตัวเดียวกับที่ใช้จริงที่อื่น: ถ้าหน้าต่างคงที่จบแล้ว
@@ -1064,14 +1065,20 @@ double GetOneWayDistanceFactor()
    return MathMax(0.0, MathMin(1.0, atrMultiples / OneWayDistanceATRMultiples));
 }
 
-// ความลึก Level ของฝั่งที่มีไม้มากกว่า (ฝั่งที่ Grid กำลังไล่ถ่วงราคาสวนทาง) เทียบ TotalLevels
+// ความหนักจริงของฝั่งที่แบก Lot สะสมมากกว่า เทียบเพดาน Exposure ที่อนุญาต (V10-08 fix) - เดิมใช้
+// MathMax(buyCount, sellCount)/TotalLevels นับแค่ "จำนวนไม้" ซึ่งไม่ได้สะท้อนความเสี่ยงจริงเสมอไป
+// (เช่น Buy 4 ไม้ 0.01 lot รวม 0.04 vs Sell 1 ไม้ 0.50 lot - นับไม้จะมองว่า Buy หนักกว่า ทั้งที่ Sell
+// แบกความเสี่ยงมากกว่ามาก โดยเฉพาะช่วงที่ Session/SmartLot/Recovery factor ลด lot ฝั่งใดฝั่งหนึ่งไม่เท่ากัน)
+// ใช้ GetAllowedExposureLots() ตัวเดียวกับที่ Exposure Guard ใช้เป็นเพดานอ้างอิง ให้ทั้งสองระบบมอง
+// ความเสี่ยงทิศทางสอดคล้องกัน
 double GetOneWayGridDepthFactor()
 {
-   int buyCount, sellCount; double totalLots;
-   CountPositions(buyCount, sellCount, totalLots);
-   int heavier = MathMax(buyCount, sellCount);
-   if(TotalLevels <= 0) return 0.0;
-   return MathMax(0.0, MathMin(1.0, (double)heavier / (double)TotalLevels));
+   double buyLots, sellLots;
+   GetExposureLots(buyLots, sellLots);
+   double heavierLots = MathMax(buyLots, sellLots);
+   double allowedExposure = GetAllowedExposureLots();
+   if(allowedExposure <= 0) return 0.0;
+   return MathMax(0.0, MathMin(1.0, heavierLots / allowedExposure));
 }
 
 // DD ที่ "เพิ่มต่อเนื่อง" เทียบกับ snapshot ที่เก็บไว้เมื่อ OneWayDDLookbackSec วินาทีก่อน (ไม่ใช่แค่ DD
@@ -1155,12 +1162,13 @@ double GetOneWayGridFactor()
    }
 }
 
-// ฝั่งที่ "หนักกว่า" ตอนนี้ (มีไม้มากกว่าอีกฝั่ง) = ฝั่งที่ราคากำลังวิ่งสวนอยู่ - เท่ากันถือว่าไม่มีฝั่งไหนหนัก
+// ฝั่งที่ "หนักกว่า" ตอนนี้ = ฝั่งที่แบก Lot สะสมมากกว่า (V10-08 fix) - เดิมเทียบจำนวนไม้ ซึ่งไม่การันตีว่า
+// เป็นฝั่งที่เสี่ยงมากกว่าจริง (ดูเหตุผลเดียวกับ GetOneWayGridDepthFactor() ด้านบน) เท่ากันถือว่าไม่มีฝั่งไหนหนัก
 bool IsOneWayHeavierSide(bool isBuy)
 {
-   int buyCount, sellCount; double totalLots;
-   CountPositions(buyCount, sellCount, totalLots);
-   return isBuy ? (buyCount > sellCount) : (sellCount > buyCount);
+   double buyLots, sellLots;
+   GetExposureLots(buyLots, sellLots);
+   return isBuy ? (buyLots > sellLots) : (sellLots > buyLots);
 }
 
 // แยกจาก IsOneWaySideBlocked() เพื่อให้ caller ที่คำนวณ GetOneWayState() ไว้แล้วเพื่อเหตุผลอื่น (เช่น
@@ -1484,14 +1492,15 @@ void GetMarginStateLabel(ENUM_MARGIN_STATE s, string &label, color &clr)
 //| News Filter - เหมือน Time Filter ทุกอย่างเรื่องนโยบาย: บาสเก็ตที่เปิดอยู่แล้ว |
 //| ยังจัดการ/ปิดตามปกติ (กำไรได้ ก็ปิดได้) แค่ "ห้ามเปิดไม้ใหม่" ช่วงใกล้ข่าวแรงเท่านั้น |
 //| เช็คจากปฏิทินเศรษฐกิจของ MT5 (currency = สกุลเงินกำไรของสัญลักษณ์ เช่น USD    |
-//| สำหรับ XAUUSD) ผลลัพธ์ cache ไว้ 60 วินาที เพราะ CalendarValueHistory()      |
-//| หนักเกินจะเรียกทุกทิค และหน้าต่างข่าวหน่วยเป็นนาทีอยู่แล้วไม่ต้องเช็คถี่กว่านั้น |
+//| สำหรับ XAUUSD) ผลลัพธ์ cache ไว้ NewsCheckIntervalSec วินาที (V10-10 - เดิมล็อก |
+//| ตายตัวที่ 60 วิ ซึ่งสำหรับข่าวแรงช่วง Gold ถือว่า lag พอสมควร) เพราะ           |
+//| CalendarValueHistory() หนักเกินจะเรียกทุกทิค แต่ยังปรับให้ถี่ขึ้นได้ผ่าน input   |
 //+------------------------------------------------------------------+
 bool IsNewsBlackout()
 {
    if(!UseNewsFilter) return false;
 
-   if(LastNewsCheckTime > 0 && TimeCurrent() - LastNewsCheckTime < 60) return NewsBlackoutActive;
+   if(LastNewsCheckTime > 0 && TimeCurrent() - LastNewsCheckTime < NewsCheckIntervalSec) return NewsBlackoutActive;
    LastNewsCheckTime = TimeCurrent();
 
    string curr = SymbolInfoString(_Symbol, SYMBOL_CURRENCY_PROFIT);
@@ -3205,34 +3214,62 @@ void ExecuteGridLogic(int buyCount, int sellCount, double lastBuyPrice, double l
 //+------------------------------------------------------------------+
 //| Delete All Pending Orders Function                               |
 //+------------------------------------------------------------------+
+// (V10-11) Re-scan + retry จนกว่า Pending จะว่างจริงหรือครบ retry cap - เดิมยิง OrderSendAsync() ทีเดียว
+// จบไม่มีการยืนยันเหมือน ClearEverythingAsync() ทำกับ Position จริง ถ้า Async ส่งไม่สำเร็จ (เช่น connection
+// blip) Pending จะยังค้างอยู่โดยไม่มีใครรู้ - อันตรายเฉพาะช่วง News/Risk Block ที่ตั้งใจยกเลิก Pending
+// ทั้งหมดเพราะตลาดผิดปกติ ถ้า Pending ค้างแล้วราคาชนพอดีจะฟิลได้ทั้งที่ควรถูกยกเลิกไปแล้ว - pattern เดียวกับ
+// retry loop ปิด Position ใน ClearEverythingAsync() (autoTradingDisabled early-exit, Sleep เว้นตอน backtest)
 void DeleteAllPendingOrders()
 {
    MqlTradeRequest request;
    MqlTradeResult  result;
 
-   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   int retryCount = 0;
+   while(retryCount < 10)
    {
-      ulong ticket = OrderGetTicket(i);
-      if(ticket > 0 && OrderSelect(ticket))
-      {
-         if(OrderGetString(ORDER_SYMBOL) == _Symbol && OrderGetInteger(ORDER_MAGIC) == MagicNumber)
-         {
-            ENUM_ORDER_TYPE type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
-            if(type == ORDER_TYPE_BUY_STOP || type == ORDER_TYPE_SELL_STOP ||
-               type == ORDER_TYPE_BUY_LIMIT || type == ORDER_TYPE_SELL_LIMIT)
-            {
-               ZeroMemory(request); ZeroMemory(result);
-               request.action = TRADE_ACTION_REMOVE;
-               request.order  = ticket;
+      ulong tickets[];
+      ArrayResize(tickets, 0);
 
-               bool sent = OrderSendAsync(request, result);
-               if(!sent)
-               {
-                  Print("OrderSendAsync (Remove Pending) failed with error: ", GetLastError());
-               }
-            }
+      for(int i = OrdersTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = OrderGetTicket(i);
+         if(ticket == 0 || !OrderSelect(ticket)) continue;
+         if(OrderGetString(ORDER_SYMBOL) != _Symbol || OrderGetInteger(ORDER_MAGIC) != MagicNumber) continue;
+
+         ENUM_ORDER_TYPE type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+         if(type != ORDER_TYPE_BUY_STOP && type != ORDER_TYPE_SELL_STOP &&
+            type != ORDER_TYPE_BUY_LIMIT && type != ORDER_TYPE_SELL_LIMIT) continue;
+
+         int n = ArraySize(tickets);
+         ArrayResize(tickets, n + 1);
+         tickets[n] = ticket;
+      }
+
+      if(ArraySize(tickets) == 0) break;
+
+      bool autoTradingDisabled = false;
+      for(int i = 0; i < ArraySize(tickets); i++)
+      {
+         ZeroMemory(request); ZeroMemory(result);
+         request.action = TRADE_ACTION_REMOVE;
+         request.order  = tickets[i];
+
+         if(!OrderSendAsync(request, result))
+         {
+            Print("OrderSendAsync (Remove Pending) failed: ", GetLastError(), " retcode: ", result.retcode);
+            if(result.retcode == TRADE_RETCODE_SERVER_DISABLES_AT || result.retcode == TRADE_RETCODE_CLIENT_DISABLES_AT)
+               autoTradingDisabled = true;
          }
       }
+
+      if(autoTradingDisabled)
+      {
+         Print("⛔ [AUTOTRADING DISABLED] Broker/terminal disabled automated trading - stopping pending-cancel retry loop early. Will retry once AutoTrading is back on.");
+         break;
+      }
+
+      retryCount++;
+      if(retryCount < 10 && !IsTestingMode) Sleep(20);
    }
 }
 
@@ -3672,20 +3709,9 @@ void ClearEverythingAsync()
       statsPosCount++;
    }
 
-   // 1. เคลียร์ Pending Orders (ยังใช้ Async ได้ ไม่ใช่ตัวที่ทำให้ IsClosingState ค้าง)
-   for(int i = OrdersTotal()-1; i >= 0; i--)
-   {
-      ulong ticket = OrderGetTicket(i);
-      if(ticket == 0 || !OrderSelect(ticket)) continue;
-      if(OrderGetString(ORDER_SYMBOL) != _Symbol || OrderGetInteger(ORDER_MAGIC) != MagicNumber) continue;
-
-      ZeroMemory(request); ZeroMemory(result);
-      request.action = TRADE_ACTION_REMOVE;
-      request.order  = ticket;
-
-      bool sent = OrderSendAsync(request, result);
-      if(!sent) Print("Clear Pending OrderAsync failed: ", GetLastError());
-   }
+   // 1. เคลียร์ Pending Orders - ใช้ DeleteAllPendingOrders() ตัวเดียวกับ path อื่นๆ (V10-11 fix เพิ่ม
+   // retry+confirmation loop ให้แล้ว แทนที่จะยิง OrderSendAsync() ทีเดียวจบไม่ยืนยันแบบโค้ดเดิมตรงนี้)
+   DeleteAllPendingOrders();
 
    // 2. เคลียร์ Open Positions แบบ Synchronous + ยืนยันว่าปิดจริงก่อนออกจากฟังก์ชัน
    int retryCount = 0;
