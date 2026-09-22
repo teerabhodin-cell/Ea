@@ -4560,7 +4560,7 @@ int DrawHeader(int y)
 {
    UIFontSet(SF(34), FW_BOLD);
    DashCanvas.TextOut(S(14), y, "QUANTIX PRO", ColorToARGB(clrWhite));
-   DashCanvas.TextOut(S(14), y + S(31), "TERMINAL", ColorToARGB(C'168,85,247'));
+   DashCanvas.TextOut(S(14), y + S(31), "TERMINAL V10", ColorToARGB(C'168,85,247'));
 
    UIFontSet(SF(15));
    DashCanvas.TextOut(S(14), y + S(66), GetUIString("แดชบอร์ดวิเคราะห์แบบเรียลไทม์", "MULTI-ANALYTICS DASHBOARD"), ColorToARGB(C'150,120,200'));
