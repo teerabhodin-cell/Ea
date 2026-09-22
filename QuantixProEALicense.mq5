@@ -4577,42 +4577,83 @@ void DrawRiskControlCard(int x, int y, int w, int h)
    string volTxt = volHigh ? GetUIString("สูงเกินไป", "HIGH") : (volLow ? GetUIString("ต่ำเกินไป", "LOW") : GetUIString("ปกติ", "NORMAL"));
    color  volClr = volHigh ? C'239,68,68' : (volLow ? C'251,146,60' : C'34,197,94');
    DrawKV(barX, ry, barW, GetUIString("ความผันผวน", "VOLATILITY"), volTxt, C'160,160,180', volClr, 12);
-   ry += S(26);
+}
 
-   // One-Way Protection (V10) - เรียก GetOneWayState() ตัวจริงตัวเดียวกับที่ปรับ Lot/Grid/บล็อกฝั่งจริง
+// คืน font size ที่ "พอดี" กับความกว้าง maxW โดยลดลงทีละ 1 จาก startFs จนกว่าจะพอดีหรือถึง minFs - ใช้ร่วม
+// กันทุกช่องใน Risk Engine V10 Grid ด้านล่าง (แคบกว่าคอลัมน์ปกติเยอะเพราะแบ่ง 2x2 ในคอลัมน์เดียว) แทนที่จะ
+// copy loop shrink-to-fit ซ้ำทุกจุดเหมือน DrawSystemDecisionCard เดิม
+int FitFontSize(string text, int startFs, int minFs, int maxW, uint fontStyle = 0)
+{
+   int fs = startFs;
+   UIFontSet(fs, fontStyle);
+   int tw = EstimateTextWidth(text, fs);
+   while(tw > maxW && fs > minFs)
+   {
+      fs -= 1;
+      UIFontSet(fs, fontStyle);
+      tw = EstimateTextWidth(text, fs);
+   }
+   return fs;
+}
+
+// ช่องเดียวในกริด 2x2 ของ Risk Engine V10 Card - label เล็กจางด้านบน, value ตัวหนาสีตามสถานะด้านล่าง
+// ทั้งคู่หด font อัตโนมัติให้พอดีความกว้างช่อง (w) กันข้อความยาวล้นในพื้นที่แคบ
+void DrawRiskEngineCell(int x, int y, int w, int h, string label, string value, color valueColor)
+{
+   int fitW = w - S(10);
+   int cx   = x + w / 2;
+
+   int labelFs = FitFontSize(label, SF(11), SF(8), fitW);
+   UIFontSet(labelFs);
+   int lw = EstimateTextWidth(label, labelFs);
+   DashCanvas.TextOut(cx - lw / 2, y + S(14), label, ColorToARGB(C'140,140,160'));
+
+   int valueFs = FitFontSize(value, SF(14), SF(9), fitW, FW_BOLD);
+   UIFontSet(valueFs, FW_BOLD);
+   int vw = EstimateTextWidth(value, valueFs);
+   DashCanvas.TextOut(cx - vw / 2, y + h / 2 + S(4), value, ColorToARGB(valueColor));
+}
+
+// Dashboard V10: การ์ดรวม 4 ระบบป้องกันความเสี่ยงของ V10 (One-Way/Market Condition/Exposure/Margin) ที่
+// เดิมยัดเป็นแถวต่อท้ายการ์ด Risk Control จนการ์ดสูงขึ้นเรื่อยๆ ทุกครั้งที่เพิ่มระบบใหม่ (240->266->292->318)
+// - แยกออกมาเป็นการ์ดของตัวเอง จัดกริด 2x2 ในตัว Risk Control จึงกลับไปสูงเท่าเดิม (240) ทุกฟังก์ชัน
+// ที่เรียกในนี้คือตัวจริงตัวเดียวกับที่ใช้ปรับ Lot/Grid/บล็อกไม้จริงทุกจุด ไม่มี logic ใหม่ในการ์ดนี้เลย
+void DrawRiskEngineV10Card(int x, int y, int w, int h)
+{
+   DrawCardBG(x, y, w, h, "🛡️ " + GetUIString("Risk Engine V10", "RISK ENGINE V10"));
+
+   int gridX = x + S(12);
+   int gridY = y + S(48);
+   int gridW = w - S(24);
+   int gridH = h - S(60);
+   int colW  = gridW / 2;
+   int rowH  = gridH / 2;
+
    string owLabel; color owClr;
    GetOneWayStateLabel(GetOneWayState(), owLabel, owClr);
    string owTxt = UseOneWayProtection ? owLabel : GetUIString("ปิด", "OFF");
    color  owTxtClr = UseOneWayProtection ? owClr : C'100,100,120';
-   DrawKV(barX, ry, barW, GetUIString("ป้องกันทางเดียว", "ONE-WAY"), owTxt, C'160,160,180', owTxtClr, 12);
-   ry += S(26);
+   DrawRiskEngineCell(gridX, gridY, colW, rowH, GetUIString("ทางเดียว", "ONE-WAY"), owTxt, owTxtClr);
 
-   // Market Condition (V10) - เรียก GetMarketCondition() ตัวจริงตัวเดียวกับที่ปรับ Lot/Grid/บล็อกบาสเก็ตใหม่จริง
    string mcLabelTH, mcLabelEN; color mcClr;
    GetMarketConditionLabel(GetMarketCondition(), mcLabelTH, mcLabelEN, mcClr);
    string mcTxt = UseMarketCondition ? GetUIString(mcLabelTH, mcLabelEN) : GetUIString("ปิด", "OFF");
    color  mcTxtClr = UseMarketCondition ? mcClr : C'100,100,120';
-   DrawKV(barX, ry, barW, GetUIString("สภาวะตลาด", "MARKET"), mcTxt, C'160,160,180', mcTxtClr, 12);
-   ry += S(26);
+   DrawRiskEngineCell(gridX + colW, gridY, colW, rowH, GetUIString("ตลาด", "MARKET"), mcTxt, mcTxtClr);
 
-   // Exposure Guard (V10) - เรียก GetExposureState()/GetExposureRatio() ตัวจริงตัวเดียวกับที่ปรับ
-   // Lot/บล็อกไม้ใหม่จริง โชว์ % เทียบ Allowed Exposure ให้เห็นว่าใกล้เพดานแค่ไหน
    string expLabel; color expClr;
    GetExposureStateLabel(GetExposureState(), expLabel, expClr);
    string expTxt = UseExposureGuard ? (expLabel + " " + DoubleToString(GetExposureRatio() * 100.0, 0) + "%") : GetUIString("ปิด", "OFF");
    color  expTxtClr = UseExposureGuard ? expClr : C'100,100,120';
-   DrawKV(barX, ry, barW, GetUIString("เอ็กซ์โพสเชอร์", "EXPOSURE"), expTxt, C'160,160,180', expTxtClr, 12);
-   ry += S(26);
+   DrawRiskEngineCell(gridX, gridY + rowH, colW, rowH, GetUIString("เอ็กซ์โพสเชอร์", "EXPOSURE"), expTxt, expTxtClr);
 
-   // Margin Guard (V10, Secondary) - เรียก GetMarginState()/GetMarginLevel() ตัวจริงตัวเดียวกับที่ปรับ
-   // Lot/บล็อกไม้ใหม่จริง โชว์ Margin Level % ให้เห็นว่าใกล้เพดานแค่ไหน (- = ไม่มี Margin ใช้อยู่เลย)
    string marginLabel; color marginClr;
    GetMarginStateLabel(GetMarginState(), marginLabel, marginClr);
    double marginLevel = GetMarginLevel();
    string marginLevelTxt = (marginLevel < 0) ? "-" : (DoubleToString(marginLevel, 0) + "%");
    string marginTxt = UseMarginGuard ? (marginLabel + " " + marginLevelTxt) : GetUIString("ปิด", "OFF");
    color  marginTxtClr = UseMarginGuard ? marginClr : C'100,100,120';
-   DrawKV(barX, ry, barW, GetUIString("มาร์จิ้น", "MARGIN"), marginTxt, C'160,160,180', marginTxtClr, 12);
+   DrawRiskEngineCell(gridX + colW, gridY + rowH, colW, rowH, GetUIString("มาร์จิ้น", "MARGIN"), marginTxt, marginTxtClr);
 }
 
 // ตัด string ยาวๆ ให้พอดีคอลัมน์แคบ (Server name / ไฟล์ Journal / Basket ID) - ใช้ร่วมกันทุกการ์ด
@@ -4623,13 +4664,16 @@ string TruncateForNarrowCard(string s, int maxChars)
    return s;
 }
 
-// การ์ดระบบทั้ง 8 ใบ (System Decision/Status/Risk Control + Smart Lot/Session/Execution/Connection
-// Guard/Trade Journal Monitor) จัดเป็นกริด 2 คอลัมน์ x 4 แถวเดียว แทนที่จะเรียงคอลัมน์เดียวยาวเป็นหางว่าว -
-// ทุกการ์ดใช้ความสูงเท่ากัน (สูงสุดที่การ์ดตระกูล System ต้องใช้) การ์ดตระกูล Monitor ที่เนื้อหาน้อยกว่า
-// จะเหลือพื้นที่ว่างด้านล่างนิดหน่อย ซึ่งตั้งใจ ดีกว่าความสูงไม่เท่ากันแล้วแถวเยื้องกัน
+// การ์ดระบบทั้ง 9 ใบ (System Decision/Status/Risk Control + Smart Lot/Session/Execution/Connection
+// Guard/Trade Journal Monitor + Risk Engine V10) จัดเป็นกริด 2 คอลัมน์ x 5 แถว (แถวสุดท้ายมีการ์ดเดียว
+// คอลัมน์ที่สองว่างไว้ตั้งใจ) แทนที่จะเรียงคอลัมน์เดียวยาวเป็นหางว่าว - ทุกการ์ดใช้ความสูงเท่ากัน (สูงสุด
+// ที่การ์ดตระกูล System ต้องใช้) การ์ดตระกูล Monitor ที่เนื้อหาน้อยกว่าจะเหลือพื้นที่ว่างด้านล่างนิดหน่อย
+// ซึ่งตั้งใจ ดีกว่าความสูงไม่เท่ากันแล้วแถวเยื้องกัน - Risk Engine V10 (One-Way/Market/Exposure/Margin)
+// เคยยัดเป็นแถวต่อท้าย Risk Control จนดัน cardH ขึ้นเรื่อยๆ ทุกรอบที่เพิ่มระบบใหม่ ตอนนี้แยกเป็นการ์ดของ
+// ตัวเองแล้ว cardH เลยกลับมาเท่าค่าเดิมก่อนมี V10 (240)
 int DrawSidebarCards(int y, int openPos, int sideX, int sideW)
 {
-   int cardH = S(318); // เพิ่มจาก 292 อีกครั้งให้การ์ด Risk Control มีที่พอสำหรับแถว Margin Guard (V10)
+   int cardH = S(240); // กลับมาเท่าเดิมก่อนมี V10 rows แล้ว เพราะย้าย One-Way/Market/Exposure/Margin ไปการ์ด Risk Engine V10 แยกต่างหาก
    int gap   = S(12);
    int colW  = (sideW - gap) / 2;
    int innerW = colW - S(24);
@@ -4640,6 +4684,7 @@ int DrawSidebarCards(int y, int openPos, int sideX, int sideW)
    int row1Y = row0Y + cardH + gap;
    int row2Y = row1Y + cardH + gap;
    int row3Y = row2Y + cardH + gap;
+   int row4Y = row3Y + cardH + gap;
 
    // แถว 1: System Decision | System Status
    DrawSystemDecisionCard(col0X, row0Y, colW, cardH, openPos);
@@ -4718,7 +4763,10 @@ int DrawSidebarCards(int y, int openPos, int sideX, int sideW)
    DrawKV(col1X + S(12), ry, innerW, GetUIString("ไฟล์", "File"), TruncateForNarrowCard(JournalFileName, 18), C'160,160,180', clrWhite, 12); ry += S(29);
    DrawKV(col1X + S(12), ry, innerW, GetUIString("ข้อมูล", "Scope"), GetUIString("Deal + Basket", "Deal + Basket"), C'160,160,180', clrWhite, 12);
 
-   return row3Y + cardH + gap;
+   // แถว 5: Risk Engine V10 (คอลัมน์ที่สองเว้นว่างไว้ตั้งใจ)
+   DrawRiskEngineV10Card(col0X, row4Y, colW, cardH);
+
+   return row4Y + cardH + gap;
 }
 
 int DrawNewsCard(int y, int x0, int availW)
@@ -4803,7 +4851,7 @@ int ComputeDashboardContentHeight()
    h += S(38);              // DrawServerTimeRow
    // Both columns begin at the top-card row. The sidebar continues from the
    // right edge of RISK, rather than beginning below the left dashboard.
-   int sideH = (S(318) + S(12)) * 4; // DrawSidebarCards: 2 คอลัมน์ x 4 แถว การ์ดสูงเท่ากันหมด (ต้องตรงกับ cardH ใน DrawSidebarCards)
+   int sideH = (S(240) + S(12)) * 5; // DrawSidebarCards: 2 คอลัมน์ x 5 แถว การ์ดสูงเท่ากันหมด (ต้องตรงกับ cardH ใน DrawSidebarCards)
    int leftH = (S(258) * 2 + S(12) * 2) + (S(84) + S(12)) + (S(265) + S(12)) + (S(162) + S(14));
    h += MathMax(sideH, leftH);
    return h;
