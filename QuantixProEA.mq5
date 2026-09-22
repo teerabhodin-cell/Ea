@@ -361,6 +361,14 @@ input double ExposureCautionLotFactor    = 0.75;   // Lot Factor at CAUTION
 input double ExposureRestrictedLotFactor = 0.50;   // Lot Factor at RESTRICTED
 input double ExposureHedgeBlockRatio     = 1.50;   // Ratio Threshold: Force Hedge Block (ผ่อนกว่าไม้ปกติ)
 
+// News Filter เดิมบล็อกด้วยหน้าต่างเวลาคงที่ (ก่อน/หลังข่าว NewsMinutesBefore/After นาที) เท่านั้น - Smart
+// News Reaction ผูกกับ Market Condition classifier ตัวเดียวกับที่ใช้จริงที่อื่น: ถ้าหน้าต่างคงที่จบแล้ว
+// แต่ Spread/Volatility ยังผิดปกติจริงอยู่ (MARKET_ABNORMAL) ให้ขยายบล็อกต่อ จนกว่าจะกลับปกติหรือชน
+// เพดาน NewsMaxExtensionMinutes (กันไม่ให้ค้างบล็อกตลอดไปถ้าตลาดผิดปกติต่อเนื่องนานผิดคาด)
+input group "===== 18. Smart News Reaction (V10) ====="
+input bool UseSmartNewsReaction     = false;  // Use Smart News Reaction (ต้องเปิด UseNewsFilter + UseMarketCondition ด้วย)
+input int  NewsMaxExtensionMinutes  = 30;     // Max Extension After News Window, Min (เพดานขยายสูงสุด)
+
 //=========================== GLOBAL ===============================//
 
 bool     GridCreated     = false;
@@ -496,6 +504,7 @@ int      SecondsSinceLastTick   = 0; // อัปเดตครั้งเด�
 
 bool     NewsBlackoutActive     = false; // ผลตรวจข่าวล่าสุดที่ cache ไว้ - CalendarValueHistory() หนักเกินจะเรียกทุกทิค
 datetime LastNewsCheckTime      = 0;     // เวลาที่ตรวจข่าวครั้งล่าสุด (ตรวจซ้ำทุก 60 วินาทีพอ เพราะหน้าต่างข่าวหน่วยเป็นนาทีอยู่แล้ว)
+datetime LastNewsWindowEndTime  = 0;     // event.time + NewsMinutesAfter ของข่าวล่าสุดที่เจอ - ฐานคำนวณเพดานขยายของ Smart News Reaction
 
 //====================== FUNCTION DECLARE ==========================//
 
@@ -1330,24 +1339,44 @@ bool IsNewsBlackout()
    datetime winEnd   = TimeCurrent() + NewsMinutesBefore * 60;
 
    MqlCalendarValue values[];
-   if(CalendarValueHistory(values, winStart, winEnd, NULL, curr) <= 0)
+   bool inFixedWindow = false;
+   if(CalendarValueHistory(values, winStart, winEnd, NULL, curr) > 0)
    {
-      NewsBlackoutActive = false;
-      return false;
+      for(int i = 0; i < ArraySize(values); i++)
+      {
+         MqlCalendarEvent evt;
+         if(!CalendarEventById(values[i].event_id, evt)) continue;
+         if(evt.importance < NewsMinImportance) continue;
+
+         inFixedWindow = true;
+         // เก็บ "เวลาสิ้นสุดหน้าต่างคงที่" ของข่าวล่าสุดที่เจอ (ไม่ใช่ break ทันทีเหมือนเดิม เพราะต้องหา
+         // ค่ามากสุดจากข่าวหลายรายการในหน้าต่างเดียวกันได้ด้วย) ไว้เป็นฐานของ Smart News Reaction ด้านล่าง
+         datetime windowEnd = values[i].time + NewsMinutesAfter * 60;
+         if(windowEnd > LastNewsWindowEndTime) LastNewsWindowEndTime = windowEnd;
+      }
+   }
+
+   if(inFixedWindow)
+   {
+      NewsBlackoutActive = true;
+      return true;
+   }
+
+   // Smart News Reaction (V10): หน้าต่างคงที่จบแล้ว แต่ถ้า Spread/Volatility ยังผิดปกติจริงอยู่ (อ่านจาก
+   // GetMarketCondition() ตัวจริงตัวเดียวกับที่ใช้ปรับ Lot/Grid/บล็อกบาสเก็ตใหม่ที่อื่น) ให้ขยายบล็อกต่อ
+   // แทนที่จะปล่อยเปิดไม้ทันทีตามนาฬิกาทั้งที่ตลาดยังไม่นิ่งจริง - จำกัดเพดานขยายที่ NewsMaxExtensionMinutes
+   if(UseSmartNewsReaction && UseMarketCondition && LastNewsWindowEndTime > 0)
+   {
+      datetime extensionDeadline = LastNewsWindowEndTime + NewsMaxExtensionMinutes * 60;
+      if(TimeCurrent() <= extensionDeadline && GetMarketCondition() == MARKET_ABNORMAL)
+      {
+         NewsBlackoutActive = true;
+         return true;
+      }
    }
 
    NewsBlackoutActive = false;
-   for(int i = 0; i < ArraySize(values); i++)
-   {
-      MqlCalendarEvent evt;
-      if(!CalendarEventById(values[i].event_id, evt)) continue;
-      if(evt.importance < NewsMinImportance) continue;
-
-      NewsBlackoutActive = true;
-      break;
-   }
-
-   return NewsBlackoutActive;
+   return false;
 }
 
 //+------------------------------------------------------------------+
