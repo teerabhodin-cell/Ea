@@ -168,7 +168,12 @@ input double MinEquityLimit         = 4000.0;  // Min Equity Limit
 input bool   UseMaxLotCap           = false;   // Use Max Lot Cap (จำกัด Lot สูงสุด)
 input double MaxLotCap              = 5.0;     // Max Lot Cap (Lot สูงสุดต่อไม้)
 
-// Smart Lot Management (V9)
+input group "===== 2B. Trade / Basket Journal ====="
+input bool   UseTradeJournal          = true;    // Save structured trade/basket journal to CSV
+input string JournalFileName          = "QuantixProEA_Journal.csv"; // CSV file name (Common Files)
+input bool   JournalLogEveryDeal      = true;    // Log every broker deal transaction
+
+input group "===== 2C. Smart Lot Management (V9) ====="
 input bool   UseSmartLot             = false;  // Smart Lot Management
 input double SmartLotMinFactor       = 0.35;   // Minimum lot factor at high risk (35%=ลดได้สูงสุด 65%)
 input double SmartLotDDStartPct      = 5.0;    // Start reducing lot when basket DD reaches this %
@@ -178,11 +183,6 @@ input double SmartLotLevelFactor     = 0.10;   // Lot reduction per level after 
 input bool   SmartLotVolatilityGuard = true;   // Reduce lot when current grid distance is unusually wide
 input double SmartLotVolatilityStart = 300.0;  // Grid distance (points) where volatility reduction starts
 input double SmartLotVolatilityMax   = 600.0;  // Grid distance (points) where minimum factor is reached
-
-input group "===== 2B. Trade / Basket Journal ====="
-input bool   UseTradeJournal          = true;    // Save structured trade/basket journal to CSV
-input string JournalFileName          = "QuantixProEA_Journal.csv"; // CSV file name (Common Files)
-input bool   JournalLogEveryDeal      = true;    // Log every broker deal transaction
 
 input group "===== 3. Grid ====="
 input ENUM_GRID_TYPE GridType       = GRID_VIRTUAL; // Grid Type (รูปแบบ Grid)
@@ -238,9 +238,6 @@ input double BreakevenLockUSD       = 2.0;     // Breakeven Lock $
 input bool   UsePartialClose        = false;   // Partial Close (ปิดบางส่วน)
 input double PartialCloseProfitUSD  = 20.0;    // Partial Close Trigger $
 input double PartialClosePercent    = 50.0;    // Partial Close %
-input bool   UseRecoveryMode        = false;   // Recovery Mode (แก้ไม้)
-input double RecoveryDD_TriggerPercent = 10.0; // Recovery DD Trigger %
-input double RecoveryLotBoost          = 2.0;  // Recovery Lot Boost
 
 input group "===== 8. Overflow ====="
 input bool   UseLevelUnlock      = true;    // Level Unlock (ปลดล็อคชั้น)
@@ -274,6 +271,14 @@ input bool   UseNewsFilter          = false;                       // Use News F
 input ENUM_CALENDAR_EVENT_IMPORTANCE NewsMinImportance = CALENDAR_IMPORTANCE_HIGH; // Min News Importance (ระดับข่าวขั้นต่ำ)
 input int    NewsMinutesBefore      = 15;                          // Minutes Before News (นาทีก่อนข่าว)
 input int    NewsMinutesAfter       = 15;                          // Minutes After News (นาทีหลังข่าว)
+
+// News Filter เดิมบล็อกด้วยหน้าต่างเวลาคงที่ (ก่อน/หลังข่าว NewsMinutesBefore/After นาที) เท่านั้น - Smart
+// News Reaction ผูกกับ Market Condition classifier ตัวเดียวกับที่ใช้จริงที่อื่น: ถ้าหน้าต่างคงที่จบแล้ว
+// แต่ Spread/Volatility ยังผิดปกติจริงอยู่ (MARKET_ABNORMAL) ให้ขยายบล็อกต่อ จนกว่าจะกลับปกติหรือชน
+// เพดาน NewsMaxExtensionMinutes (กันไม่ให้ค้างบล็อกตลอดไปถ้าตลาดผิดปกติต่อเนื่องนานผิดคาด)
+input group "===== 11B. Smart News Reaction (V10) ====="
+input bool UseSmartNewsReaction     = false;  // Use Smart News Reaction (ต้องเปิด UseNewsFilter + UseMarketCondition ด้วย)
+input int  NewsMaxExtensionMinutes  = 30;     // Max Extension After News Window, Min (เพดานขยายสูงสุด)
 
 // รวมทุกพารามิเตอร์ที่มีผลเฉพาะตอน Grid Type = Virtual Limit ไว้ในหมวดเดียว (เดิมกระจายอยู่ทั้งหมวด
 // Grid และ Target & Trailing) ให้หาง่ายขึ้น เพราะทั้งหมดนี้เป็น "ค่าทับ" ที่ไม่มีผลเลยตอนใช้ Virtual
@@ -336,10 +341,24 @@ input group "===== 14. Emergency Connection Protection (V9) ====="
 input bool UseConnectionGuard           = true;  // Use Emergency Connection & Power Protection
 input int  ConnectionResumeCooldownSec  = 30;    // Resume Cooldown After Reconnect, Sec (ช่วง RECOVERING)
 
+// Recovery Mode (V9) รวมกับ Multi-Stage DD (V10 stage 3) ไว้กลุ่มเดียวกัน - เดิมแยกกันคนละที่ในไฟล์
+// (V9 base เคยอยู่ใน Position Mgmt, Multi-Stage เคยอยู่ท้ายไฟล์) ทั้งที่เป็นระบบเดียวกัน: Stage 1 =
+// RecoveryDD_TriggerPercent/RecoveryLotBoost, Stage 2 ผูกกับ Market Condition โดยตรงใน
+// GetCalculatedLotSize() (ไม่มี Input แยก), Stage 3 = UseMultiStageRecovery/Tier2-3 ด้านล่าง
+input group "===== 15. Recovery Mode (V9/V10) ====="
+input bool   UseRecoveryMode        = false;   // Recovery Mode (แก้ไม้)
+input double RecoveryDD_TriggerPercent = 10.0; // Recovery DD Trigger %
+input double RecoveryLotBoost          = 2.0;  // Recovery Lot Boost
+input bool   UseMultiStageRecovery = false; // Use Multi-Stage DD Recovery Boost (เปิดแล้ว Tier 2/3 แทนที่ RecoveryLotBoost เมื่อ DD ลึกพอ)
+input double RecoveryTier2DD       = 20.0;  // DD %% Threshold: Stage 2
+input double RecoveryTier2Boost    = 2.5;   // Lot Boost Factor at Stage 2
+input double RecoveryTier3DD       = 30.0;  // DD %% Threshold: Stage 3
+input double RecoveryTier3Boost    = 3.0;   // Lot Boost Factor at Stage 3
+
 // One-Way Score รวม 3 ปัจจัย normalize แล้ว (0..1 ต่อตัว) ด้วยน้ำหนัก 40/35/25: ระยะห่างจาก GridBasePrice
 // เทียบ ATR (OneWayDistanceATRMultiples) / ความลึก Level ของฝั่งที่หนักกว่าเทียบ TotalLevels / DD ที่เพิ่ม
 // ต่อเนื่องในช่วง OneWayDDLookbackSec วินาที - ไม่ใช้ระยะจุดคงที่ตายตัวเลย ตามที่ตั้งใจออกแบบไว้
-input group "===== 15. Smart One-Way Protection (V10) ====="
+input group "===== 16. Smart One-Way Protection (V10) ====="
 input bool   UseOneWayProtection       = false;  // Use Smart One-Way Protection
 input double OneWayWarnScore          = 0.25;   // Score Threshold: NORMAL -> WARNING
 input double OneWayActiveScore        = 0.50;   // Score Threshold: WARNING -> ONE-WAY
@@ -354,7 +373,7 @@ input double OneWayActiveGridFactor   = 1.35;   // Grid Distance Factor at ONE-W
 
 // ATR Ratio = ATR สด / ค่าเฉลี่ย ATR ย้อนหลัง MarketVolLookbackBars แท่ง (ไม่ใช่จุดคงที่ เหมือน One-Way)
 // EMA Slope = (EMA ตอนนี้ - EMA ย้อนหลัง) / ATR สด - วัดความแรงเทรนด์แบบ normalize ด้วยความผันผวน
-input group "===== 16. Smart Market Condition (V10) ====="
+input group "===== 17. Smart Market Condition (V10) ====="
 input bool   UseMarketCondition        = false;  // Use Smart Market Condition
 input int    MarketVolLookbackBars     = 50;     // Volatility Reference Lookback, Bars
 input double MarketTrendSlopeThreshold = 0.5;    // EMA Slope Threshold (ATR units)
@@ -369,7 +388,7 @@ input double MarketHighVolGridFactor   = 1.30;   // Grid Distance Factor: High V
 
 // Allowed Exposure = (Equity / 1000) * ExposureLotsPer1000Equity - Ratio = Gross Exposure จริง / Allowed
 // เกณฑ์ NORMAL/CAUTION/RESTRICTED/BLOCK เป็น Input ทั้งหมด ไม่ล็อกเลขที่ "พิสูจน์แล้ว" ตามที่ตั้งใจออกแบบ
-input group "===== 17. Smart Exposure Guard (V10) ====="
+input group "===== 18. Smart Exposure Guard (V10) ====="
 input bool   UseExposureGuard            = false;  // Use Smart Exposure Guard
 input double ExposureLotsPer1000Equity   = 0.10;   // Allowed Gross Exposure, Lot per 1000 Equity
 input double ExposureCautionRatio        = 0.60;   // Ratio Threshold: NORMAL -> CAUTION
@@ -378,14 +397,6 @@ input double ExposureBlockRatio          = 1.00;   // Ratio Threshold: RESTRICTE
 input double ExposureCautionLotFactor    = 0.75;   // Lot Factor at CAUTION
 input double ExposureRestrictedLotFactor = 0.50;   // Lot Factor at RESTRICTED
 input double ExposureHedgeBlockRatio     = 1.50;   // Ratio Threshold: Force Hedge Block (ผ่อนกว่าไม้ปกติ)
-
-// News Filter เดิมบล็อกด้วยหน้าต่างเวลาคงที่ (ก่อน/หลังข่าว NewsMinutesBefore/After นาที) เท่านั้น - Smart
-// News Reaction ผูกกับ Market Condition classifier ตัวเดียวกับที่ใช้จริงที่อื่น: ถ้าหน้าต่างคงที่จบแล้ว
-// แต่ Spread/Volatility ยังผิดปกติจริงอยู่ (MARKET_ABNORMAL) ให้ขยายบล็อกต่อ จนกว่าจะกลับปกติหรือชน
-// เพดาน NewsMaxExtensionMinutes (กันไม่ให้ค้างบล็อกตลอดไปถ้าตลาดผิดปกติต่อเนื่องนานผิดคาด)
-input group "===== 18. Smart News Reaction (V10) ====="
-input bool UseSmartNewsReaction     = false;  // Use Smart News Reaction (ต้องเปิด UseNewsFilter + UseMarketCondition ด้วย)
-input int  NewsMaxExtensionMinutes  = 30;     // Max Extension After News Window, Min (เพดานขยายสูงสุด)
 
 // Margin Guard (V10, Secondary) - Exposure Guard ข้างบนคุมความเสี่ยงจาก "จำนวน Lot" เทียบ Equity แต่
 // Symbol ต่างกัน contract spec ต่างกัน Lot เท่ากันอาจใช้ Margin ไม่เท่ากัน ตัวนี้เช็ค ACCOUNT_MARGIN_LEVEL
@@ -405,16 +416,6 @@ input group "===== 20. Basket Stagnation Protection (V10) ====="
 input bool   UseBasketStagnation      = false;  // Use Basket Stagnation Protection
 input double BasketMaxHours           = 24.0;   // Basket Age Threshold, Hours (ก่อนเริ่มพิจารณาว่า Stagnant)
 input double StagnationRecoveryProfit = 0.0;    // Close Basket Once Profit Reaches This, $ (ระหว่าง Stagnation Mode)
-
-// Smart Recovery 2.0 (V10, stage 3) - Stage 1 (RecoveryDD_TriggerPercent/RecoveryLotBoost) ยังเป็นขั้นแรก
-// เหมือนเดิม เปิดเพิ่มได้อีก 2 ขั้นตาม DD ที่ลึกขึ้น (เช่น 10%->20%->30% Boost เพิ่มขึ้นเรื่อยๆ) แทนที่จะ
-// Boost คงที่ตัวเดียวไม่ว่า DD จะลึกแค่ไหน - Exposure/Market Gate ของ stage 1-2 ยังคุมทุกขั้นเหมือนเดิม
-input group "===== 21. Recovery 2.0 Multi-Stage DD (V10) ====="
-input bool   UseMultiStageRecovery = false; // Use Multi-Stage DD Recovery Boost (เปิดแล้ว Tier 2/3 แทนที่ RecoveryLotBoost เมื่อ DD ลึกพอ)
-input double RecoveryTier2DD       = 20.0;  // DD %% Threshold: Stage 2
-input double RecoveryTier2Boost    = 2.5;   // Lot Boost Factor at Stage 2
-input double RecoveryTier3DD       = 30.0;  // DD %% Threshold: Stage 3
-input double RecoveryTier3Boost    = 3.0;   // Lot Boost Factor at Stage 3
 
 //=========================== GLOBAL ===============================//
 
