@@ -2243,8 +2243,8 @@ void ApplyBasketBreakevenAndPartial(double currentProfit)
                   }
                   else
                   {
-                     PrintFormat("⛔ [PARTIAL CLOSE FAILED] Ticket=%I64u retcode=%u (%s) comment=%s",
-                                 ticket, result.retcode, EnumToString((ENUM_TRADE_RETCODE)result.retcode), result.comment);
+                     PrintFormat("⛔ [PARTIAL CLOSE FAILED] Ticket=%I64u retcode=%u comment=%s",
+                                 ticket, result.retcode, result.comment);
                   }
                }
             }
@@ -3622,8 +3622,8 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
                JournalEnsureBasketStarted("GRID_BUY");
                return;
             }
-            PrintFormat("⛔ [BUY ORDER FAILED] Level %d retcode=%u (%s) comment=%s",
-                        nextLevel, result.retcode, EnumToString((ENUM_TRADE_RETCODE)result.retcode), result.comment);
+            PrintFormat("⛔ [BUY ORDER FAILED] Level %d retcode=%u comment=%s",
+                        nextLevel, result.retcode, result.comment);
          }
          else if(TimeCurrent() - lastSpreadLogTime >= 5)
          {
@@ -3719,8 +3719,8 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
                JournalEnsureBasketStarted("GRID_SELL");
                return;
             }
-            PrintFormat("⛔ [SELL ORDER FAILED] Level %d retcode=%u (%s) comment=%s",
-                        nextLevel, result.retcode, EnumToString((ENUM_TRADE_RETCODE)result.retcode), result.comment);
+            PrintFormat("⛔ [SELL ORDER FAILED] Level %d retcode=%u comment=%s",
+                        nextLevel, result.retcode, result.comment);
          }
          else if(TimeCurrent() - lastSpreadLogTime >= 5)
          {
