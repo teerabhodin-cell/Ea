@@ -481,6 +481,9 @@ datetime OneWayDDSnapshotTime  = 0;
 
 // Basket Management & Recovery
 bool     PartialCloseExecuted = false; // ป้องกันการสั่งปิดบางส่วนซ้ำรอบเดิม
+ulong    PartialClosedTickets[]; // ticket ที่ Partial Close สำเร็จไปแล้วในบาสเก็ตปัจจุบัน (V10-02) - กัน
+                                  // ปิดซ้ำตอน retry ไม้อื่นที่ยังไม่สำเร็จ (ไม่งั้นไม้ที่สำเร็จแล้วจะโดนคำนวณ
+                                  // % ซ้ำจาก Volume ที่เหลือจริงอีกรอบ กลายเป็นปิดเกินกว่า PartialClosePercent ที่ตั้งไว้)
 bool     BreakevenActivated   = false; // latch เมื่อกำไรแตะ BreakevenTriggerUSD แล้ว (ต้อง latch ไว้ก่อน ไม่งั้นเงื่อนไข Trigger/Lock จะไม่มีวันเป็นจริงพร้อมกัน)
 bool     BasketStagnant       = false; // latch เมื่อบาสเก็ตเข้า Stagnation Mode แล้ว (V10) - reset ทุกจุดเดียวกับ BreakevenActivated
 bool     ForceHedgeArmed      = false; // latch กัน Force Hedge ยิงรัวๆ ทุกทิคตอน DD ค้างสูง ต้องรอ DD ลดต่ำกว่า ForceHedgeResetPercent ก่อนถึงจะยิงซ้ำได้
@@ -520,7 +523,8 @@ int      DayStartDay          = -1; // dt.day_of_year ของวันที�
 double   DailyRealizedProfit  = 0.0; // กำไรวันนี้แบบ "ปิดรอบแล้ว" เท่านั้น - บวกเพิ่มตอนบาสเก็ตปิดจริง ไม่ใช่ floating P/L สด
 double   DayStartBalance      = 0.0; // ยอดเงินตอนเริ่มวันใหม่ (ก่อนบาสเก็ตของวันนั้นปิดเลย) - ฐานคำนวณ % ของ Daily Profit Goal / Daily Loss Limit
 double   BasketStartBalance   = 0.0; // ยอดเงินตอนเริ่มบาสเก็ตนี้ (ก่อนไม้แรกฟิล) - ฐานคำนวณ % ของ Target Profit
-datetime BasketStartTime      = 0;   // เวลาที่เริ่มบาสเก็ตนี้ - ใช้โชว์ "Duration" บน Dashboard
+datetime BasketStartTime      = 0;   // เวลาที่เริ่มบาสเก็ตนี้ - ใช้โชว์ "Duration" บน Dashboard และคำนวณอายุบาสเก็ตใน Stagnation Protection
+bool     BasketStartMarked    = false; // (V10-03) true = บันทึก BasketStartTime/Balance ของบาสเก็ตปัจจุบันไปแล้ว - กันเขียนทับซ้ำระหว่างที่มีไม้เปิดอยู่
 
 // กำไรแบบ "ปิดรอบแล้ว" สะสมรายสัปดาห์/เดือน (บวกจุดเดียวกับ DailyRealizedProfit ตอนบาสเก็ตปิดจริง)
 // ใช้โชว์การ์ด Profit Summary บน Dashboard - รีเซ็ตแบบ "วันจันทร์แรกของรอบ"/"เดือนปฏิทินใหม่" ไม่ใช่
@@ -657,6 +661,25 @@ void LogEvent(string text); // News & Alerts feed on the Canvas dashboard
 int S(double v);   // Responsive scaling helpers (defined near InitDashboard, forward-declared for use in Draw* functions above)
 int SF(double v);
 double ComputeUIScale();
+bool IsTradeSuccess(const MqlTradeResult &result);
+bool IsTicketPartialClosed(ulong ticket);
+
+// OrderSend() == true บอกแค่ว่า Request ถูกส่งไปหา Server สำเร็จ (ผ่านการตรวจสอบเบื้องต้นของ Terminal)
+// ไม่ได้แปลว่า Order สำเร็จจริง - Server ยังตอบกลับเป็น REJECT/INVALID_VOLUME/NO_MONEY/REQUOTE/
+// MARKET_CLOSED/TRADE_DISABLED ฯลฯ ผ่าน result.retcode ได้ ทุกจุดที่ส่ง Order (TRADE_ACTION_DEAL) ต้อง
+// เช็คคู่กันเสมอ ไม่งั้น EA จะเข้าใจผิดว่าไม้เปิด/ปิดสำเร็จทั้งที่ broker จริงไม่ได้ทำ (log/journal จะ
+// บันทึกผิด แม้ Grid Level เองจะ self-correct ในทิคถัดไปเพราะ buyCount/sellCount สแกนจากโพซิชันจริงเสมอ)
+bool IsTradeSuccess(const MqlTradeResult &result)
+{
+   return (result.retcode == TRADE_RETCODE_DONE || result.retcode == TRADE_RETCODE_DONE_PARTIAL);
+}
+
+bool IsTicketPartialClosed(ulong ticket)
+{
+   for(int i = 0; i < ArraySize(PartialClosedTickets); i++)
+      if(PartialClosedTickets[i] == ticket) return true;
+   return false;
+}
 
 //+------------------------------------------------------------------+
 //| Get Compatible Filling Mode Function                             |
@@ -692,10 +715,12 @@ void RecalculateBasePrice()
    GridBasePriceSell = GridBasePrice;
    BuyGapAnchor  = 0.0; // every call here means a fresh/flat grid, so any stale gap override is no longer relevant
    SellGapAnchor = 0.0;
-   // เช่นเดียวกัน - ทุกครั้งที่ฟังก์ชันนี้ถูกเรียกคือพอร์ตว่างจริง (ยังไม่มีไม้แรกฟิล) ยอดเงิน ณ ตอนนี้
-   // เลยเป็นฐาน "ก่อนเริ่มบาสเก็ต" ที่ถูกต้องเสมอสำหรับ Target Profit % (ดู ComputeEffectiveThreshold)
-   BasketStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   BasketStartTime    = TimeCurrent(); // ใช้โชว์ "Duration" ของบาสเก็ตปัจจุบันบน Dashboard
+   // (V10-03) BasketStartBalance/BasketStartTime ย้ายออกจากตรงนี้แล้ว - เดิมเข้าใจว่า "ทุกครั้งที่ฟังก์ชัน
+   // นี้ถูกเรียกคือพอร์ตว่างจริง" ก็ถูก แต่ฟังก์ชันนี้ถูกเรียกซ้ำได้หลายครั้งระหว่างที่พอร์ตยังว่างรออยู่
+   // (เช่น ราคาห่างจากฐานเกิน 2 เท่าระยะกริด) ทำให้ค่านี้ถูกตั้งไว้ล่วงหน้าก่อนไม้แรกฟิลจริงได้นานมาก ถ้า
+   // ตลาด Sideway แล้วไม่มีการเรียกซ้ำอีกเลยจนกว่าไม้แรกจะฟิล อายุบาสเก็ตที่คำนวณได้ (ใช้ใน Basket
+   // Stagnation Protection) จะเพี้ยนเกินจริง - ตอนนี้ตั้งค่าตรง "ไม้แรกฟิลจริง" เท่านั้น (ดู OnTick()
+   // ส่วนนับโพซิชัน, เช็ค BasketStartMarked)
    CachedGridDistance = GetDynamicGridDistance();
    BuyGridDistance    = CachedGridDistance;
    SellGridDistance   = CachedGridDistance;
@@ -763,6 +788,7 @@ void ReconcileGridStateOnInit()
    {
       // ไม่มีไม้เก่าค้างเลย - พอร์ตว่างจริงๆ ใช้ RecalculateBasePrice() ปกติได้เลย
       RecalculateBasePrice();
+      BasketStartMarked = false; // (V10-03) พร้อมบันทึก BasketStartTime/Balance ใหม่ตอนไม้แรกฟิลจริง
       return;
    }
 
@@ -800,6 +826,9 @@ void ReconcileGridStateOnInit()
    BuyGridDistance    = CachedGridDistance;
    SellGridDistance   = CachedGridDistance;
    GridCreated = true;
+   // (V10-03) มีไม้เปิดอยู่แล้วตอน (re)start - BasketStartTime ถูก PersistGet คืนค่าจริงจากก่อน restart
+   // ไปแล้วใน OnInit() ห้ามเขียนทับด้วยเวลา restart ปัจจุบัน
+   BasketStartMarked = true;
 
    PrintFormat("🔄 [RECONCILE] EA (re)started with existing positions (Buy:%d Sell:%d) - anchors reconstructed instead of reset (Base=%.5f, Buy anchor=%.5f, Sell anchor=%.5f).",
                buyCount, sellCount, GridBasePrice, GridBasePriceBuy, GridBasePriceSell);
@@ -2083,7 +2112,15 @@ double GetCalculatedLotSize(int nextLevel)
    double maxVol  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
    double stepVol = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
 
-   if(stepVol > 0) lot = MathRound(lot / stepVol) * stepVol;
+   if(stepVol > 0)
+   {
+      lot = MathRound(lot / stepVol) * stepVol;
+      // (V10-04) ถ้า MaxLotCap ไม่ใช่ตัวคูณของ stepVol พอดี (เช่น Cap=0.15, Step=0.10) MathRound() ด้านบน
+      // ปัดขึ้นทะลุ Cap ได้ (0.15/0.10=1.5 -> ปัดเป็น 2 -> 0.20 > Cap) - ปัดลงแทนเฉพาะกรณีนี้ กันไม่ให้ Cap
+      // ที่ตั้งไว้ถูกทะลุจริงหลัง normalize
+      if(UseMaxLotCap && MaxLotCap > 0 && lot > MaxLotCap)
+         lot = MathFloor(MaxLotCap / stepVol) * stepVol;
+   }
    if(minVol  > 0 && lot < minVol) lot = minVol;
    if(maxVol  > 0 && lot > maxVol) lot = maxVol;
 
@@ -2109,6 +2146,9 @@ void ApplyBasketBreakevenAndPartial(double currentProfit)
 
    if(UsePartialClose && !PartialCloseExecuted && currentProfit >= PartialCloseProfitUSD)
    {
+      int attemptCount = 0;
+      int successCount = 0;
+
       for(int i = PositionsTotal() - 1; i >= 0; i--)
       {
          ulong ticket = PositionGetTicket(i);
@@ -2116,6 +2156,11 @@ void ApplyBasketBreakevenAndPartial(double currentProfit)
          {
             if(PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetInteger(POSITION_MAGIC) == MagicNumber)
             {
+               // ข้ามไม้ที่ Partial Close สำเร็จไปแล้ว (V10-02) - กันโดนคำนวณ % ซ้ำจาก Volume ที่เหลือจริง
+               // ตอน retry (ถ้าไม่กัน ไม้ที่สำเร็จแล้วจะถูกปิดเพิ่มอีก PartialClosePercent% ของเดิม ทุกทิค
+               // ที่ยังมีไม้อื่นในบาสเก็ตเดียวกันปิดไม่สำเร็จ กลายเป็นปิดเกินกว่าที่ตั้งไว้)
+               if(IsTicketPartialClosed(ticket)) continue;
+
                double volume = PositionGetDouble(POSITION_VOLUME);
                double targetCloseVol = NormalizeDouble(volume * (PartialClosePercent / 100.0), 2);
 
@@ -2128,6 +2173,7 @@ void ApplyBasketBreakevenAndPartial(double currentProfit)
 
                if(closePrice > 0)
                {
+                  attemptCount++;
                   ZeroMemory(request); ZeroMemory(result);
                   request.action       = TRADE_ACTION_DEAL;
                   request.position     = ticket;
@@ -2139,16 +2185,37 @@ void ApplyBasketBreakevenAndPartial(double currentProfit)
                   request.magic        = MagicNumber;
                   request.type_filling = fillMode;
 
-                  if(!OrderSend(request, result))
+                  // IsTradeSuccess() เช็ค retcode คู่กับ OrderSend()==true เสมอ (V10-01/V10-02)
+                  if(OrderSend(request, result) && IsTradeSuccess(result))
                   {
-                     Print("Partial Close Failed for Ticket: ", ticket, " Code: ", result.retcode);
+                     successCount++;
+                     int n = ArraySize(PartialClosedTickets);
+                     ArrayResize(PartialClosedTickets, n + 1);
+                     PartialClosedTickets[n] = ticket;
+                  }
+                  else
+                  {
+                     PrintFormat("⛔ [PARTIAL CLOSE FAILED] Ticket=%I64u retcode=%u (%s) comment=%s",
+                                 ticket, result.retcode, EnumToString((ENUM_TRADE_RETCODE)result.retcode), result.comment);
                   }
                }
             }
          }
       }
-      PartialCloseExecuted = true;
-      LogEvent(GetUIString("Partial Close ทำงานแล้ว", "Partial Close executed"));
+
+      // ตั้ง PartialCloseExecuted=true เฉพาะตอนที่ปิดสำเร็จ "ครบทุกไม้ที่พยายามรอบนี้" เท่านั้น (V10-02) -
+      // เดิมตั้ง true unconditional หลัง loop ทำให้ EA คิดว่า Partial Close ทำไปแล้วทั้งที่บางไม้ (หรือทุก
+      // ไม้) ปิดไม่สำเร็จจริง แล้วไม่พยายามซ้ำอีกเลย ถ้ายังไม่ครบ ปล่อย false ไว้ให้ลองใหม่ทิคถัดไป (ไม้ที่
+      // สำเร็จแล้วจะถูกข้ามผ่าน PartialClosedTickets ด้านบน ไม่โดนปิดซ้ำ)
+      if(attemptCount > 0 && successCount == attemptCount)
+      {
+         PartialCloseExecuted = true;
+         LogEvent(GetUIString("Partial Close ทำงานแล้ว", "Partial Close executed"));
+      }
+      else if(attemptCount > 0)
+      {
+         PrintFormat("⚠️ [PARTIAL CLOSE INCOMPLETE] %d/%d succeeded - will retry remaining next tick.", successCount, attemptCount);
+      }
    }
 
    if(UseBasketBreakeven)
@@ -2246,7 +2313,13 @@ bool TryOpenForceHedgeOrder(string reasonTag, string logDetail)
    double minVol  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double maxVol  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
    double stepVol = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-   if(stepVol > 0) lot = MathRound(lot / stepVol) * stepVol;
+   if(stepVol > 0)
+   {
+      lot = MathRound(lot / stepVol) * stepVol;
+      // (V10-04) เหตุผลเดียวกับใน GetCalculatedLotSize() - กัน MaxLotCap ถูกทะลุจาก step ที่ไม่ลงตัวพอดี
+      if(UseMaxLotCap && MaxLotCap > 0 && lot > MaxLotCap)
+         lot = MathFloor(MaxLotCap / stepVol) * stepVol;
+   }
    if(minVol  > 0 && lot < minVol) lot = minVol;
    if(maxVol  > 0 && lot > maxVol) lot = maxVol;
    lot = NormalizeDouble(MathMax(0.01, lot), 2);
@@ -2287,7 +2360,8 @@ bool TryOpenForceHedgeOrder(string reasonTag, string logDetail)
    request.type_filling = fillMode;
 
    uint sendTick = GetTickCount();
-   if(OrderSend(request, result))
+   // IsTradeSuccess() เช็ค retcode คู่กับ OrderSend()==true เสมอ (V10-01)
+   if(OrderSend(request, result) && IsTradeSuccess(result))
    {
       LastOrderSentTime = TimeCurrent();
       RecordFillStats(sendTick, request.price, result.price, point);
@@ -2476,6 +2550,7 @@ int OnInit()
    LastCloseAllTime   = 0;
    IsClosingState     = false;
    PartialCloseExecuted = false;
+   ArrayResize(PartialClosedTickets, 0);
    BreakevenActivated   = false;
    BasketStagnant       = false;
    ForceHedgeArmed      = false;
@@ -2778,8 +2853,10 @@ void OnTick()
          LastCloseAllTime = TimeCurrent();
       }
       if(PartialCloseExecuted) PartialCloseExecuted = false;
+      if(ArraySize(PartialClosedTickets) > 0) ArrayResize(PartialClosedTickets, 0);
       if(BreakevenActivated) BreakevenActivated = false;
       if(BasketStagnant) BasketStagnant = false;
+      if(BasketStartMarked) BasketStartMarked = false; // (V10-03) พร้อมบันทึกไม้แรกฟิลของบาสเก็ตถัดไปใหม่
 
       // FIXED: previously the base price only got (re)calculated once, the very
       // first time GridCreated flipped true. If price then drifted far away while
@@ -2808,6 +2885,19 @@ void OnTick()
       {
          RecalculateBasePrice();
       }
+   }
+   else if(openPositions > 0 && !BasketStartMarked)
+   {
+      // (V10-03) จุดเดียวที่ถูกต้องสำหรับตั้ง BasketStartTime/BasketStartBalance - ไม้แรกฟิลจริงของ
+      // บาสเก็ตนี้ (รู้จาก openPositions>0 ที่สแกนจากโพซิชันจริงด้านบนสุดของ OnTick() เท่านั้น ไม่ใช่
+      // ตอน RecalculateBasePrice() คำนวณฐานใหม่ตอนพอร์ตยังว่างอยู่แบบเดิม ซึ่งอาจเกิดขึ้นนานก่อนไม้แรก
+      // ฟิลจริงถ้าตลาด Sideway จนราคาไม่เคยห่างฐานพอจะ trigger recalc ซ้ำ) ครอบคลุมทั้ง Virtual Grid และ
+      // Pending Grid เหมือนกัน เพราะอิงจากการสแกนโพซิชันจริง ไม่ใช่ event เฉพาะโหมดใดโหมดหนึ่ง - Balance
+      // (ไม่ใช่ Equity) ยังไม่เปลี่ยนจากการเปิดไม้ใหม่ (เปลี่ยนตอนปิดไม้ realize P/L เท่านั้น) เลยยังเป็น
+      // ฐาน "ก่อนบาสเก็ตนี้" ที่ถูกต้องแม้จะอ่านค่าหลังไม้ฟิลไปแล้วก็ตาม
+      BasketStartTime    = TimeCurrent();
+      BasketStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+      BasketStartMarked  = true;
    }
 
    // Virtual Limit mode can run its own Target Profit / Trailing Distance,
@@ -3441,7 +3531,9 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
             request.type_filling = fillMode;
 
             uint sendTick = GetTickCount();
-            if(OrderSend(request, result))
+            // IsTradeSuccess() เช็ค retcode คู่กับ OrderSend()==true เสมอ (V10-01) - OrderSend คืน true
+            // แค่แปลว่า Request ส่งถึง Server เท่านั้น ไม่ใช่ว่าเปิดไม้สำเร็จจริง
+            if(OrderSend(request, result) && IsTradeSuccess(result))
             {
                LastOrderSentTime = TimeCurrent();
                RecordFillStats(sendTick, ask, result.price, point);
@@ -3463,6 +3555,8 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
                JournalEnsureBasketStarted("GRID_BUY");
                return;
             }
+            PrintFormat("⛔ [BUY ORDER FAILED] Level %d retcode=%u (%s) comment=%s",
+                        nextLevel, result.retcode, EnumToString((ENUM_TRADE_RETCODE)result.retcode), result.comment);
          }
          else if(TimeCurrent() - lastSpreadLogTime >= 5)
          {
@@ -3542,7 +3636,8 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
             request.type_filling = fillMode;
 
             uint sendTick = GetTickCount();
-            if(OrderSend(request, result))
+            // IsTradeSuccess() เช็ค retcode คู่กับ OrderSend()==true เสมอ (V10-01) - เหตุผลเดียวกับฝั่ง Buy
+            if(OrderSend(request, result) && IsTradeSuccess(result))
             {
                LastOrderSentTime = TimeCurrent();
                RecordFillStats(sendTick, bid, result.price, point);
@@ -3557,6 +3652,8 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
                JournalEnsureBasketStarted("GRID_SELL");
                return;
             }
+            PrintFormat("⛔ [SELL ORDER FAILED] Level %d retcode=%u (%s) comment=%s",
+                        nextLevel, result.retcode, EnumToString((ENUM_TRADE_RETCODE)result.retcode), result.comment);
          }
          else if(TimeCurrent() - lastSpreadLogTime >= 5)
          {
@@ -3803,6 +3900,7 @@ void ClearEverythingAsync()
    SellGridDistance      = 0;
    LastOrderSentTime     = 0;
    PartialCloseExecuted  = false;
+   ArrayResize(PartialClosedTickets, 0);
    BreakevenActivated    = false;
    BasketStagnant        = false;
    ForceHedgeArmed       = false;
