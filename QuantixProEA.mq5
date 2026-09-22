@@ -408,6 +408,7 @@ input group "===== 20. Basket Stagnation Protection (V10) ====="
 input bool   UseBasketStagnation      = false;  // Use Basket Stagnation Protection
 input double BasketMaxHours           = 24.0;   // Basket Age Threshold, Hours (ก่อนเริ่มพิจารณาว่า Stagnant)
 input double StagnationRecoveryProfit = 0.0;    // Close Basket Once Profit Reaches This, $ (ระหว่าง Stagnation Mode)
+input int    StagnationMarketConfirmMinutes = 30; // Market Sideways Confirm, Min (V10-07) (ต้อง Sideway ต่อเนื่องกี่นาทีก่อนถือว่า Stagnation จริง กันอ่านผิดตอนกำลังจะ Breakout)
 
 //=========================== GLOBAL ===============================//
 
@@ -481,6 +482,7 @@ bool     BasketStagnant       = false; // latch เมื่อบาสเก�
 bool     ForceHedgeArmed      = false; // latch กัน Force Hedge ยิงรัวๆ ทุกทิคตอน DD ค้างสูง ต้องรอ DD ลดต่ำกว่า ForceHedgeResetPercent ก่อนถึงจะยิงซ้ำได้
 datetime BasketNegativeSinceTime = 0;   // เวลาที่บาสเก็ตเริ่มติดลบต่อเนื่อง (0 = ไม่ได้ติดลบอยู่ตอนนี้) ใช้กับ Force Hedge on Time
 datetime LastForceHedgeTimeFire  = 0;   // เวลาที่ Force Hedge on Time ยิงไม้ล่าสุด (0 = ยังไม่เคยยิงในรอบติดลบปัจจุบัน) - ยิงซ้ำได้ทุกๆ ForceHedgeTimeMinutes ถ้ายังติดลบไม่หยุด ไม่ต้องรอพลิกบวกก่อน
+datetime MarketSidewaysSinceTime = 0;   // (V10-07) เวลาที่ Market Condition เริ่มเป็น Sideway ต่อเนื่อง (0 = ไม่ได้ Sideway อยู่ตอนนี้) ใช้ยืนยัน Stagnation Mode
 
 // สถิติสรุปผล (นับตอนบาสเก็ตปิดจริงใน ClearEverythingAsync เท่านั้น)
 int      StatsTotalBaskets   = 0;
@@ -619,6 +621,7 @@ double GetMarginLevel();
 ENUM_MARGIN_STATE GetMarginState();
 double GetMarginLotFactor();
 bool IsMarginBlocked();
+bool IsProjectedMarginBlocked(double totalPlannedBuyLot, double totalPlannedSellLot);
 void RecalculateBasePrice();
 void ReconcileGridStateOnInit();
 ENUM_ORDER_TYPE_FILLING GetBestFillingMode();
@@ -1081,21 +1084,39 @@ double GetOneWayGridDepthFactor()
    return MathMax(0.0, MathMin(1.0, heavierLots / allowedExposure));
 }
 
+// Live DD% ขณะนี้ (PeakBalanceForDD vs Equity สด ตอนนี้เป๊ะๆ) - ตัวเดียวกับที่ Force Hedge on DD ใช้อยู่
+// แล้ว ไม่ใช่ MaxDrawdownPercent ซึ่งเป็นค่าสูงสุดที่เคยเกิด "ตลอดอายุบาสเก็ต" แบบไม่มีวันลดกลับเอง (ดู
+// UpdateDrawdownTracker()) - แยกเป็นฟังก์ชันกลางกันคำนวณซ้ำสองที่ (V10-09)
+double GetLiveDDPercent()
+{
+   double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   if(PeakBalanceForDD <= 0) return 0.0;
+   double liveDDVal = PeakBalanceForDD - currentEquity;
+   if(liveDDVal < 0) liveDDVal = 0;
+   return (liveDDVal / PeakBalanceForDD) * 100.0;
+}
+
 // DD ที่ "เพิ่มต่อเนื่อง" เทียบกับ snapshot ที่เก็บไว้เมื่อ OneWayDDLookbackSec วินาทีก่อน (ไม่ใช่แค่ DD
-// สูงเฉยๆ - ต้องกำลังไต่ขึ้นด้วย) รีเฟรช snapshot ใหม่ทุกครั้งที่ครบรอบเวลา
+// สูงเฉยๆ - ต้องกำลังไต่ขึ้นด้วย) รีเฟรช snapshot ใหม่ทุกครั้งที่ครบรอบเวลา - ใช้ GetLiveDDPercent() (V10-09
+// fix) แทน MaxDrawdownPercent เดิม เพราะ MaxDrawdownPercent เป็นค่าสูงสุดสะสมที่ไม่มีวันลดกลับ เทียบ
+// snapshot ของตัวเองแล้วจะ "ค้าง" โชว์ momentum สูงต่อไปแม้บัญชีเริ่มฟื้นตัวแล้วจริงๆ จนกว่า snapshot รอบ
+// ถัดไปจะ refresh - GetLiveDDPercent() ขยับตามสภาพจริงทันที ให้ delta สะท้อน "DD กำลังแย่ลง/ดีขึ้นตอนนี้"
+// ตรงตามชื่อ "DD Momentum" มากกว่า
 double GetOneWayDDMomentumFactor()
 {
+   double liveDD = GetLiveDDPercent();
+
    if(OneWayDDSnapshotTime == 0)
    {
       OneWayDDSnapshotTime  = TimeCurrent();
-      OneWayDDSnapshotValue = MaxDrawdownPercent;
+      OneWayDDSnapshotValue = liveDD;
       return 0.0;
    }
 
    double factor = 0.0;
-   if(MaxDrawdownPercent > OneWayDDSnapshotValue)
+   if(liveDD > OneWayDDSnapshotValue)
    {
-      double deltaPct = MaxDrawdownPercent - OneWayDDSnapshotValue;
+      double deltaPct = liveDD - OneWayDDSnapshotValue;
       // 5 percentage point ของ DD ที่เพิ่มขึ้นภายในหนึ่งรอบ lookback ถือว่าถึง factor สูงสุดแล้ว
       factor = MathMax(0.0, MathMin(1.0, deltaPct / 5.0));
    }
@@ -1103,7 +1124,7 @@ double GetOneWayDDMomentumFactor()
    if(TimeCurrent() - OneWayDDSnapshotTime >= OneWayDDLookbackSec)
    {
       OneWayDDSnapshotTime  = TimeCurrent();
-      OneWayDDSnapshotValue = MaxDrawdownPercent;
+      OneWayDDSnapshotValue = liveDD;
    }
 
    return factor;
@@ -1476,6 +1497,34 @@ double GetMarginLotFactor()
 bool IsMarginBlocked()
 {
    return GetMarginState() == MARGIN_BLOCK;
+}
+
+// Projected Margin Guard (V10-06): IsMarginBlocked() เช็คแค่ Margin Level "ปัจจุบัน" เท่านั้น - สำหรับ
+// Pending Grid ที่วาง Buy Stop/Sell Stop ทุก Level พร้อมกันไว้ล่วงหน้า (ต่างจาก Virtual Grid ที่มี
+// "before order" gate เช็คทุกครั้งก่อนส่งจริง) ถ้าราคากระโดดชนหลายชั้นพร้อมกันเร็วๆ (เช่น ข่าวแรง) Margin
+// จริงจะเปลี่ยนเร็วกว่าที่ IsMarginBlocked() (เช็คแค่ตอนวาง ไม่รู้อนาคต) จะทันเห็น - จำลอง worst-case
+// (Buy+Sell ทั้งหมดที่ plan ไว้ในลูปนี้ถูก Fill พร้อมกันหมด) ด้วย OrderCalcMargin() แล้วเช็คกับเพดาน
+// เดียวกับ IsMarginBlocked() ก่อนวางเพิ่ม - คำนวณไม่ได้ (OrderCalcMargin คืน false) ก็ไม่บล็อก เหมือน pattern
+// fail-open อื่นๆ ในไฟล์นี้ตอนข้อมูลที่ต้องใช้ยังไม่พร้อม
+bool IsProjectedMarginBlocked(double totalPlannedBuyLot, double totalPlannedSellLot)
+{
+   if(!UseMarginGuard) return false;
+   if(totalPlannedBuyLot <= 0 && totalPlannedSellLot <= 0) return false;
+
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+
+   double marginBuy = 0.0, marginSell = 0.0;
+   if(totalPlannedBuyLot  > 0 && ask <= 0) return false;
+   if(totalPlannedSellLot > 0 && bid <= 0) return false;
+   if(totalPlannedBuyLot  > 0 && !OrderCalcMargin(ORDER_TYPE_BUY,  _Symbol, totalPlannedBuyLot,  ask, marginBuy))  return false;
+   if(totalPlannedSellLot > 0 && !OrderCalcMargin(ORDER_TYPE_SELL, _Symbol, totalPlannedSellLot, bid, marginSell)) return false;
+
+   double projectedMarginUsed = AccountInfoDouble(ACCOUNT_MARGIN) + marginBuy + marginSell;
+   if(projectedMarginUsed <= 0) return false;
+
+   double projectedLevel = (AccountInfoDouble(ACCOUNT_EQUITY) / projectedMarginUsed) * 100.0;
+   return projectedLevel <= MarginGuardBlockLevel;
 }
 
 void GetMarginStateLabel(ENUM_MARGIN_STATE s, string &label, color &clr)
@@ -2307,6 +2356,18 @@ bool TryOpenForceHedgeOrder(string reasonTag, string logDetail)
    }
    double lot = baseLot * MathPow(LotMultiplier, neededSideCount) * ForceHedgeLotMultiplier;
 
+   // (V10-05) Force Hedge ยังคงข้าม Recovery Boost/Session/One-Way/Exposure-Margin lot factor โดยตั้งใจ
+   // (เหตุผลเดิมด้านบน + มีเพดาน Exposure/Margin ของตัวเองแยกเป็น block gate อยู่แล้ว) แต่ Smart Lot กับ
+   // Market Condition Factor เป็นตัวลด lot "ตามความเสี่ยงตลาดตอนนี้" ล้วนๆ (การันตีว่า <=1.0 เสมอ ไม่มีทาง
+   // ทำให้ lot ใหญ่ขึ้นจากค่าที่คำนวณไว้) ไม่เกี่ยวกับ Recovery Boost เลย - ปล่อย Force Hedge เปิด lot เต็ม
+   // สูตรตัวเองตอนตลาดเทรนด์แรง/ผันผวนสูง (จังหวะที่อันตรายที่สุด) ต่อไปไม่มีเหตุผลรองรับ จึงใช้สองตัวนี้
+   // เหมือน Grid ปกติ (guard ด้วย "< 1.0" แบบเดียวกับ GetCalculatedLotSize() กันกรณีผู้ใช้ตั้งค่า factor > 1)
+   double smartFactor = GetSmartLotFactor(neededSideCount + 1);
+   if(smartFactor < 1.0) lot = lot * smartFactor;
+
+   double marketLotFactor = GetMarketConditionLotFactor();
+   if(marketLotFactor < 1.0) lot = lot * marketLotFactor;
+
    if(UseMaxLotCap && MaxLotCap > 0 && lot > MaxLotCap) lot = MaxLotCap;
 
    double minVol  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
@@ -2378,14 +2439,9 @@ void CheckForceHedgeOnDD()
 {
    if(!UseForceHedgeOnDD || IsClosingState || TradingHalted || IsConnectionBlocked()) return;
 
-   double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-   double liveDDPercent = 0.0;
-   if(PeakBalanceForDD > 0)
-   {
-      double liveDDVal = PeakBalanceForDD - currentEquity;
-      if(liveDDVal < 0) liveDDVal = 0;
-      liveDDPercent = (liveDDVal / PeakBalanceForDD) * 100.0;
-   }
+   // GetLiveDDPercent() ตัวเดียวกับที่ GetOneWayDDMomentumFactor() ใช้ (V10-09) - กันคำนวณ PeakBalanceForDD
+   // vs Equity ซ้ำสองที่
+   double liveDDPercent = GetLiveDDPercent();
 
    if(liveDDPercent < ForceHedgeResetPercent)
    {
@@ -2946,9 +3002,25 @@ void OnTick()
       // GetMarketCondition() ตัวจริงตัวเดียวกับที่ปรับ Lot/Grid/บล็อกบาสเก็ตใหม่ที่อื่น - ถ้าไม่เปิด
       // UseMarketCondition ไว้ คืน MARKET_RANGE เสมอ (ไม่บล็อกเงื่อนไขนี้ กลายเป็น pass-through)
       bool marketSideways = (GetMarketCondition() == MARKET_RANGE || GetMarketCondition() == MARKET_LOW_VOLATILITY);
+
+      // (V10-07) เช็ค market condition แค่ ณ ทิคเดียวไม่พอ - ถ้าตลาดเพิ่งจะ Breakout พอดีตอนตรวจ อาจอ่านผิด
+      // เป็น Sideway ทั้งที่กำลังจะเปลี่ยนทิศ ต้องให้ Sideway ต่อเนื่องอย่างน้อย StagnationMarketConfirmMinutes
+      // นาทีก่อนถือว่าเป็นสัญญาณ Stagnation จริง (ลด false positive จากอ่านสภาพตลาดผิดแค่ชั่วขณะ) - ไม่ reset
+      // ข้ามบาสเก็ต เพราะเป็นตัวติดตามสภาพตลาดล้วนๆ ไม่ผูกกับบาสเก็ตใดบาสเก็ตหนึ่ง
+      if(marketSideways)
+      {
+         if(MarketSidewaysSinceTime == 0) MarketSidewaysSinceTime = TimeCurrent();
+      }
+      else
+      {
+         MarketSidewaysSinceTime = 0;
+      }
+      bool marketSidewaysConfirmed = (MarketSidewaysSinceTime > 0) &&
+         (TimeCurrent() - MarketSidewaysSinceTime >= StagnationMarketConfirmMinutes * 60);
+
       bool ddSafe          = !TradingHalted; // Total DD Guard ยังไม่ทริกเกอร์ halt ไปเอง (Max DD Stop สั่ง IsClosingState เองอยู่แล้ว ดักไว้ด้านบน)
 
-      if(!BasketStagnant && basketAgeHours >= BasketMaxHours && neverNearTarget && marketSideways && ddSafe)
+      if(!BasketStagnant && basketAgeHours >= BasketMaxHours && neverNearTarget && marketSidewaysConfirmed && ddSafe)
       {
          BasketStagnant = true;
          PrintFormat("🐌 [STAGNATION MODE] Basket age %.1fh >= %.1fh, market sideways, never reached target - entering stagnation mode (new entries paused).",
@@ -3350,6 +3422,15 @@ void PlacePendingGridServer()
       // Margin Guard (V10, Secondary): เช็คแยกจาก Exposure Ratio - ถ้า Margin ตึงอยู่ก่อนแล้ว (จาก EA/
       // Position อื่นบนบัญชีเดียวกัน) ไม่วาง Pending ใหม่เพิ่มเลย
       if(IsMarginBlocked())
+      {
+         canBuyFilter  = false;
+         canSellFilter = false;
+      }
+
+      // Projected Margin Guard (V10-06): IsMarginBlocked() ด้านบนเช็คแค่ Margin Level ปัจจุบัน ไม่รู้ว่าถ้า
+      // Pending ที่ plan สะสมไว้ถึงตอนนี้ (รวมก้อนที่กำลังจะวางชั้นนี้ด้วย) ถูก Fill พร้อมกันหมด Margin จะ
+      // เหลือเท่าไหร่ - จำลอง worst-case เหมือนที่ Exposure Guard ด้านบนทำกับ Lot แล้ว
+      if(IsProjectedMarginBlocked(plannedBuyLots + (canBuyFilter ? lot : 0.0), plannedSellLots + (canSellFilter ? lot : 0.0)))
       {
          canBuyFilter  = false;
          canSellFilter = false;
