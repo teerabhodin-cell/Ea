@@ -141,8 +141,24 @@ enum ENUM_MARGIN_STATE
 // รายชื่อเลขบัญชี MT5 ที่อนุญาตให้รัน EA นี้ได้ (ทั้งเดโมและบัญชีจริง) - ไฟล์นี้คนละตัวกับ
 // QuantixProEA.mq5 (รันบนชาร์ตจริงได้ปกติ ไม่มีล็อคบัญชี) **ห้ามทำเป็น input เด็ดขาด**
 // เพราะถ้าเป็น input ผู้ใช้จะเปิดหน้า Inputs แล้วแก้ค่าเองได้ทันที ทำให้ล็อคไม่มีความหมายอะไรเลย -
-// ต้องเป็นค่าคงที่ใน source code เท่านั้นถึงจะบังคับได้จริง
-const long LicensedAccountNumbers[] = {257431196, 41004623, 2121993019, 416094438, 50108240, 97071929, 184104382, 160171176, 416369960, 97106415, 58031748, 257565023, 317613136, 97106408, 30134519, 8107801, 97116374, 97095075, 96692617, 97060696, 420465451};
+// ต้องเป็นค่าที่ผู้ใช้แก้จาก Inputs dialog ไม่ได้เท่านั้นถึงจะบังคับได้จริง (ตัวแปรธรรมดาที่เซ็ตค่าเองใน
+// OnInit() ก็ยังผ่านเงื่อนไขนี้ ไม่จำเป็นต้องเป็น const ตราบใดที่ไม่ใช่ input)
+//
+// (Remote License List) รายชื่อบัญชีดึงจากเว็บแทนการ hardcode ในซอร์ส - เพิ่ม/ลบบัญชีทำได้จากไฟล์
+// licensed_accounts.txt บน GitHub โดยตรง ไม่ต้องคอมไพล์/แจก .ex5 ใหม่ทุกครั้งที่มีลูกค้าใหม่ ดึงทุกครั้งที่
+// OnInit() ทำงาน (attach ใหม่/สลับบัญชี/เปลี่ยน input ล้วน trigger OnInit() ใหม่อยู่แล้ว) - **ผู้ใช้ต้องเปิด
+// "Allow WebRequest for listed URL" ใน Tools > Options > Expert Advisors แล้วเพิ่ม URL ด้านล่างเข้าไปเอง
+// ก่อน** ไม่งั้น WebRequest() จะ fail ด้วย error 4014 ทุกครั้ง (ดู FetchLicensedAccounts())
+//
+// ถ้าดึงจากเว็บไม่สำเร็จรอบนี้ (เน็ตหลุด/เว็บล่ม/ยังไม่ได้อนุญาต URL) จะ fallback ไปใช้ลิสต์ล่าสุดที่เคยดึง
+// สำเร็จแล้ว (แคชไว้เป็นไฟล์ใน Common Files ของเทอร์มินัล) แทนทันที กันลูกค้าที่จ่ายเงินแล้วโดนบล็อกเพราะ
+// เน็ตกระตุกชั่วคราว - บล็อกจริง (ถือว่าไม่มีบัญชีไหน licensed เลย) เฉพาะตอนที่ไม่เคยดึงสำเร็จแม้แต่ครั้งเดียว
+// (เครื่องนี้ไม่เคยมีแคชเลย) เท่านั้น
+const string LicenseCheckURL  = "https://raw.githubusercontent.com/teerabhodin-cell/Ea/claude/quantix-classic20-basket-ts-63luf9/licensed_accounts.txt";
+const string LicenseCacheFile = "QuantixPro_LicenseCache.txt"; // Common Files - ใช้ร่วมกันได้ทุก chart/EA instance บนเครื่องเดียวกัน
+const int    LicenseTimeoutMs = 5000;
+
+long LicensedAccountNumbers[]; // เติมค่าจริงใน OnInit() จาก FetchLicensedAccounts()/LoadLicenseCache() - ไม่ใช่ input จึงยังแก้จาก Inputs dialog ไม่ได้เหมือนเดิม
 
 bool IsLicensed = false; // เซ็ตค่าจริงใน OnInit() - เทียบ ACCOUNT_LOGIN ปัจจุบันกับลิสต์ด้านบน
 
@@ -652,6 +668,12 @@ void   JournalWrite(string eventType, string action, string side, int level, dou
 void   JournalEnsureBasketStarted(string trigger);
 void   JournalWriteDeal(const MqlTradeTransaction& trans);
 void   JournalWriteBasketClose(double profit, int positionCount, string closeReason);
+
+// Remote License List
+int  ParseLicenseList(string raw, long &outArr[]);
+bool SaveLicenseCache(long &arr[]);
+int  LoadLicenseCache(long &outArr[]);
+int  FetchLicensedAccounts(long &outArr[]);
 
 // UI Engine Functions
 void InitDashboard();
@@ -2554,6 +2576,102 @@ void PersistAllStats()
 }
 
 //+------------------------------------------------------------------+
+//| Remote License List (Hard License Lock)                          |
+//+------------------------------------------------------------------+
+// พาร์สข้อความดิบจากเว็บ (1 เลขบัญชีต่อบรรทัด, บรรทัดว่าง/ขึ้นต้นด้วย # ข้ามได้) เป็น array ของ long -
+// คืนจำนวนบัญชีที่พาร์สได้ (>=0)
+int ParseLicenseList(string raw, long &outArr[])
+{
+   string lines[];
+   int n = StringSplit(raw, '\n', lines);
+   ArrayResize(outArr, 0);
+   int count = 0;
+   for(int i = 0; i < n; i++)
+   {
+      string line = lines[i];
+      StringReplace(line, "\r", ""); // ตัด \r ที่เหลือค้างถ้าไฟล์ต้นทางเป็น CRLF (StringTrim ไม่ตัดให้)
+      StringTrimLeft(line);
+      StringTrimRight(line);
+      if(StringLen(line) == 0) continue;
+      if(StringGetCharacter(line, 0) == '#') continue;
+      long acc = StringToInteger(line);
+      if(acc <= 0) continue;
+      ArrayResize(outArr, count + 1);
+      outArr[count] = acc;
+      count++;
+   }
+   return count;
+}
+
+// เซฟลิสต์ล่าสุดที่ดึงสำเร็จลง Common Files กันไว้เป็น fallback ตอนดึงจากเว็บไม่ได้รอบถัดไป
+bool SaveLicenseCache(long &arr[])
+{
+   int fh = FileOpen(LicenseCacheFile, FILE_COMMON|FILE_TXT|FILE_WRITE|FILE_SHARE_READ|FILE_SHARE_WRITE);
+   if(fh == INVALID_HANDLE) return false;
+   for(int i = 0; i < ArraySize(arr); i++)
+      FileWrite(fh, IntegerToString(arr[i]));
+   FileClose(fh);
+   return true;
+}
+
+// โหลดลิสต์จากแคชเดิม (ถ้ามี) - ใช้ตอน FetchLicensedAccounts() ดึงจากเว็บไม่สำเร็จรอบนี้
+int LoadLicenseCache(long &outArr[])
+{
+   ArrayResize(outArr, 0);
+   if(!FileIsExist(LicenseCacheFile, FILE_COMMON)) return 0;
+   int fh = FileOpen(LicenseCacheFile, FILE_COMMON|FILE_TXT|FILE_READ|FILE_SHARE_READ|FILE_SHARE_WRITE);
+   if(fh == INVALID_HANDLE) return 0;
+   int count = 0;
+   while(!FileIsEnding(fh))
+   {
+      string line = FileReadString(fh);
+      long acc = StringToInteger(line);
+      if(acc <= 0) continue;
+      ArrayResize(outArr, count + 1);
+      outArr[count] = acc;
+      count++;
+   }
+   FileClose(fh);
+   return count;
+}
+
+// ดึงลิสต์ license ล่าสุดจาก LicenseCheckURL - สำเร็จ (HTTP 200) = พาร์สแล้วเขียนทับแคชด้วย คืนจำนวน
+// บัญชีที่ได้ (>=0) พร้อม outArr เต็ม - ล้มเหลว (WebRequest ส่ง error หรือ HTTP status ไม่ใช่ 200) = คืน -1
+// ไม่แตะ outArr เลย ให้ผู้เรียกไป fallback ที่ LoadLicenseCache() เอง
+//
+// ต้องเปิด Tools > Options > Expert Advisors > "Allow WebRequest for listed URL" แล้วเพิ่ม
+// https://raw.githubusercontent.com ในลิสต์ก่อนถึงจะเรียกสำเร็จ (error 4014 = ยังไม่ได้อนุญาต URL)
+int FetchLicensedAccounts(long &outArr[])
+{
+   string headers = "";
+   char   postData[];
+   char   result[];
+   string resultHeaders = "";
+
+   ResetLastError();
+   int res = WebRequest("GET", LicenseCheckURL, headers, LicenseTimeoutMs, postData, result, resultHeaders);
+   if(res == -1)
+   {
+      int err = GetLastError();
+      if(err == 4014)
+         Print("🔒 [LICENSE] WebRequest ไม่ได้รับอนุญาต - ต้องเพิ่ม URL นี้ใน Tools > Options > Expert Advisors > Allow WebRequest: ", LicenseCheckURL);
+      else
+         PrintFormat("🔒 [LICENSE] WebRequest ดึงลิสต์ license ไม่สำเร็จ error=%d", err);
+      return -1;
+   }
+   if(res != 200)
+   {
+      PrintFormat("🔒 [LICENSE] เว็บตอบกลับ HTTP %d (ไม่ใช่ 200) - ใช้แคชเดิมแทนถ้ามี", res);
+      return -1;
+   }
+
+   string raw = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+   int count = ParseLicenseList(raw, outArr);
+   if(count > 0) SaveLicenseCache(outArr);
+   return count;
+}
+
+//+------------------------------------------------------------------+
 //| Expert initialization                                            |
 //+------------------------------------------------------------------+
 int OnInit()
@@ -2569,6 +2687,19 @@ int OnInit()
    IsLicensed = IsTestingMode;
    if(!IsLicensed)
    {
+      // ดึงลิสต์สดจากเว็บก่อนเสมอ (ดู FetchLicensedAccounts()) - ล้มเหลวรอบนี้ (เน็ตหลุด/เว็บล่ม/ยังไม่ได้
+      // อนุญาต URL) ค่อย fallback ไปใช้แคชล่าสุดที่เคยดึงสำเร็จแทน ไม่มีแคชเลยจริงๆ (เครื่องนี้ไม่เคยดึง
+      // สำเร็จมาก่อน) ถือว่าไม่มีบัญชีไหน licensed รอบนี้ (LicensedAccountNumbers ว่างเปล่า)
+      int fetched = FetchLicensedAccounts(LicensedAccountNumbers);
+      if(fetched < 0)
+      {
+         int cached = LoadLicenseCache(LicensedAccountNumbers);
+         if(cached > 0)
+            PrintFormat("🔒 [LICENSE] ดึงลิสต์ license จากเว็บไม่ได้รอบนี้ - ใช้แคชเดิมแทน (%d บัญชี)", cached);
+         else
+            Print("🔒 [LICENSE] ดึงลิสต์ license จากเว็บไม่ได้ และไม่มีแคชเดิมให้ fallback เลย");
+      }
+
       for(int li = 0; li < ArraySize(LicensedAccountNumbers); li++)
       {
          if(LicensedAccountNumbers[li] == currentAccount) { IsLicensed = true; break; }
