@@ -145,20 +145,20 @@ enum ENUM_MARGIN_STATE
 // OnInit() ก็ยังผ่านเงื่อนไขนี้ ไม่จำเป็นต้องเป็น const ตราบใดที่ไม่ใช่ input)
 //
 // (Remote License List) รายชื่อบัญชีดึงจากเว็บแทนการ hardcode ในซอร์ส - เพิ่ม/ลบบัญชีทำได้จากไฟล์
-// licensed_accounts.txt บน GitHub โดยตรง ไม่ต้องคอมไพล์/แจก .ex5 ใหม่ทุกครั้งที่มีลูกค้าใหม่ ดึงทุกครั้งที่
+// licensed_accounts.txt บน GitHub โดยตรง ไม่ต้องคอมไพล์/แจก .ex5 ใหม่ทุกครั้งที่มีลูกค้าใหม่ ดึงสดทุกครั้งที่
 // OnInit() ทำงาน (attach ใหม่/สลับบัญชี/เปลี่ยน input ล้วน trigger OnInit() ใหม่อยู่แล้ว) - **ผู้ใช้ต้องเปิด
 // "Allow WebRequest for listed URL" ใน Tools > Options > Expert Advisors แล้วเพิ่ม URL ด้านล่างเข้าไปเอง
 // ก่อน** ไม่งั้น WebRequest() จะ fail ด้วย error 4014 ทุกครั้ง (ดู FetchLicensedAccounts())
 //
-// ถ้าดึงจากเว็บไม่สำเร็จรอบนี้ (เน็ตหลุด/เว็บล่ม/ยังไม่ได้อนุญาต URL) จะ fallback ไปใช้ลิสต์ล่าสุดที่เคยดึง
-// สำเร็จแล้ว (แคชไว้เป็นไฟล์ใน Common Files ของเทอร์มินัล) แทนทันที กันลูกค้าที่จ่ายเงินแล้วโดนบล็อกเพราะ
-// เน็ตกระตุกชั่วคราว - บล็อกจริง (ถือว่าไม่มีบัญชีไหน licensed เลย) เฉพาะตอนที่ไม่เคยดึงสำเร็จแม้แต่ครั้งเดียว
-// (เครื่องนี้ไม่เคยมีแคชเลย) เท่านั้น
+// ตั้งใจไม่มี local cache fallback ใดๆ ทั้งสิ้น (เคยมีแล้วตัดออก) - เพราะไฟล์แคชที่เก็บในเครื่องแก้ไขเองได้
+// ตรงๆ (plain text ใน Common Files ไม่มีการเซ็นยืนยันความถูกต้อง) ถ้ามี fallback จะกลายเป็นช่องให้คนที่
+// ตั้งใจบล็อก WebRequest ของตัวเอง (ปิด Allow WebRequest/บล็อก URL ผ่าน firewall) แล้วแก้ไฟล์แคชใส่เลข
+// บัญชีตัวเองเข้าไป บายพาสล็อกได้ถาวร - ดึงจากเว็บไม่สำเร็จรอบไหน = ไม่ licensed รอบนั้นตรงๆ ไม่มีทางเลี่ยง
+// (ในทางปฏิบัติแทบไม่กระทบผู้ใช้จริง เพราะ MT5 เองก็ต้องต่อเน็ตกับ broker ตลอดเวลาอยู่แล้วถึงจะเทรดได้)
 const string LicenseCheckURL  = "https://raw.githubusercontent.com/teerabhodin-cell/Ea/claude/quantix-classic20-basket-ts-63luf9/licensed_accounts.txt";
-const string LicenseCacheFile = "QuantixPro_LicenseCache.txt"; // Common Files - ใช้ร่วมกันได้ทุก chart/EA instance บนเครื่องเดียวกัน
 const int    LicenseTimeoutMs = 5000;
 
-long LicensedAccountNumbers[]; // เติมค่าจริงใน OnInit() จาก FetchLicensedAccounts()/LoadLicenseCache() - ไม่ใช่ input จึงยังแก้จาก Inputs dialog ไม่ได้เหมือนเดิม
+long LicensedAccountNumbers[]; // เติมค่าจริงใน OnInit() จาก FetchLicensedAccounts() เท่านั้น - ไม่ใช่ input จึงยังแก้จาก Inputs dialog ไม่ได้เหมือนเดิม
 
 bool IsLicensed = false; // เซ็ตค่าจริงใน OnInit() - เทียบ ACCOUNT_LOGIN ปัจจุบันกับลิสต์ด้านบน
 
@@ -671,8 +671,6 @@ void   JournalWriteBasketClose(double profit, int positionCount, string closeRea
 
 // Remote License List
 int  ParseLicenseList(string raw, long &outArr[]);
-bool SaveLicenseCache(long &arr[]);
-int  LoadLicenseCache(long &outArr[]);
 int  FetchLicensedAccounts(long &outArr[]);
 
 // UI Engine Functions
@@ -2603,41 +2601,10 @@ int ParseLicenseList(string raw, long &outArr[])
    return count;
 }
 
-// เซฟลิสต์ล่าสุดที่ดึงสำเร็จลง Common Files กันไว้เป็น fallback ตอนดึงจากเว็บไม่ได้รอบถัดไป
-bool SaveLicenseCache(long &arr[])
-{
-   int fh = FileOpen(LicenseCacheFile, FILE_COMMON|FILE_TXT|FILE_WRITE|FILE_SHARE_READ|FILE_SHARE_WRITE);
-   if(fh == INVALID_HANDLE) return false;
-   for(int i = 0; i < ArraySize(arr); i++)
-      FileWrite(fh, IntegerToString(arr[i]));
-   FileClose(fh);
-   return true;
-}
-
-// โหลดลิสต์จากแคชเดิม (ถ้ามี) - ใช้ตอน FetchLicensedAccounts() ดึงจากเว็บไม่สำเร็จรอบนี้
-int LoadLicenseCache(long &outArr[])
-{
-   ArrayResize(outArr, 0);
-   if(!FileIsExist(LicenseCacheFile, FILE_COMMON)) return 0;
-   int fh = FileOpen(LicenseCacheFile, FILE_COMMON|FILE_TXT|FILE_READ|FILE_SHARE_READ|FILE_SHARE_WRITE);
-   if(fh == INVALID_HANDLE) return 0;
-   int count = 0;
-   while(!FileIsEnding(fh))
-   {
-      string line = FileReadString(fh);
-      long acc = StringToInteger(line);
-      if(acc <= 0) continue;
-      ArrayResize(outArr, count + 1);
-      outArr[count] = acc;
-      count++;
-   }
-   FileClose(fh);
-   return count;
-}
-
-// ดึงลิสต์ license ล่าสุดจาก LicenseCheckURL - สำเร็จ (HTTP 200) = พาร์สแล้วเขียนทับแคชด้วย คืนจำนวน
-// บัญชีที่ได้ (>=0) พร้อม outArr เต็ม - ล้มเหลว (WebRequest ส่ง error หรือ HTTP status ไม่ใช่ 200) = คืน -1
-// ไม่แตะ outArr เลย ให้ผู้เรียกไป fallback ที่ LoadLicenseCache() เอง
+// ดึงลิสต์ license ล่าสุดจาก LicenseCheckURL - สำเร็จ (HTTP 200) = พาร์สแล้วคืนจำนวนบัญชีที่ได้ (>=0)
+// พร้อม outArr เต็ม - ล้มเหลว (WebRequest ส่ง error หรือ HTTP status ไม่ใช่ 200) = คืน -1 ไม่แตะ outArr เลย
+// ไม่มี local cache ใดๆ ให้ fallback โดยตั้งใจ (ดูเหตุผลที่คอมเมนต์หัวไฟล์เรื่อง Remote License List) -
+// ดึงไม่สำเร็จรอบไหน = ไม่ licensed รอบนั้นตรงๆ
 //
 // ต้องเปิด Tools > Options > Expert Advisors > "Allow WebRequest for listed URL" แล้วเพิ่ม
 // https://raw.githubusercontent.com ในลิสต์ก่อนถึงจะเรียกสำเร็จ (error 4014 = ยังไม่ได้อนุญาต URL)
@@ -2661,14 +2628,12 @@ int FetchLicensedAccounts(long &outArr[])
    }
    if(res != 200)
    {
-      PrintFormat("🔒 [LICENSE] เว็บตอบกลับ HTTP %d (ไม่ใช่ 200) - ใช้แคชเดิมแทนถ้ามี", res);
+      PrintFormat("🔒 [LICENSE] เว็บตอบกลับ HTTP %d (ไม่ใช่ 200)", res);
       return -1;
    }
 
    string raw = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
-   int count = ParseLicenseList(raw, outArr);
-   if(count > 0) SaveLicenseCache(outArr);
-   return count;
+   return ParseLicenseList(raw, outArr);
 }
 
 //+------------------------------------------------------------------+
@@ -2687,18 +2652,10 @@ int OnInit()
    IsLicensed = IsTestingMode;
    if(!IsLicensed)
    {
-      // ดึงลิสต์สดจากเว็บก่อนเสมอ (ดู FetchLicensedAccounts()) - ล้มเหลวรอบนี้ (เน็ตหลุด/เว็บล่ม/ยังไม่ได้
-      // อนุญาต URL) ค่อย fallback ไปใช้แคชล่าสุดที่เคยดึงสำเร็จแทน ไม่มีแคชเลยจริงๆ (เครื่องนี้ไม่เคยดึง
-      // สำเร็จมาก่อน) ถือว่าไม่มีบัญชีไหน licensed รอบนี้ (LicensedAccountNumbers ว่างเปล่า)
-      int fetched = FetchLicensedAccounts(LicensedAccountNumbers);
-      if(fetched < 0)
-      {
-         int cached = LoadLicenseCache(LicensedAccountNumbers);
-         if(cached > 0)
-            PrintFormat("🔒 [LICENSE] ดึงลิสต์ license จากเว็บไม่ได้รอบนี้ - ใช้แคชเดิมแทน (%d บัญชี)", cached);
-         else
-            Print("🔒 [LICENSE] ดึงลิสต์ license จากเว็บไม่ได้ และไม่มีแคชเดิมให้ fallback เลย");
-      }
+      // ดึงลิสต์สดจากเว็บทุกครั้ง (ดู FetchLicensedAccounts()) - ไม่มี local cache ให้ fallback เลย
+      // ตั้งใจ ดึงไม่สำเร็จรอบนี้ (เน็ตหลุด/เว็บล่ม/ยังไม่ได้อนุญาต URL) = LicensedAccountNumbers ว่างเปล่า
+      // = ไม่มีบัญชีไหน licensed รอบนี้ตรงๆ (log บอกเหตุผลไว้แล้วใน FetchLicensedAccounts())
+      FetchLicensedAccounts(LicensedAccountNumbers);
 
       for(int li = 0; li < ArraySize(LicensedAccountNumbers); li++)
       {
