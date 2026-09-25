@@ -2652,9 +2652,12 @@ int OnInit()
    IsLicensed = IsTestingMode;
    if(!IsLicensed)
    {
-      // ดึงลิสต์สดจากเว็บทุกครั้ง (ดู FetchLicensedAccounts()) - ไม่มี local cache ให้ fallback เลย
-      // ตั้งใจ ดึงไม่สำเร็จรอบนี้ (เน็ตหลุด/เว็บล่ม/ยังไม่ได้อนุญาต URL) = LicensedAccountNumbers ว่างเปล่า
-      // = ไม่มีบัญชีไหน licensed รอบนี้ตรงๆ (log บอกเหตุผลไว้แล้วใน FetchLicensedAccounts())
+      // ดึงลิสต์สดจากเว็บทุกครั้ง (ดู FetchLicensedAccounts()) - ไม่มี local cache ให้ fallback เลย ล้าง
+      // array ทิ้งก่อนดึงทุกครั้ง (ไม่พึ่งพฤติกรรม fail-path ของ FetchLicensedAccounts ที่ไม่แตะ array
+      // เลยตอน fail) กัน OnInit() รอบถัดๆ ไปในเซสชันเดียวกัน (เช่น ผู้ใช้เปลี่ยน input ทำให้ reinit ใหม่)
+      // เห็นลิสต์เก่าที่เคยดึงสำเร็จค้างอยู่ในหน่วยความจำ ทั้งที่รอบนี้ดึงไม่สำเร็จจริง - ต้องดึงสำเร็จใหม่
+      // ทุกรอบจริงๆ ไม่มีข้อยกเว้นแม้แต่ภายในเซสชันเดียวกัน
+      ArrayResize(LicensedAccountNumbers, 0);
       FetchLicensedAccounts(LicensedAccountNumbers);
 
       for(int li = 0; li < ArraySize(LicensedAccountNumbers); li++)
