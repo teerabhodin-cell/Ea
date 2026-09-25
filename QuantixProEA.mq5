@@ -546,6 +546,7 @@ bool     IsTestingMode    = false; // true in Strategy Tester - skips all dashbo
 datetime lastFilterBlockLogTime = 0; // throttles the "why didn't it open" filter diagnostic to once/minute
 datetime lastGapLogTime         = 0; // throttles the GAP EXCEEDED re-anchor messages so a choppy market can't spam the Journal every tick
 datetime lastSpreadLogTime      = 0; // throttles the SPREAD BLOCKED message - without this, a wide spread during a fast move silently blocks entries with zero Journal output, indistinguishable from a phantom filter
+datetime lastEntryGateLogTime   = 0; // throttles the ENTRY GATE BLOCKED diagnostic (Section 3's outer gate) to once/minute
 datetime lastTickTimeForGap     = 0; // เวลาของทิคก่อนหน้า ใช้แยก "เทรนด์วิ่งแรงต่อเนื่อง" ออกจาก "Gap จริง" (ราคาข้ามช่วงที่ไม่มีทิคเลย)
 int      SecondsSinceLastTick   = 0; // อัปเดตครั้งเดียวต่อทิคใน OnTick() แล้วอ่านใช้ใน ExecuteGridLogic()
 
@@ -577,6 +578,10 @@ void CheckForceHedgeOnDD();
 bool TryOpenForceHedgeOrder(string reasonTag, string logDetail);
 void CheckForceHedgeOnTime();
 void LogFilterBlockReason(bool isBuy);
+void LogEntryGateBlockReason(bool timeBlocksEntry, bool newsBlocked, bool dailyLossBlocked,
+                              bool latencyBlocked, bool dailyGoalBlocksEntry, bool lowVolBlocksEntry,
+                              bool highVolBlocksEntry, bool sessionBlocksEntry, bool marketBlocksEntry,
+                              bool equityLocked, bool connectionBlocked);
 void ExecuteGridLogic(int buyCount, int sellCount, double lastBuyPrice, double lastSellPrice);
 void PlacePendingGridServer();
 void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice, double lastSellPrice);
@@ -1855,6 +1860,45 @@ void LogFilterBlockReason(bool isBuy)
 }
 
 //+------------------------------------------------------------------+
+//| Diagnostic: which OUTER entry-gate condition(s) are blocking a   |
+//| brand-new basket (Section 3 in OnTick, upstream of EMA/MTF/RSI/  |
+//| Risk Engine) right now. None of these gates print anything on    |
+//| their own, so a Time/Session/Volatility/Connection/Equity-Lock   |
+//| block looks identical to "price just hasn't reached target yet"  |
+//| from the Journal alone. Only called when openPositions==0 (a     |
+//| basket that's already running must never be blocked here - these |
+//| gates only guard "may a NEW basket start"). Throttled to once/   |
+//| minute like LogFilterBlockReason().                              |
+//+------------------------------------------------------------------+
+void LogEntryGateBlockReason(bool timeBlocksEntry, bool newsBlocked, bool dailyLossBlocked,
+                              bool latencyBlocked, bool dailyGoalBlocksEntry, bool lowVolBlocksEntry,
+                              bool highVolBlocksEntry, bool sessionBlocksEntry, bool marketBlocksEntry,
+                              bool equityLocked, bool connectionBlocked)
+{
+   if(TimeCurrent() - lastEntryGateLogTime < 60) return;
+
+   string blockers = "";
+   if(timeBlocksEntry)      blockers += "TimeFilter ";
+   if(newsBlocked)          blockers += "News ";
+   if(dailyLossBlocked)     blockers += "DailyLossLimit ";
+   if(latencyBlocked)       blockers += "LatencyGuard ";
+   if(dailyGoalBlocksEntry) blockers += "DailyGoalReached ";
+   if(lowVolBlocksEntry)    blockers += "LowVolatility ";
+   if(highVolBlocksEntry)   blockers += "HighVolatility ";
+   if(sessionBlocksEntry)   blockers += "SessionFilter ";
+   if(marketBlocksEntry)    blockers += "MarketCondition ";
+   if(equityLocked)         blockers += "EquityLock ";
+   if(TradingHalted)        blockers += "TradingHalted ";
+   if(connectionBlocked)    blockers += "ConnectionGuard ";
+   if(IsClosingState)       blockers += "ClosingState ";
+
+   if(blockers == "") return; // nothing actually blocked it - just the 3s post-close cooldown, or price hasn't reached target yet
+
+   lastEntryGateLogTime = TimeCurrent();
+   PrintFormat("🚧 [NEW BASKET BLOCKED] %s", blockers);
+}
+
+//+------------------------------------------------------------------+
 //| Emergency Stop Loss (server-side last resort, NOT a strategy SL) |
 //| Returns 0.0 (no SL) when UseEmergencySL is off. When on, computes |
 //| a price EmergencySL_Points away from entry - deliberately wide so |
@@ -3074,6 +3118,11 @@ void OnTick()
       {
          ExecuteGridLogic(buyCount, sellCount, lastBuyPrice, lastSellPrice);
       }
+      else if(openPositions == 0)
+      {
+         LogEntryGateBlockReason(false, false, false, false, false, false, false, false, false,
+                                  equityLocked, IsConnectionBlocked());
+      }
    }
    else
    {
@@ -3098,6 +3147,12 @@ void OnTick()
          else if(pendingOrders > 0)
          {
             DeleteAllPendingOrders();
+         }
+         else if(openPositions == 0)
+         {
+            LogEntryGateBlockReason(timeBlocksEntry, newsBlocked, dailyLossBlocked, latencyBlocked,
+                                     dailyGoalBlocksEntry, lowVolBlocksEntry, highVolBlocksEntry,
+                                     sessionBlocksEntry, marketBlocksEntry, equityLocked, IsConnectionBlocked());
          }
       }
    }
