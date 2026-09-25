@@ -577,7 +577,7 @@ void ApplyBasketBreakevenAndPartial(double currentProfit);
 void CheckForceHedgeOnDD();
 bool TryOpenForceHedgeOrder(string reasonTag, string logDetail);
 void CheckForceHedgeOnTime();
-void LogFilterBlockReason(bool isBuy);
+void LogFilterBlockReason(bool isBuy, string riskReason);
 void LogEntryGateBlockReason(bool timeBlocksEntry, bool newsBlocked, bool dailyLossBlocked,
                               bool latencyBlocked, bool dailyGoalBlocksEntry, bool lowVolBlocksEntry,
                               bool highVolBlocksEntry, bool sessionBlocksEntry, bool marketBlocksEntry,
@@ -1825,7 +1825,7 @@ bool CheckRSIFilter(bool isBuy)
 //| price hasn't reached it yet or a filter is vetoing it forever.   |
 //| Throttled to once/minute per direction so it doesn't spam.       |
 //+------------------------------------------------------------------+
-void LogFilterBlockReason(bool isBuy)
+void LogFilterBlockReason(bool isBuy, string riskReason)
 {
    if(TimeCurrent() - lastFilterBlockLogTime < 60) return;
 
@@ -1852,6 +1852,7 @@ void LogFilterBlockReason(bool isBuy)
    }
    if(UseMTFFilter && !CheckMTFFilter(isBuy)) blockers += "MTF ";
    if(UseRSIFilter && !CheckRSIFilter(isBuy)) blockers += "RSI ";
+   if(riskReason != "") blockers += "RiskEngine(" + riskReason + ") ";
 
    if(blockers == "") return; // nothing actually blocked it - price just hasn't reached the target yet
 
@@ -3596,8 +3597,8 @@ void CheckAndExecuteVirtualGrid(int buyCount, int sellCount, double lastBuyPrice
    bool sellLevelAvailable = (sellCount < TotalLevels) ||
       (UseLevelUnlock && bothSidesMaxed && (MaxUnlockedLevels <= 0 || sellCount < TotalLevels + MaxUnlockedLevels));
 
-   if(buyLevelAvailable  && !canBuyFilters)  LogFilterBlockReason(true);
-   if(sellLevelAvailable && !canSellFilters) LogFilterBlockReason(false);
+   if(buyLevelAvailable  && !canBuyFilters)  LogFilterBlockReason(true,  buyRisk.blocked  ? buyRisk.reason  : "");
+   if(sellLevelAvailable && !canSellFilters) LogFilterBlockReason(false, sellRisk.blocked ? sellRisk.reason : "");
 
    // CHECK BUY GRID
    if(buyLevelAvailable && canBuyFilters)
