@@ -1,26 +1,17 @@
 # PhaseC C5.2 §6.3 — `DEMO_REAL_SUBMIT -> DEMO_BOUNDED_AUTOMATION` Design Contract
 
-**Revision 14 — records QA's ratification of R1–R17. R1–R15: QA Round
-13 / Ratification ("RATIFICATION COMPLETE — ALL R1–R15 APPROVED").
-R16 (§2.3.1a deterministic candidate scan order) and R17 (§2.3.4
-fresh-exposure reference price = entry price → current SL, fresh
-`POSITION_SL`): QA §6.3 Final Design Freeze Review of Rev.14, which
-resolved them as frozen design decisions. Recorded 2026-09-26. Every
-item in the §7 ratification register, R1–R17, is RATIFIED exactly as
-already written. No value, predicate, invariant, source or
-amendment scope was changed. This is a recording-only revision: it
-replaces "proposed / awaiting ratification" wording with "RATIFIED (R#)"
-wherever a ratified decision is stated, and corrects stale E1
-classifier text that still named `approver_identity` after Rev.13 moved
-classification to PROV-1's `submission_provenance`: §2.3.2a's
-cap-accounting line, §3.2's cap definitions (the Final Design Freeze
-Review blocker), BUD-1's human-issued exclusion line, and a HISTORICAL
-marker ahead of Rev.9's superseded Case A/B text. All four now point to
-PROV-1; no design change. QA's scope
-note is recorded in §7: ratification approves the policy/control
-contract, not the market suitability of the values. Ratifying the design
-authorizes nothing (§8 is unchanged). Submitted for QA's §6.3 Final
-Design Freeze Review. Not frozen.**
+**Revision 15 — contract amendment from the frozen Rev.14 (commit
+`6b7e836`). It carries exactly the decisions ratified in the frozen F1
+Liveness Disposition Rev.3 (`Docs/PhaseC_C5_2_Section6_3_F1_Liveness
+DispositionDesign.md`, commit `16189be`): D1-D9, D4-b and D4-c. No other
+design change is made, and no ratified meaning is altered. Rev.14 stays
+the frozen baseline in git history; Rev.15 amends it and does not rewrite
+that history. Each Rev.15 change is marked `[Rev.15 AMENDMENT — Dn]` in
+place, and the Rev.14 text it amends is kept. Where writing a ratified
+decision as contract text required a precision the decision did not
+state, the choice is listed in §7 "Rev.15 precision notes" (P-1..P-4)
+for QA's explicit confirmation. Submitted for QA amendment-freeze review.
+Not frozen.**
 
 Governing documents: `Docs/PhaseC_C5_2_ControlledExecutionEnvironmentLadderContract.md`
 and, as pattern precedent, the frozen `Docs/PhaseC_C5_2_Section6_2_
@@ -57,12 +48,15 @@ statements, but left the caps' meaning ambiguous between E1 and E2, and
 blockers (BUD-1; §1 restored and reconciled) and turns the narrowed
 Check B predicate into frozen invariant SG-1 (but left E1 provenance
 classification and SG-1's authoritative source open) → Rev.13: closes Round 12's 2 blockers (PROV-1; SG-1 authoritative
-source = validated durable snapshot ∪ projection) → **Rev.14 (this
-revision)**: records QA's ratification of R1–R15 (all approved as
+source = validated durable snapshot ∪ projection) → Rev.14 (FROZEN,
+`6b7e836`): records QA's ratification of R1–R15 (all approved as
 proposed), then, after the Final Design Freeze Review, of R16 (§2.3.1a)
 and R17 (§2.3.4); status wording only, plus stale E1-classifier text
 corrections to PROV-1 (§2.3.2a, §3.2, BUD-1, Rev.9 historical marker),
-no design change.
+no design change → **Rev.15 (this revision)**: amendment carrying the
+F1 Liveness Disposition Rev.3 decisions (D1-D9, D4-b, D4-c) into
+§1.4, §2.3.1, §2.3.1a, §2.3.2, §2.3.2b, SA-1 (note), §3.2/BUD-1, §2.5,
+§2.6 (RA-31 amendment note), §4 and §7.
 
 **No `.mqh`/`.mq5` file touched, no compile, no test run, no `OrderSend`, no
 live execution.** This document is a design artifact only.
@@ -88,7 +82,12 @@ Automatic submission           NO           Automatic submission           YES, 
 sealed-file (Class 2) amendments, `GrantManualApprovalCommand()` (§2.4)
 and `SubmitOrderCommand()` (§2.3.3, §3.2), are RATIFIED as design (R13,
 R14; Rev.14). Ratification covers the design only: implementation
-remains NOT AUTHORIZED (§8).
+remains NOT AUTHORIZED (§8). [Rev.15 AMENDMENT — D2, D4-b: two further
+change areas are ratified as contract requirements through F1 Rev.3 —
+the RA-31 claim-path reconciliation function (§2.6), which is a change
+to sealed RA-31 code, and the reserved-policy input check for the C5
+pipeline in `MLQuantAI.mq5` (§2.3.1). Neither is authorized for
+implementation by this revision.]
 
 ---
 
@@ -310,6 +309,23 @@ FatalHalt` check, then a fresh `EventStore_ReadAllLines()`, size-check
 first, then byte-compare against the original snapshot — identical
 mechanism to §6.1/§6.2.
 
+### §1.4 Evidence boundary — [Rev.15 AMENDMENT — D4-c]
+
+The only candidate source left in scope after D4 is the C5 candidate
+pipeline, which is the "C5.0 TEST FIXTURE candidate pipeline" with stub AI
+inference (`MLQuantAI.mq5:102-115`, `:1705-1718`). C5 pipeline candidates
+are in §6.3 scope **for plumbing / control-plane verification only**.
+`RUN_C22_CEREMONY_FIXTURE` requests are excluded (§2.3.1, D4). Binding
+evidence boundary:
+
+```
+C5 stub candidate  =  proof of automation plumbing / control
+                   ≠  proof of real-model AI quality
+```
+
+No evidence produced under §6.3 from C5 stub-AI candidates may be cited as
+evidence of model quality, signal quality or market suitability.
+
 ---
 
 ## §2. The Automatic Submission Mechanism — "Bounded-Automation Decision Engine"
@@ -335,7 +351,49 @@ sealed OrderSend() call site
 
 ### §2.3 The Decision Engine, Trigger, and idempotency protocol, precisely
 
-#### §2.3.1 Candidate discovery (unchanged since Rev.2)
+#### §2.3.1 Candidate discovery (Rev.2 text unchanged; static admissibility added Rev.15)
+
+The discovery source is unchanged from Rev.2: the sealed
+`ExecutionRequestProjection_Count()`/`_GetAt()`, the whole registry, with
+state re-derived from durable evidence every invocation and no in-memory
+flag, cache or "already processed" marker.
+
+**[Rev.15 AMENDMENT — D3, D4, D4-b] Static admissibility.** One pure
+predicate over each request's immutable durable data:
+
+```
+ADMISSIBLE(X) iff ALL of:
+
+ (a) DRY-RUN ACCEPTED - DryRunResultProjection holds at least one record
+     for X.execution_request_id, and every such record has
+     decision == SAFETY_GATE_ACCEPTED. Read through the sealed
+     DryRunResultProjection_Count()/_GetAt() (no by-id accessor exists).
+     No record (request written, dry-run write failed) -> not admissible.
+ (b) LOT - X.lot_size <= max_lot_size_per_submission (R2 = 0.01).
+ (c) SYMBOL - the observed_symbol of the record(s) in (a) is in
+     symbol_allowlist (R8 = _Symbol). [precision note P-1]
+ (d) STRATEGY - if strategy_allowlist is non-empty, the candidate's
+     strategy_id (CandidateProjection_TryGet(X.candidate_id)) is in it;
+     a failed lookup -> not admissible. R8 = "" admits every strategy_id
+     (already gated upstream) and needs no lookup. [precision note P-2]
+ (e) NOT FIXTURE (D4) - NOT ( M1(X) OR M2(X) ), where
+       M1(X): X.execution_policy_version == "EXECPOLICY_C2_SMOKE_V1"
+       M2(X): the validated snapshot holds a CEREMONY_COMMAND_STATE_CHANGED
+              line with command_type == "RUN_C22_CEREMONY_FIXTURE" and
+              execution_request_id == X.execution_request_id.
+
+Not ADMISSIBLE -> skip (continue), never stop. Every input is immutable
+durable data, so X's admissibility never changes and skipping it cannot
+flap or change which admissible candidate is "first".
+```
+
+**[Rev.15 AMENDMENT — D4-b] Reserved policy value.**
+`"EXECPOLICY_C2_SMOKE_V1"` is reserved for `RUN_C22_CEREMONY_FIXTURE`
+(`MLQuantAI.mq5:991`). The C5 pipeline must not accept it as
+`InpC5ExecutionPolicyVersion` (`MLQuantAI.mq5:115`), which removes M1's
+only false-positive path. This is a contract requirement. The enforcing
+mechanism (e.g. an `OnInit` input check) is an implementation item that
+needs its own authorization; this amendment authorizes no source change.
 
 #### §2.3.1a Deterministic candidate scan order — FROZEN Rev.6, per QA's Round 5 request; RATIFIED R16, Rev.14
 
@@ -370,6 +428,28 @@ This is a genuinely simple, deterministic, already-available ordering -
 no new sort, no new index, no new state - the registry's own existing
 enumeration order, frozen as the tie-breaker for single-slot contention
 rather than left unspecified.
+
+**[Rev.15 AMENDMENT — D3, D4, D5, D6] R16 as amended.** The index order
+is unchanged. What "eligible" means, and what each outcome does to the
+scan, is now explicit:
+
+```
+For each index i = 0, 1, ... (native order, unchanged), in this order:
+  1. record untrusted (empty execution_request_id)     -> STOP the scan,
+                                                          issue nothing (D6)
+  2. not ADMISSIBLE (§2.3.1, Rev.15)                   -> skip   (D3, D4)
+  3. §2.3.2 state:
+       SUBMISSION_ISSUED                               -> skip
+       AUTOMATION_EXHAUSTED (step 1b, Rev.15)          -> skip   (D5)
+       UNKNOWN (registry not ready, asOf untrusted)    -> STOP the scan,
+                                                          issue nothing (D6)
+       APPROVED_NOT_SUBMITTED / NOT_YET_APPROVED       -> SELECT, stop
+
+The FIRST admissible, state-eligible candidate is the one acted on this
+invocation. "Skip" never changes which later candidate is first, because
+every skip reason is durable and monotonic. [precision note P-3 on the
+order of steps 1-3]
+```
 
 #### §2.3.2 The real architecture, traced — closes Blockers 1 and 2 together
 
@@ -485,6 +565,29 @@ later, separate, now-unreachable own-GRANT special case:**
    Rev.2/Rev.3, including the "a prior GRANT command durably FAILED" case
    falling through here.
 ```
+
+**[Rev.15 AMENDMENT — D5 (A2)] Step 1b, evaluated immediately after
+step 1 and before step 2:**
+
+```
+1b. AUTOMATION_EXHAUSTED : not SUBMISSION_ISSUED, AND the same validated
+    snapshot holds >= 1 E1 line for this execution_request_id that
+    INVARIANT PROV-1 classifies AUTOMATION.
+    -> do nothing for this candidate, permanently: automation gets ONE
+       SUBMIT ceremony per execution_request_id. A human may still act on
+       it through the normal manual ceremony.
+    - A pre-cutoff E1 (PROV-1 Case A) is not AUTOMATION and does not
+      exhaust.
+    - An E1 PROV-1 classifies INVALID fails closed exactly as R15 already
+      requires: automatic issuance halts until human reconciliation.
+    - Durable, clock-free, no new event and no new field: E1 is already
+      the ratified automation-issuance event (R10).
+```
+
+Frozen transition rule, amended: `AUTOMATION_EXHAUSTED` joins
+`SUBMISSION_ISSUED` / `MAILBOX_BUSY` / `APPROVAL_QUEUED` as "do nothing
+for this candidate". Within the discovery scan it is a skip (§2.3.1a as
+amended).
 
 **Frozen transition rule**:
 
@@ -969,6 +1072,10 @@ has ANY prior EXECUTION_SUBMISSION_ATTEMPTED record, through:
   (nothing reached the broker) and, for automation, is rate-limited by
   §3.2's own cap accounting, which counts the ceremony line E1 that is
   written BEFORE these gates run (see "E1/E2" below).
+  [Rev.15 AMENDMENT — D5: for automation, that E1 also makes the request
+  AUTOMATION_EXHAUSTED (§2.3.2 step 1b), so no automated re-submission
+  follows at all. The cap accounting remains a second, independent
+  bound. SA-1 itself is unchanged.]
 ```
 
 **Mid-session rebuild, analyzed and disclosed — no change proposed**:
@@ -1175,6 +1282,36 @@ the accounting right.
 Unchanged ordering (kill switch → rollout stage/capability → cross-validity
 → this candidate's own state (§2.3.2, now including the mailbox-occupancy
 check) → §3 caps), evaluated fresh, every invocation.
+
+**[Rev.15 AMENDMENT — D7 (C1), D9] Pre-flight parity, the last step
+before issuing a SUBMIT_ORDER.** Amended ordering: kill switch → rollout
+stage/capability → cross-validity → mailbox occupancy (read once) →
+discovery (§2.3.1a as amended: admissibility, state) → §3 caps →
+**pre-flight parity** → issuance (§2.3.2a).
+
+```
+PRE-FLIGHT PARITY (SUBMIT_ORDER only; read-only; sealed functions only):
+  CeremonyCommandRegistry_HasUnresolvedSubmission() == true
+      -> issue nothing this invocation (RA-31.2 condition B).
+  CandidateProjection_TryGet(X.candidate_id) fails, or
+  StateProjector_TryGetState(X.candidate_id) fails
+      -> issue nothing this invocation.
+
+These are exactly the checks SubmitOrderCommand() makes BEFORE E1
+(MLQuantAI.mq5:1225-1243). A SUBMIT the Decision Engine issues therefore
+cannot be rejected by them, which removes the pre-E1 re-issue loop (F1c):
+without it, each 2 s OnTimer cycle would write >= 2 durable lines.
+Check A (kill switch) and Check B (stage x environment) are already
+pre-empted by the first steps of the ordering.
+```
+
+GRANT loop (D7, option (i)): no GRANT-specific guard is added. Stage ×
+environment is checked before any issuance, so R13's rejection is
+pre-empted. A GRANT that fails because the EventStore write itself fails
+is outside liveness scope: repeated EventStore write failure is an
+operational fault, not a design liveness path. F1c is a Wave 3 blocker
+(D9). A new durable provenance marker for all automation commands (F1
+Rev.3 option C2) is **not** part of this amendment and is not authorized.
 
 **Blocker 4 — the claim-time kill-switch check must be tri-state, not
 fail-open on a read/replay problem.**
@@ -2066,6 +2203,51 @@ sealed cross-validity predicate, not a new one.
 
 ### §2.5 What this design explicitly does NOT grant (unchanged)
 
+[Rev.15 AMENDMENT — D4-c: also not granted — any claim about model,
+signal or market quality from C5 stub-AI candidates (§1.4).]
+
+### §2.6 RA-31 amendment note — [Rev.15 AMENDMENT — D1, D2, F1 Rev.3 §4.3]
+
+F1b (a mailbox left `PENDING`/`CLAIMED` while durable truth says the
+command is finished) is a property of the sealed RA-31 protocol and
+affects human ceremonies as well as automation. It is addressed by an
+RA-31 amendment, not by the Decision Engine:
+
+```
+WHERE (D2): a new EA-side function in the claim path, called at the top
+  of RA31_ProcessCeremonyCommand(), before CeremonyCommand_TryClaim().
+  The Decision Engine never rewrites a mailbox it has not confirmed as
+  its own (§2.3.2a is unchanged).
+
+B1 - durable-mirror reconciliation (D1). Read the mailbox once. If its
+  status is PENDING or CLAIMED for a command_id that the durable
+  CeremonyCommandRegistry holds in a mailbox-terminal-equivalent state,
+  rewrite the mailbox to the status Complete()/Fail() would have written:
+    APPROVAL_RECORDED, ENTRY_COMPATIBILITY_EVALUATED, OUTCOME_RECORDED,
+    ROLLOUT_STAGE_TRANSITIONED, KILL_SWITCH_ENGAGED, KILL_SWITCH_CLEARED,
+    CEREMONY_READY, SUBMISSION_COMPLETE, OBSERVATION_COMPLETE -> COMPLETE
+    COMMAND_FAILED                                           -> FAILED
+    COMMAND_REJECTED                                         -> REJECTED
+  Never touched: SUBMISSION_IN_PROGRESS (RA-31.2 condition B, human
+  reconciliation), COMMAND_RECEIVED, CEREMONY_IN_PROGRESS, a command_id
+  not in the registry, or an unavailable registry.
+
+UNAMBIGUITY CONDITION (QA, F1 Rev.3 §4.3): a rewrite is allowed only
+  when the durable registry gives ONE clear terminal truth for that exact
+  command_id. Conflicting, duplicated, unavailable or otherwise ambiguous
+  durable evidence -> B0. The routine never chooses between competing
+  durable states.
+
+B0 - everything else: automation pauses (discovery keeps returning
+  MAILBOX_OCCUPIED) until a human reconciles the mailbox file, which
+  RA-31.2's own doctrine already permits. No timeout, no lease, no TTL
+  (a frozen TimeCurrent() while the market is closed makes any clock rule
+  unsound). No SafeMode: F1b is transport-level.
+```
+
+This note fixes the contract requirement only. It is a change to sealed
+RA-31 code and needs its own implementation authorization.
+
 ---
 
 ## §3. Bounded-Automation Caps — parameter/control model
@@ -2193,6 +2375,11 @@ Why E1 is the canonical source (RATIFIED R10, Rev.14):
     before any broker attempt (E1 is written before those gates run), so
     re-issuance after such a rejection is rate-limited by the cooldown
     and daily caps rather than retried every invocation - conservative.
+    [Rev.15 AMENDMENT — D5: re-issuance after such a rejection no longer
+    happens at all. The E1 makes the request AUTOMATION_EXHAUSTED
+    (§2.3.2 step 1b), so at most one unit of daily quota is ever spent on
+    a request that the post-E1 gates reject. The quota rule itself (what
+    consumes quota, what does not) is unchanged.]
 
 VOLUME: neither E1 nor E2 carries a lot size. max_daily_volume_lots uses,
 for each counted E1 line, ExecutionRequestProjection_TryGet(<that line's
@@ -2506,6 +2693,13 @@ EventStoreValidator_ValidateLines() -> the invocation issues nothing):
 | Post-cutoff E1 with `submission_provenance` missing, duplicated, or any value other than the two tokens, or with an empty `execution_request_id` | INVALID → whole cap evaluation CHECK_FAILED → no automatic issuance (`automation_cap_provenance_integrity_violation`); automation stays halted until human reconciliation **(PROV-1, Rev.13)** |
 | In-window E1 classified INVALID (§6.3 evidence gate) | REJECT `e1_provenance_invalid_in_window` **(P8b via PROV-1, Rev.13)** |
 | System grant for X durable in the EventStore but absent from the projection (RA-30.4 branch), any `SUBMIT_ORDER` for X outside `DEMO_BOUNDED_AUTOMATION × DEMO` | rejected by SG-1 itself at claim time, before E1 **(SG-1 source, Rev.13)** |
+| Request not ADMISSIBLE (no/any non-ACCEPTED dry-run record, lot > R2, symbol or strategy not allowlisted, or FIXTURE per M1 ∨ M2) | skipped by discovery, never selected **(Rev.15, D3/D4)** |
+| Request with an AUTOMATION E1 and no E2 | AUTOMATION_EXHAUSTED → skipped permanently by automation; human manual ceremony unaffected **(Rev.15, D5)** |
+| Record with an empty `execution_request_id`, or a candidate whose §2.3.2 state is UNKNOWN | scan stops, nothing issued this invocation **(Rev.15, D6)** |
+| `CeremonyCommandRegistry_HasUnresolvedSubmission()` true, or candidate / candidate-state lookup fails for the selected request | no SUBMIT_ORDER issued this invocation (pre-flight parity) **(Rev.15, D7)** |
+| Mailbox `PENDING`/`CLAIMED` with one unambiguous terminal durable state for that `command_id` | EA claim path rewrites the mailbox to the mirrored terminal status (B1) **(Rev.15, D1/D2)** |
+| Mailbox occupied in any other way, or ambiguous durable evidence | B0: automation pauses until human reconciliation; no timeout, no SafeMode **(Rev.15, D1)** |
+| C5 pipeline started with `InpC5ExecutionPolicyVersion` == `"EXECPOLICY_C2_SMOKE_V1"` | not permitted (reserved value); enforcing mechanism is an implementation item **(Rev.15, D4-b)** |
 | All Rev.1–Rev.10 rows not listed above | unchanged |
 
 ---
@@ -2539,7 +2733,10 @@ EventStoreValidator_ValidateLines() -> the invocation issues nothing):
    14, below) - it no longer parses `liveLines[]` at all, so no such
    helper is needed.
 6. Dedicated event-type marker — still optional, not required.
-7. Rejected-candidate re-evaluation cadence — unchanged.
+7. ~~Rejected-candidate re-evaluation cadence~~ — **RESOLVED by Rev.15**:
+   a request rejected after E1 is AUTOMATION_EXHAUSTED (D5); a request
+   rejected before E1 is prevented by pre-flight parity (D7); a statically
+   inadmissible request is skipped (D3/D4).
 8. ~~**§2.4's `GrantManualApprovalCommand` amendment**~~ — **RATIFIED
    (R13, Rev.14)** as a Class 2 amendment to sealed code: three checks
    (validated-read precondition, stage-scoped rejection, environment_mode
@@ -2687,6 +2884,60 @@ suitable for the market. R13 and R14 ratify the design of two Class 2
 amendments to sealed code; they authorize no source change, compile,
 test, commit or push (§8). R16 and R17 (§7 items 3 and 12) ratify
 existing frozen shapes, not new implementation requirements.
+
+**Rev.15 amendment register** — every item is already RATIFIED in F1
+Liveness Disposition Rev.3 (FROZEN, `16189be`). Rev.15 only writes them
+into this contract. The Rev.15 text itself awaits QA's amendment freeze.
+
+| # | Ratified in F1 Rev.3 | Where in Rev.15 |
+|---|---|---|
+| D1 | B1 durable-mirror + B0, with the unambiguity condition | §2.6, §4 |
+| D2 | B1 in the EA claim path | §2.6 |
+| D3 | A1 static admissibility — skip, not stop | §2.3.1 (a)-(d), §2.3.1a, §4 |
+| D4 | FIXTURE(X) ⇔ M1(X) OR M2(X) → inadmissible → skip | §2.3.1 (e), §4 |
+| D4-b | `"EXECPOLICY_C2_SMOKE_V1"` reserved; C5 must not accept it | §2.3.1, §4 |
+| D4-c | C5 stub candidates = plumbing/control evidence only | §1.4, §2.5 |
+| D5 | A2 one automated SUBMIT per request → AUTOMATION_EXHAUSTED | §2.3.2 step 1b, SA-1 note, BUD-1 note, §4 |
+| D6 | UNKNOWN stops the scan | §2.3.1a, §4 |
+| D7 | C1 pre-flight parity; GRANT option (i); C2 not authorized | §2.3.2b, §4 |
+| D8 | Rev.15 + RA-31 amendment note as the vehicle | this revision, §2.6 |
+| D9 | F1c is a Wave 3 blocker | §2.3.2b |
+
+**Rev.15 precision notes — for QA's explicit confirmation.** Writing the
+ratified decisions as contract text needed these choices, which the
+decisions did not state:
+
+- **P-1 (symbol source for D3).** Neither `ExecutionRequestProjectionRecord`
+  nor `CandidateProjectionRecord` carries a symbol. The only durable
+  per-request symbol is `DryRunResultProjectionRecord.observed_symbol`
+  (`MLQuantAI_ExecutionAuditProjection.mqh:166`), taken from the same
+  dry-run record that (a) already requires. Rev.15 uses it.
+- **P-2 (strategy lookup for D3).** R8's `strategy_allowlist = ""` admits
+  every `strategy_id`, so (d) needs no lookup under the ratified values.
+  A lookup failure matters only for a non-empty allowlist, where it makes
+  the request inadmissible (skip). Pre-flight parity (D7) separately stops
+  the invocation if the SELECTED request's candidate lookup fails.
+- **P-3 (order inside one index).** Record integrity first (empty id →
+  stop, D6), then admissibility (skip), then §2.3.2 state. So an
+  inadmissible request is skipped even when the approval registry is not
+  ready, instead of stopping the scan. Stopping remains for untrusted
+  data (D6).
+- **P-4 (multiple dry-run records).** (a) requires every dry-run record
+  for X to be ACCEPTED. Any non-ACCEPTED record makes X inadmissible, so
+  disagreeing records never admit a request.
+
+**Implementation reconciliation note (informational, not an
+authorization).** The closed Wave 1 and Wave 2 code implements Rev.14,
+not Rev.15. Rev.15 will require:
+- Wave 1 (`MLQuantAI_BoundedAutomationIssuance.mqh`): the step 1b
+  AUTOMATION_EXHAUSTED state (PROV-1 classification of E1).
+- Wave 2 (`MLQuantAI_BoundedAutomationDiscovery.mqh`): admissibility skip,
+  exhausted skip, and the step order of §2.3.1a as amended.
+- Later waves: pre-flight parity (D7), the RA-31 claim-path function (D1/D2),
+  and the D4-b input check.
+
+Each needs a separate Implementation Reconciliation checkpoint after the
+Rev.15 freeze.
 
 ---
 
