@@ -77,8 +77,10 @@ string BoundedAutomationCandidateState_ToString(ENUM_BOUNDED_AUTOMATION_CANDIDAT
 // §2.3.2a/§2.3.2b issuance outcome. WRITE_FAILED / LOST /
 // ISSUED_CONFIRMED are the contract's frozen taxonomy (RETRY-ELIGIBLE is
 // deliberately NOT a value - §2.3.2b: it is the natural consequence of
-// WRITE_FAILED or LOST, not a tracked status). The two NOT_ATTEMPTED_*
+// WRITE_FAILED or LOST, not a tracked status). The three NOT_ATTEMPTED_*
 // values mean the mailbox file was never written at all.
+// NOT_ATTEMPTED_PREFLIGHT (Rev.15 D7, R15-B): a SUBMIT_ORDER failed the
+// pre-flight parity checks (MLQuantAI_BoundedAutomationPreflight.mqh).
 //---------------------------------------------------------------------
 enum ENUM_BOUNDED_AUTOMATION_ISSUANCE_OUTCOME
 {
@@ -86,7 +88,8 @@ enum ENUM_BOUNDED_AUTOMATION_ISSUANCE_OUTCOME
    BOUNDED_AUTOMATION_ISSUANCE_NOT_ATTEMPTED_MAILBOX_BUSY,
    BOUNDED_AUTOMATION_ISSUANCE_WRITE_FAILED,
    BOUNDED_AUTOMATION_ISSUANCE_LOST,
-   BOUNDED_AUTOMATION_ISSUANCE_ISSUED_CONFIRMED
+   BOUNDED_AUTOMATION_ISSUANCE_ISSUED_CONFIRMED,
+   BOUNDED_AUTOMATION_ISSUANCE_NOT_ATTEMPTED_PREFLIGHT   // Rev.15 D7 (R15-B), appended
 };
 
 string BoundedAutomationIssuanceOutcome_ToString(ENUM_BOUNDED_AUTOMATION_ISSUANCE_OUTCOME o)
@@ -98,6 +101,7 @@ string BoundedAutomationIssuanceOutcome_ToString(ENUM_BOUNDED_AUTOMATION_ISSUANC
       case BOUNDED_AUTOMATION_ISSUANCE_WRITE_FAILED:                  return "WRITE_FAILED";
       case BOUNDED_AUTOMATION_ISSUANCE_LOST:                          return "LOST";
       case BOUNDED_AUTOMATION_ISSUANCE_ISSUED_CONFIRMED:              return "ISSUED_CONFIRMED";
+      case BOUNDED_AUTOMATION_ISSUANCE_NOT_ATTEMPTED_PREFLIGHT:       return "NOT_ATTEMPTED_PREFLIGHT";
    }
    return "UNKNOWN";
 }

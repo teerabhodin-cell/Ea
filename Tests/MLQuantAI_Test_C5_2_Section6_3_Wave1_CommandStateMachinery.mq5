@@ -146,6 +146,36 @@ string MailboxCommandId()
    return c.command_id;
 }
 
+// R15-B fixture only (Rev.15 D7): a SUBMIT_ORDER is now issued only when
+// the sealed pre-E1 checks would pass - no unresolved submission, and the
+// request, its candidate and the candidate's state all resolvable. Seeds
+// exactly that for one target request; asserts nothing itself.
+void SeedSubmitPreflightFixture(string executionRequestId)
+{
+   // section C's real E1 appends left SUBMISSION_IN_PROGRESS entries in the
+   // in-memory registry; they are unrelated to section F's mailbox protocol
+   ArrayResize(g_CeremonyCommandRegistry, 0);
+
+   ExecutionRequestProjectionRecord rec;
+   MakeRequestRecord(executionRequestId, rec);
+   ExecutionRequestProjection_AppendRecord(rec);
+   string candidateId = rec.candidate_id;
+
+   int n = g_CandProj_Count;
+   ArrayResize(g_CandProj_Records, n + 1);
+   CandidateProjectionRecord_Init(g_CandProj_Records[n]);
+   g_CandProj_Records[n].candidate_id = candidateId;
+   g_CandProj_Count = n + 1;
+
+   LifecycleEvent genesis;
+   LifecycleEvent_Init(genesis);
+   genesis.candidate_id = candidateId;
+   genesis.from_state   = CANDIDATE_CREATED;
+   genesis.to_state     = CANDIDATE_CREATED;
+   string err;
+   StateProjector_Apply(genesis, err);
+}
+
 void OnStart()
 {
    Print("=== MLQuantAI_Test_C5_2_Section6_3_Wave1_CommandStateMachinery.mq5 ===");
@@ -404,6 +434,7 @@ void OnStart()
    {
       Check(WriteTerminalMailbox("TEST_W1_SETUP") && CeremonyCommandMailbox_IsFreeForNewCommand(),
             "setup: mailbox terminal -> free");
+      SeedSubmitPreflightFixture("ER_W1_MB_B");   // R15-B fixture for the SUBMIT below
 
       CeremonyCommand grantA;
       BoundedAutomation_BuildCommand(GRT, "ER_W1_MB_A", W1_TEST_NONCE, W1_SCAN_FILE, grantA);

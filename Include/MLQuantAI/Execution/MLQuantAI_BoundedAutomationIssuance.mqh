@@ -15,6 +15,8 @@
 //|           BoundedAutomation_DeriveCandidateState()                    |
 //|   §2.3.2a - occupancy check -> write -> read-your-own-write,          |
 //|           BoundedAutomation_IssueCommand()                            |
+//|   Rev.15 D7 (R15-B) - SUBMIT_ORDER pre-flight parity, the last step   |
+//|           before the write (MLQuantAI_BoundedAutomationPreflight.mqh)|
 //|   §2.3.2b - WRITE_FAILED / LOST / ISSUED_CONFIRMED, no in-memory      |
 //|           ledger of any kind                                          |
 //|                                                                    |
@@ -31,6 +33,7 @@
 
 #include "MLQuantAI_BoundedAutomationContract.mqh"
 #include "MLQuantAI_BoundedAutomationProvenance.mqh"
+#include "MLQuantAI_BoundedAutomationPreflight.mqh"
 #include "../Infrastructure/EventStore/MLQuantAI_CeremonyCommandEventEmission.mqh"
 #include "../Infrastructure/EventStore/MLQuantAI_EventStoreValidator.mqh"
 #include "MLQuantAI_ManualApprovalReadiness.mqh"
@@ -338,22 +341,49 @@ bool BoundedAutomation_IsIssuableCommand(const CeremonyCommand &cmd)
    return true;
 }
 
+// Diagnostic detail of one IssueCommand call (R15-B). preflight_evaluated
+// is false for GRANT_MANUAL_APPROVAL (never pre-flighted, D7 option (i))
+// and whenever an earlier step already ended the call.
+struct BoundedAutomationIssuanceDetail
+{
+   bool                               preflight_evaluated;
+   ENUM_BOUNDED_AUTOMATION_PREFLIGHT  preflight;
+   string                             preflight_candidate_id;
+};
+
 //---------------------------------------------------------------------
 // §2.3.2a issuance write protocol, verbatim order:
-//   IsFreeForNewCommand() (sealed RA-31.2 condition A guard) -> Write()
-//   -> Read() back -> command_id match.
+//   IsFreeForNewCommand() (sealed RA-31.2 condition A guard)
+//   -> [SUBMIT_ORDER only] pre-flight parity (Rev.15 D7)
+//   -> Write() -> Read() back -> command_id match.
+// Pre-flight is the LAST step before the write: it runs only once the
+// existing mailbox decision has already found the slot free, and never
+// replaces or re-decides that mailbox decision (QA Q-B2 (i)).
 // No retry inside the call (§2.3.2a (C) FROZEN LIVENESS RULE): WRITE_FAILED
 // and LOST both end this invocation; the next invocation re-derives state
 // from scratch. Nothing is recorded anywhere by this function - §2.3.2b
 // forbids any in-memory issuance ledger; caps count durable E1 only.
 //---------------------------------------------------------------------
-ENUM_BOUNDED_AUTOMATION_ISSUANCE_OUTCOME BoundedAutomation_IssueCommand(const CeremonyCommand &cmd)
+ENUM_BOUNDED_AUTOMATION_ISSUANCE_OUTCOME BoundedAutomation_IssueCommandDetailed(const CeremonyCommand &cmd,
+                                                                               BoundedAutomationIssuanceDetail &detail)
 {
+   detail.preflight_evaluated    = false;
+   detail.preflight              = BOUNDED_AUTOMATION_PREFLIGHT_PASS;
+   detail.preflight_candidate_id = "";
+
    if(!BoundedAutomation_IsIssuableCommand(cmd))
       return BOUNDED_AUTOMATION_ISSUANCE_NOT_ATTEMPTED_INVALID_COMMAND;
 
    if(!CeremonyCommandMailbox_IsFreeForNewCommand())
       return BOUNDED_AUTOMATION_ISSUANCE_NOT_ATTEMPTED_MAILBOX_BUSY;
+
+   if(cmd.command_type == CEREMONY_COMMAND_TYPE_SUBMIT_ORDER)
+   {
+      detail.preflight_evaluated = true;
+      detail.preflight = BoundedAutomation_PreflightSubmit(cmd.target_execution_request_id, detail.preflight_candidate_id);
+      if(detail.preflight != BOUNDED_AUTOMATION_PREFLIGHT_PASS)
+         return BOUNDED_AUTOMATION_ISSUANCE_NOT_ATTEMPTED_PREFLIGHT;
+   }
 
    if(!CeremonyCommandMailbox_Write(cmd))
       return BOUNDED_AUTOMATION_ISSUANCE_WRITE_FAILED;
@@ -361,6 +391,12 @@ ENUM_BOUNDED_AUTOMATION_ISSUANCE_OUTCOME BoundedAutomation_IssueCommand(const Ce
    CeremonyCommand confirm;
    bool confirmReadOk = CeremonyCommandMailbox_Read(confirm);
    return BoundedAutomation_ClassifyConfirmation(confirmReadOk, confirm, cmd.command_id);
+}
+
+ENUM_BOUNDED_AUTOMATION_ISSUANCE_OUTCOME BoundedAutomation_IssueCommand(const CeremonyCommand &cmd)
+{
+   BoundedAutomationIssuanceDetail detail;
+   return BoundedAutomation_IssueCommandDetailed(cmd, detail);
 }
 
 #endif // __MLQUANTAI_BOUNDEDAUTOMATIONISSUANCE_MQH__
